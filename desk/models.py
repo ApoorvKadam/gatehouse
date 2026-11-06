@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, text
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base, utcnow
@@ -210,3 +210,35 @@ class RuleSourceRow(Base):
     attribution: Mapped[str] = mapped_column(String)
     imported_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     __table_args__ = (UniqueConstraint("file_sha256", "jurisdiction"),)
+
+
+class LienEvidence(Base):
+    """One piece of lien evidence as someone recorded it, with the document it rests on. A correction is a new record
+    that supersedes the old one; nothing is edited."""
+
+    __tablename__ = "lien_evidence"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    case_id: Mapped[int] = mapped_column(ForeignKey("cases.id"))
+    kind: Mapped[str] = mapped_column(String)
+    facts: Mapped[dict] = mapped_column(JSON)
+    document_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    document_sha256: Mapped[str | None] = mapped_column(String, nullable=True)
+    document_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    entered_by: Mapped[str] = mapped_column(String)
+    entered_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    supersedes_id: Mapped[int | None] = mapped_column(ForeignKey("lien_evidence.id"), nullable=True)
+
+
+class LienEvaluation(Base):
+    """An evaluation with the exact facts it read, so it can be replayed and compared with today's."""
+
+    __tablename__ = "lien_evaluations"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    case_id: Mapped[int] = mapped_column(ForeignKey("cases.id"))
+    rule_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    state: Mapped[str] = mapped_column(String)
+    facts: Mapped[dict] = mapped_column(JSON)
+    facts_digest: Mapped[str] = mapped_column(String)
+    findings: Mapped[list] = mapped_column(JSON)
+    timing: Mapped[dict] = mapped_column(JSON)
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

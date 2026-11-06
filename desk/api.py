@@ -18,11 +18,14 @@ from .adapter.cubby import CubbyAdapter
 from .cases import queue, sync_facility
 from .config import Settings
 from .conversation import Conversation
+from .lien_files import evaluate_case, record_evidence, replay
+from .liens import FL_R1, ValidationError
 from .db import bind_to_fms, make_session_factory
-from .models import CaseEvent, DelinquencyCase, DeskBinding, Facility, Lease, LedgerSnapshot, PaymentCommand
+from .models import CaseEvent, DelinquencyCase, DeskBinding, Facility, Lease, LedgerSnapshot, LienEvaluation, PaymentCommand
 from .payments import (
     IdentityClaim, PaymentRefused, PaymentService, check_identity, collected, confirm, propose, tenant_message,
 )
+from .rules import import_stitch, reference_row
 from .worker import Worker
 
 log = logging.getLogger("desk.api")
@@ -44,6 +47,15 @@ class ProposalIn(BaseModel):
     identity_check_id: str
     amount: int = Field(gt=0)
     payment_method_id: str | None = Field(default=None, description="a saved card of this tenant; the first one when left out")
+
+
+class EvidenceIn(BaseModel):
+    kind: str
+    facts: dict
+    entered_by: str = Field(min_length=2)
+    document_name: str | None = None
+    document_text: str | None = Field(default=None, max_length=200_000, description="the document itself, or its transcription")
+    supersedes: int | None = Field(default=None, description="the record this one corrects")
 
 
 class ConfirmIn(BaseModel):
@@ -71,6 +83,8 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
     factory = make_session_factory(settings.database_url)
     adapter = adapter or CubbyAdapter(settings.fms_base_url, settings.fms_api_key, settings.fms_timeout_seconds)
     bind_to_fms(factory, adapter, settings.fms_base_url)
+    with factory() as session:
+        import_stitch(session)   # published lien-law reference data, stored once per file
     worker = Worker(factory, adapter, settings.reconcile_every_seconds)
 
     @asynccontextmanager
@@ -216,6 +230,39 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
                 raise HTTPException(403, "this conversation belongs to another sender")
         reply = conversation.say(session, body.text)
         return {"conversation_id": conversation.id, **reply.__dict__}
+
+    @app.post("/api/cases/{case_id}/lien/evidence")
+    def add_evidence(case_id: int, body: EvidenceIn, session: Session = Depends(db), _: str = Depends(operator)):
+        case = get_case(session, case_id)
+        try:
+            row = record_evidence(session, case, body.kind, body.facts, body.entered_by, body.document_name, body.document_text, body.supersedes)
+        except (ValidationError, ValueError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return {"id": row.id, "kind": row.kind, "facts": row.facts, "document_sha256": row.document_sha256}
+
+    @app.get("/api/cases/{case_id}/lien")
+    def lien_file(case_id: int, session: Session = Depends(db), _: str = Depends(operator)):
+        """The lien file evaluated now: every finding with its basis, the timing under this policy, and the state."""
+        case = get_case(session, case_id)
+        ev = evaluate_case(session, adapter, case)
+        facility = session.get(Facility, session.get(Lease, case.lease_id).facility_id)
+        ref = reference_row(session, facility.jurisdiction)
+        return {
+            "evaluation_id": ev.id, "evaluated_at": ev.evaluated_at, "state": ev.state, "findings": ev.findings, "timing": ev.timing,
+            "rule_version": ({"label": FL_R1.label, "citations": FL_R1.citations, "review_note": FL_R1.review_note, "policies": FL_R1.policies}
+                             if ev.rule_version == FL_R1.label else None),
+            "facts_digest": ev.facts_digest,
+            "reference": ({"published_summary": ref.row, "attribution": ref.attribution,
+                           "note": "Published reference data, not a rule: statute_read_on is when its authors read the statute, "
+                                   "and earliest_sale is their summary, not a deadline."} if ref else None),
+        }
+
+    @app.get("/api/lien/evaluations/{evaluation_id}/replay")
+    def replay_evaluation(evaluation_id: int, session: Session = Depends(db), _: str = Depends(operator)):
+        row = session.get(LienEvaluation, evaluation_id)
+        if row is None:
+            raise HTTPException(404, "evaluation not found")
+        return {"evaluation_id": row.id, "same_result": replay(row)}
 
     @app.get("/api/payments/{command_id}")
     def payment(command_id: int, session: Session = Depends(db), _: str = Depends(operator)):

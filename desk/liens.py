@@ -162,6 +162,9 @@ class LegalCheck(BaseModel):
     observed_on: date
 
 
+# fields that record something that happened; stated future dates (the payment deadline, the sale date) are not events
+EVENT_DATES = ("deposited_on", "delivered_on", "sent_on", "confirmed_on", "posted_on", "published_on", "observed_on")
+
 EVIDENCE_KINDS: dict[str, type[BaseModel]] = {
     "notice": Notice, "mail_deposit": MailDeposit, "in_person_delivery": InPersonDelivery, "email_delivery": EmailDelivery,
     "posting": Posting, "publication": Publication, "legal_check": LegalCheck,
@@ -241,6 +244,12 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
         return _finish(out, timing)
     today = date.fromisoformat(facts.today)
     ev = {k: [e for e in facts.evidence if e["kind"] == k] for k in EVIDENCE_KINDS}
+    for e in facts.evidence:
+        for name in EVENT_DATES:
+            when = e["facts"].get(name)
+            if when and date.fromisoformat(str(when)) > today:
+                out.append(Finding("evidence dates", "policy", "review", f"{e['kind'].replace('_', ' ')} {e['id']} records {name} {when}, after today",
+                                   "correct the record; evidence cannot describe something that has not happened"))
 
     # legal checks: every one recorded, and only a "no" lets the file continue without counsel
     answers = {}
