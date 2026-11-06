@@ -57,6 +57,8 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {"reason": {"type": "string"}}, "required": ["reason"], "additionalProperties": False}},
 ]
 
+# payment states after which the tenant may hear the balance and be offered to pay it
+FINAL_FOR_TENANT = ("CONFIRMED", "DECLINED", "REJECTED", "NOT_SUBMITTED", "CLEARED_BY_STAFF")
 STAFF_LINE = "A team member has your message and will follow up with you directly."
 IDENTITY_ASK = ("Before I can talk about the account, I need the last name on the rental, the last four digits of the "
                 "phone number on file and your unit number.")
@@ -180,7 +182,7 @@ class Conversation:
                 p = session.get(PaymentProposal, self.proposal_id)
                 return f"To confirm: we will charge ${p.amount / 100:,.2f} to the card ending in {p.card_last4}. Reply yes to go ahead."
             if any(c.name == "payment_status" for c in calls):
-                return self._status_line(session)
+                return self._status_and_balance(session)
             if any(c.name == "get_balance" for c in calls):
                 return self._balance_line(session) if self.identity_verified else IDENTITY_ASK
         self._to_staff(session, session.get(DelinquencyCase, self.case_id), "conversation went in circles")
@@ -198,7 +200,7 @@ class Conversation:
         if not self.identity_verified:
             replacement = IDENTITY_ASK
         elif outcome and self.command_id:
-            replacement = self._status_line(session) + " " + self._balance_line(session)
+            replacement = self._status_and_balance(session)
         else:
             replacement = self._balance_line(session)
         record(session, session.get(DelinquencyCase, self.case_id), "model reply replaced",
@@ -219,6 +221,14 @@ class Conversation:
                    for e in ledger.raw.get("bookEntries", []) if e.get("type") == "CHARGE" and e["amount"] > e.get("amountPaid", 0)]
         return (f"The balance on your unit is ${ledger.total_due / 100:,.2f}" + (f" ({', '.join(charges)})" if charges else "")
                 + ". Would you like to pay all of it, or part of it, today?")
+
+    def _status_and_balance(self, session: Session) -> str:
+        """The payment's status, and the balance once that payment has a final answer. While it is still open the
+        tenant is never invited to pay again."""
+        command = session.get(PaymentCommand, self.command_id) if self.command_id else None
+        if command is not None and self.identity_verified and command.state in FINAL_FOR_TENANT:
+            return self._status_line(session) + " " + self._balance_line(session)
+        return self._status_line(session)
 
     def _status_line(self, session: Session) -> str:
         if not self.identity_verified:
