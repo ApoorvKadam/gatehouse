@@ -78,6 +78,8 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
     if settings.public_view and not (settings.demo_seed and urlsplit(settings.fms_base_url).hostname in ("127.0.0.1", "localhost")):
         # anyone can read the preview without a token, so it may only ever hold the synthetic world
         raise RuntimeError("the public preview runs only on the synthetic world against the local simulator")
+    if settings.public_view and (settings.operator_token is None or settings.allow_without_token):
+        raise RuntimeError("the public preview needs an operator token for every change")
     if chat_client is None and os.environ.get("ANTHROPIC_API_KEY"):
         import anthropic
         chat_client = anthropic.Anthropic()
@@ -93,6 +95,9 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
     if settings.demo_seed:
         from . import demo
         demo.build(factory, adapter, settings.fms_base_url)
+        if settings.public_view and not demo.is_complete(factory):
+            raise RuntimeError("this database holds data that is not a finished synthetic world; "
+                               "the public preview starts only from an empty database")
     worker = Worker(factory, adapter, settings.reconcile_every_seconds)
 
     @asynccontextmanager
@@ -176,8 +181,12 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
             checks["fms"] = "ok"
         except Exception as exc:
             checks["fms"] = type(exc).__name__
-        if start_worker:
-            checks["worker"] = "ok" if worker.alive() else f"no recent pass ({worker.last_error or 'still working'})"
+        if not start_worker:
+            checks["worker"] = "not running in this process"
+        elif not worker.alive():
+            checks["worker"] = f"no successful pass lately (last error: {worker.last_error or 'none, still working'})"
+        else:
+            checks["worker"] = "ok"
         ready_now = all(v == "ok" for v in checks.values())
         return JSONResponse({"ready": ready_now, "checks": checks}, status_code=200 if ready_now else 503)
 

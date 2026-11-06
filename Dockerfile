@@ -16,4 +16,4 @@ USER gatehouse
 
 # the simulator stays on 127.0.0.1:8100 inside the container; only Gatehouse's port is published
 EXPOSE 8000
-CMD ["./start.sh"]
+CMD ["bash", "start.sh"]

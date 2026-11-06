@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from .adapter import FMSAdapter
 from .cases import current_case, sync_facility
 from .lien_files import evaluate_case, record_evidence
-from .models import DelinquencyCase, Lease, LedgerSnapshot
+from .models import DelinquencyCase, Lease, LedgerSnapshot, SyntheticWorld
 from .payments import IdentityClaim, PaymentService, check_identity, confirm, propose
 
 log = logging.getLogger("desk.demo")
@@ -43,9 +43,19 @@ def build(factory: sessionmaker[Session], adapter: FMSAdapter, fms_base_url: str
         returned_payment(session, adapter, sim)
         changed_lien_file(session, adapter, sim)
         new_york_file(session, adapter)
+        # one more pass, as the worker would make, so everything the FMS shows has been observed before the
+        # world is opened: the worker then finds nothing new to record
+        settle(session, adapter, passes=2)
+        session.add(SyntheticWorld(id=1, id_seed=ID_SEED))
+        session.commit()
     sim.close()
     log.info("synthetic world built")
     return True
+
+
+def is_complete(factory: sessionmaker[Session]) -> bool:
+    with factory() as session:
+        return session.get(SyntheticWorld, 1) is not None
 
 
 def case_of(session: Session, lease_provider_id: str) -> DelinquencyCase:

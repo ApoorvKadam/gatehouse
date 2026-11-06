@@ -42,8 +42,9 @@ def test_a_desk_with_no_token_configured_refuses_everything(fms_url, sim):
     with TestClient(create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 2.0), start_worker=False)) as c:
         assert c.get(f"/api/facilities/{ORLANDO}/queue").status_code == 503
         assert c.get("/health/live").status_code == 200
-        ready = c.get("/health/ready")
-        assert ready.status_code == 200 and ready.json()["checks"] == {"database": "ok", "fms": "ok"}
+        ready = c.get("/health/ready")   # this test runs without the worker, so the desk is not ready
+        assert ready.status_code == 503
+        assert ready.json()["checks"] == {"database": "ok", "fms": "ok", "worker": "not running in this process"}
 
 
 def preview_settings(fms_url, **kw) -> Settings:
@@ -72,11 +73,45 @@ def test_the_public_preview_reads_without_a_token_but_changes_nothing(fms_url, s
         assert len(sim.payments("lease_WhitB1042")) == 1
 
 
-def test_the_public_preview_refuses_to_start_on_anything_but_the_synthetic_world(fms_url, sim):
+def test_the_public_preview_refuses_to_start_on_anything_but_the_synthetic_world(fms_url, sim, tmp_path):
+    adapter = CubbyAdapter(fms_url, FULL_KEY, 2.0)
     with pytest.raises(RuntimeError, match="synthetic world"):
-        create_app(preview_settings(fms_url), CubbyAdapter(fms_url, FULL_KEY, 2.0), start_worker=False)
+        create_app(preview_settings(fms_url), adapter, start_worker=False)
     with pytest.raises(RuntimeError, match="synthetic world"):
-        create_app(preview_settings("https://fms.example.com", demo_seed=True), CubbyAdapter(fms_url, FULL_KEY, 2.0), start_worker=False)
+        create_app(preview_settings("https://fms.example.com", demo_seed=True), adapter, start_worker=False)
+    # changes must always need a token, whatever the laptop setting says
+    for loose in ({"operator_token": None}, {"allow_without_token": True}):
+        settings = Settings(**{**preview_settings(fms_url, demo_seed=True).__dict__, **loose})
+        with pytest.raises(RuntimeError, match="operator token"):
+            create_app(settings, adapter, start_worker=False)
+    # a database that already holds other records (or a world whose build never finished) is never served publicly
+    db = f"sqlite:///{tmp_path / 'desk.db'}"
+    with TestClient(create_app(Settings(**{**preview_settings(fms_url).__dict__, "public_view": False, "database_url": db}),
+                               adapter, start_worker=False), headers={"X-Desk-Token": TOKEN}) as desk:
+        assert desk.post(f"/api/facilities/{ORLANDO}/sync").status_code == 200
+    with pytest.raises(RuntimeError, match="not a finished synthetic world"):
+        create_app(Settings(**{**preview_settings(fms_url, demo_seed=True).__dict__, "database_url": db}), adapter, start_worker=False)
+
+
+def test_the_preview_reads_the_same_after_the_worker_runs(fms_url, sim):
+    """The worker keeps checking the held payment and the ledgers, and says so; nothing else a visitor sees moves."""
+    app = create_app(preview_settings(fms_url, demo_seed=True), CubbyAdapter(fms_url, FULL_KEY, 2.0), start_worker=False)
+
+    def everything(c) -> dict:
+        rows = c.get(f"/api/facilities/{ORLANDO}/queue").json()
+        cases = {r["case_id"]: c.get(f"/api/cases/{r['case_id']}").json() for r in rows["rows"]}
+        for case in cases.values():
+            for p in case["payments"]:
+                p.pop("checks")            # how many times the worker asked the FMS
+            if case["ledger"]:
+                case["ledger"].pop("observed_at")   # when it last read the ledger
+        return {"queue": rows, "cases": cases}
+
+    with TestClient(app) as visitor, TestClient(app, headers={"X-Desk-Token": TOKEN}) as desk:
+        before = everything(visitor)
+        for _ in range(4):
+            assert desk.post("/api/reconcile").status_code == 200
+        assert everything(visitor) == before
 
 
 def test_queue_shows_what_is_owed_and_who_has_to_act(client):

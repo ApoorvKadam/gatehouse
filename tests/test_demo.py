@@ -87,3 +87,23 @@ def test_the_truth_reader_settles_nothing(fms_url, sim):
     # Payments Search is the FMS's own read, and it is the one that moves a pending payment along
     assert [p["status"] for p in sim.payments("lease_WhitB1042")] == ["PENDING"]
     assert [p["status"] for p in sim.payments("lease_WhitB1042")] == ["SUCCEEDED"]
+
+
+def test_readiness_turns_false_when_every_worker_pass_fails(adapter):
+    import time
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from desk.worker import Worker
+
+    # a database without Gatehouse's tables: every pass fails on its first query
+    broken = sessionmaker(create_engine("sqlite:///:memory:", poolclass=StaticPool, connect_args={"check_same_thread": False}))
+    worker = Worker(broken, adapter, every_seconds=0.05, stale_after=0.3)
+    worker.start()
+    try:
+        time.sleep(0.6)
+        assert worker.last_error == "OperationalError" and not worker.alive()
+    finally:
+        worker.stop()
