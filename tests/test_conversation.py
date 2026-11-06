@@ -240,6 +240,10 @@ def test_live_model_verifies_before_talking_money(session, adapter, sim):
     ("Would you like to pay the full $240.00?", True),    # any figure is the desk's to state
     ("It was charged because the October rent wasn't paid on time.", True),   # fails closed: the desk explains charges
     ("Your payment cleared.", True),
+    ("Your payment was approved.", True),
+    ("It went thru.", True),
+    ("The charge was accepted.", True),
+    ("You're good to go.", True),
     ("There is no outstanding balance.", True),
     ("Your balance is 0.", True),
     ("That comes to two hundred forty dollars.", True),

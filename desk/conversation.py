@@ -71,7 +71,8 @@ NO_PAYMENT_LINE = "I don't see a payment from this conversation yet. If you'd li
 # or the card. Replacements are the desk's own sentences built from the ledger and the payment record, so a false
 # alarm costs some wording and never a wrong statement.
 NUMBER_WORDS = re.compile(r"\d|\b(dollars?|cents?|bucks|hundred|thousand|zero)\b", re.I)
-OUTCOME = re.compile(r"\b(went through|gone through|cleared|clear|successful(ly)?|succeeded|processed|posted|applied|received|confirmed|"
+OUTCOME = re.compile(r"\b(went through|gone through|went thru|gone thru|cleared|clear|successful(ly)?|succeeded|processed|posted|applied|"
+                     r"received|confirmed|approved|accepted|authori[sz]ed|done|finished|good to go|"
                      r"complete[d]?|settled|paid|charged|covered|taken care of|caught up|current|all set|nothing (is )?(owed|due)|"
                      r"no (outstanding |remaining )?(balance|amount|money)|(don't|do not) owe)\b", re.I)
 SUBJECT = re.compile(r"\b(payment|balance|account|card|charge|rent|bill|you|your|it|that|everything)\b", re.I)
