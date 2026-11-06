@@ -94,10 +94,11 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         import_stitch(session)   # published lien-law reference data, stored once per file
     if settings.demo_seed:
         from . import demo
-        demo.build(factory, adapter, settings.fms_base_url)
-        if settings.public_view and not demo.is_complete(factory):
-            raise RuntimeError("this database holds data that is not a finished synthetic world; "
-                               "the public preview starts only from an empty database")
+        built = demo.build(factory, adapter, settings.fms_base_url)
+        if settings.public_view and not built:
+            # a database that already held records may hold more than the synthetic world (an earlier run's chats,
+            # notes or a half-built world), so the public preview always builds a fresh one
+            raise RuntimeError("the public preview starts only from an empty database, where it builds the synthetic world")
     worker = Worker(factory, adapter, settings.reconcile_every_seconds)
 
     @asynccontextmanager

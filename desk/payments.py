@@ -192,6 +192,12 @@ def confirm(session: Session, adapter: FMSAdapter, case_id: int, proposal_id: st
 class PaymentService:
     def __init__(self, session: Session, adapter: FMSAdapter):
         self.session, self.adapter = session, adapter
+        # FMS reads that failed during this service's work; the worker counts a pass with any as a failed pass
+        self.read_failures = 0
+
+    def _read_failed(self, case: DelinquencyCase, detail: dict) -> None:
+        self.read_failures += 1
+        record(self.session, case, "fms read failed", detail)
 
     # ------------------------------------------------------------------ submit
     def take_payment(self, case_id: int, payment_method_id: str, auth: Authorization) -> PaymentCommand:
@@ -311,7 +317,7 @@ class PaymentService:
         try:
             payments = self.adapter.payments_for_lease(lease.provider_id)
         except FMSError as exc:
-            record(self.session, case, "fms read failed", {"command": command.id, "error": str(exc)})
+            self._read_failed(case, {"command": command.id, "error": str(exc)})
             self._save()
             return command
         for p in payments:
@@ -382,7 +388,7 @@ class PaymentService:
             try:
                 applied, ambiguous = self._applied_to_lease(command, lease, payments)
             except FMSError as exc:
-                record(self.session, case, "fms read failed", {"command": command.id, "error": str(exc)})
+                self._read_failed(case, {"command": command.id, "error": str(exc)})
                 self._save()
                 return command
             if applied and command.state == "NEEDS_STAFF":
@@ -510,7 +516,7 @@ class PaymentService:
         try:
             payments = self.adapter.payments_for_lease(lease.provider_id)
         except FMSError as exc:
-            record(self.session, case, "fms read failed", {"error": str(exc)})
+            self._read_failed(case, {"error": str(exc)})
             return
         known = set(self.session.scalars(select(PaymentCommand.provider_payment_id).where(PaymentCommand.case_id == case.id)).all())
         for p in payments:
@@ -532,7 +538,7 @@ class PaymentService:
             refresh_case(self.session, self.adapter, case)
             self.session.commit()
         except FMSError as exc:
-            record(self.session, case, "fms read failed", {"error": str(exc)})
+            self._read_failed(case, {"error": str(exc)})
         except StaleDataError:
             self.session.rollback()
             log.info("case %s was refreshed by another pass first; kept the newer state", case.id)

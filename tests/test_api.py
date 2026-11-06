@@ -89,7 +89,7 @@ def test_the_public_preview_refuses_to_start_on_anything_but_the_synthetic_world
     with TestClient(create_app(Settings(**{**preview_settings(fms_url).__dict__, "public_view": False, "database_url": db}),
                                adapter, start_worker=False), headers={"X-Desk-Token": TOKEN}) as desk:
         assert desk.post(f"/api/facilities/{ORLANDO}/sync").status_code == 200
-    with pytest.raises(RuntimeError, match="not a finished synthetic world"):
+    with pytest.raises(RuntimeError, match="only from an empty database"):
         create_app(Settings(**{**preview_settings(fms_url, demo_seed=True).__dict__, "database_url": db}), adapter, start_worker=False)
 
 

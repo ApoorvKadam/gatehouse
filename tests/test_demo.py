@@ -107,3 +107,35 @@ def test_readiness_turns_false_when_every_worker_pass_fails(adapter):
         assert worker.last_error == "OperationalError" and not worker.alive()
     finally:
         worker.stop()
+
+
+def test_a_worker_whose_fms_reads_fail_is_not_ready(fms_url, sim, adapter):
+    import time
+
+    from desk.adapter.cubby import CubbyAdapter
+    from desk.cases import sync_facility
+    from desk.worker import Worker
+
+    factory = make_session_factory("sqlite:///:memory:")
+    with factory() as s:
+        sync_facility(s, adapter, "fac_NSorlando01")
+    # the facility list could still answer while every payment and ledger read fails; here the FMS is gone entirely
+    gone = CubbyAdapter("http://127.0.0.1:9", "sim_org_northstar_full", timeout_seconds=0.2)
+    worker = Worker(factory, gone, every_seconds=0.05, stale_after=5)
+    assert not worker.alive()            # not started: no pass yet
+    worker.start()
+    try:
+        time.sleep(1.0)
+        assert worker.last_error and "FMS read(s) failed" in worker.last_error and not worker.alive()
+    finally:
+        worker.stop()
+    good = Worker(factory, adapter, every_seconds=60)
+    good.start()
+    try:
+        for _ in range(50):
+            if good.alive():
+                break
+            time.sleep(0.1)
+        assert good.alive() and good.last_error is None   # the first pass runs at once
+    finally:
+        good.stop()

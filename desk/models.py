@@ -197,16 +197,6 @@ class DeskBinding(Base):
     bound_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
-class SyntheticWorld(Base):
-    """Written by desk/demo.py only after every scenario of the preview world was built. The public preview serves a
-    database only when this row is there, so an interrupted build or a database with other data is never shown."""
-
-    __tablename__ = "synthetic_world"
-    id: Mapped[int] = mapped_column(primary_key=True)
-    id_seed: Mapped[str] = mapped_column(String)
-    built_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-
-
 class RuleSourceRow(Base):
     """One row of a published lien-law dataset, stored exactly as published with the file it came from. Rows are
     reference material for the people who write rule versions; nothing here is executable, and nothing edits them."""

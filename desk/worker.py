@@ -15,9 +15,12 @@ from .payments import PaymentService
 log = logging.getLogger("desk.worker")
 
 
-def run_once(factory: sessionmaker[Session], adapter: FMSAdapter) -> int:
+def run_once(factory: sessionmaker[Session], adapter: FMSAdapter) -> tuple[int, int]:
+    """One pass: how many payments were checked, and how many FMS reads failed along the way."""
     with factory() as session:
-        return PaymentService(session, adapter).reconcile_all()
+        service = PaymentService(session, adapter)
+        checked = service.reconcile_all()
+        return checked, service.read_failures
 
 
 class Worker:
@@ -30,35 +33,40 @@ class Worker:
         # monotonic time of the last pass that succeeded; readiness reads it
         self.last_ok: float | None = None
         self.last_error: str | None = None
-        self.started_at = time.monotonic()
 
     def start(self) -> None:
-        self.started_at = time.monotonic()
         self._thread.start()
 
     def alive(self) -> bool:
-        """The loop is running and a pass succeeded recently. A stuck FMS call or a pass that fails every time
-        shows up here."""
-        if not self._thread.is_alive():
+        """The loop is running and a whole pass succeeded recently. A stuck FMS call, or passes that fail every
+        time or fail on some reads every time, show up here; so does a worker that has not yet finished one."""
+        if not self._thread.is_alive() or self.last_ok is None:
             return False
-        since = time.monotonic() - (self.last_ok if self.last_ok is not None else self.started_at)
-        return since < self.stale_after
+        return time.monotonic() - self.last_ok < self.stale_after
 
     def stop(self) -> None:
         self._stop.set()
         self._thread.join(timeout=self.every + 5)
 
     def _loop(self) -> None:
-        while not self._stop.wait(self.every):
+        # the first pass runs at once, so readiness can be earned right after startup
+        while True:
             try:
-                checked = run_once(self.factory, self.adapter)
-                self.last_error, self.last_ok = None, time.monotonic()
+                checked, failed = run_once(self.factory, self.adapter)
+                if failed:
+                    # the pass went on with the other cases, but it did not do its whole job
+                    self.last_error = f"{failed} FMS read(s) failed"
+                    log.warning("reconcile pass: %s", self.last_error)
+                else:
+                    self.last_error, self.last_ok = None, time.monotonic()
                 if checked:
                     log.info("reconciled %d payment(s)", checked)
             except Exception as exc:
                 # a bad FMS read must not kill the loop; the next pass tries again
                 self.last_error = type(exc).__name__
                 log.exception("reconcile pass failed")
+            if self._stop.wait(self.every):
+                return
 
 
 if __name__ == "__main__":
