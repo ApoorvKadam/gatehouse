@@ -41,6 +41,17 @@ LANE_OF = {
 IN_FLIGHT = {"SUBMITTING": "being sent to the FMS", "PENDING_AT_FMS": "pending at the FMS",
              "AWAITING_APPLICATION": "accepted by the FMS but not yet on the ledger",
              "OUTCOME_UNKNOWN": "unconfirmed: the FMS answer did not arrive and Gatehouse is checking"}
+# what a lien file's latest state means on Today: rank, head, what proves it done, who acts. A file stays on the list
+# until a person's decision is recorded, which Gatehouse cannot record yet, so these items do not close on their own.
+LIEN_ITEMS = {
+    "Account changed: re-review": (1, "Lien file out of date", "A person reviews the file against the account as it is now and decides what happens to the sale.", "Collections lead"),
+    "FMS reports paid": (1, "Lien file on a paid account", "A person confirms the sale is cancelled everywhere it was listed.", "Collections lead"),
+    "FMS data unavailable": (2, "Lien file cannot be checked", "Gatehouse reads the FMS again and the file is evaluated.", "Gatehouse checks on its own"),
+    "Evidence incomplete": (2, "Lien file incomplete", "Every requirement has a record, with its document where one is needed.", "Front desk"),
+    "Waiting for a timing threshold": (3, "Lien file waiting on a date", "The date passes and the file is evaluated again.", "Gatehouse checks on its own"),
+    "Counsel review required": (3, "Counsel review required", "Counsel's decision is recorded on the file. Gatehouse cannot record one yet.", "Counsel"),
+    "Review packet assembled": (3, "Lien packet ready for review", "A person reviews the packet. Sale authorization is outside Gatehouse.", "Collections lead"),
+}
 EVIDENCE_NAMES = {"notice": "Lien notice", "mail_deposit": "Certificate of mailing", "posting": "Notice posted",
                   "publication": "Newspaper publication", "legal_check": "Legal check", "email_delivery": "Email delivery"}
 
@@ -153,35 +164,38 @@ class Pages:
 
     def today(self, s: Session, facility: Facility) -> list[Item]:
         items: list[Item] = []
+        # a paid account can still have a lien file in motion, so every case is read; only lien work shows for those
         cases = s.scalars(select(DelinquencyCase).join(Lease, Lease.id == DelinquencyCase.lease_id)
-                          .where(Lease.facility_id == facility.id, DelinquencyCase.state != "paid")).all()
+                          .where(Lease.facility_id == facility.id)).all()
         for case in cases:
             lease = s.get(Lease, case.lease_id)
             snap = s.get(LedgerSnapshot, case.last_snapshot_id) if case.last_snapshot_id else None
             owed = snap.total_due if snap else None
             found = False
-            for cmd in s.scalars(select(PaymentCommand).where(PaymentCommand.case_id == case.id)).all():
+            commands = s.scalars(select(PaymentCommand).where(PaymentCommand.case_id == case.id)).all() if case.state != "paid" else []
+            for cmd in commands:
                 how = "by phone" if (cmd.authorization or {}).get("channel") == "desk" else "in the tenant chat"
                 if cmd.state == "NEEDS_STAFF":
                     found = True
                     if cmd.provider_payment_id is None:
-                        what = (f"A {money(cmd.amount)} payment agreed {how}. The FMS answer never arrived, so Gatehouse holds the "
-                                "account and has not retried. "
+                        what = (f"A {money(cmd.amount)} payment agreed {how}. The FMS did not confirm the outcome, so Gatehouse "
+                                "holds the account and has not retried. "
                                 + (f"The FMS shows {cmd.suggested_payment_id}, which may be this attempt." if cmd.suggested_payment_id
-                                   else "No FMS payment matching this attempt has been found."))
+                                   else "Gatehouse has not matched any FMS payment to this attempt."))
                         head = "Payment outcome unknown"
                     else:
                         what, head = sentence(cmd.provider_reason or "The FMS and the ledger disagree about this payment"), "Payment needs a person"
                     items.append(Item(0, head, lease.unit_name, case.id, cmd.created_at, what,
-                                      "A person names the FMS payment that is this attempt and the ledger shows it, or records that it "
-                                      "was not charged once the FMS shows nothing that could be it.",
+                                      "A person names the FMS payment that is this attempt and the ledger shows it, or records "
+                                      "with evidence that it was not charged.",
                                       "Collections lead", f"/payments/{cmd.id}", money(cmd.amount)))
                 elif cmd.state in IN_FLIGHT:
                     found = True
                     items.append(Item(1, "Payment in progress", lease.unit_name, case.id, cmd.created_at,
                                       f"A {money(cmd.amount)} payment agreed {how} is {IN_FLIGHT[cmd.state]}. No other payment can start "
                                       "on this lease until it settles.",
-                                      "The FMS reports it succeeded and the ledger shows it, or the FMS reports it declined.",
+                                      "The FMS reports it succeeded and the ledger shows it, the FMS reports it declined, or "
+                                      "Gatehouse hands it to a person.",
                                       "Gatehouse checks on its own", f"/payments/{cmd.id}", money(cmd.amount)))
                 elif cmd.state == "RETURNED":
                     found = True
@@ -189,19 +203,17 @@ class Pages:
                                       f"{money(cmd.amount)} posted and was confirmed, then the FMS reported it returned. The account is open again.",
                                       "The FMS ledger shows the balance paid.", "Front desk", f"/payments/{cmd.id}", money(owed)))
             last = s.scalar(select(LienEvaluation).where(LienEvaluation.case_id == case.id).order_by(LienEvaluation.id.desc()).limit(1))
-            if last is not None and last.state == "Account changed: re-review":
+            if last is not None:
                 found = True
-                why = [sentence(f["detail"]) for f in last.findings if f["status"] in ("review", "blocked")]
+                rank, head, proof, who = LIEN_ITEMS.get(last.state, (3, last.state, "A person reviews the file.", "Collections lead"))
+                open_findings = [sentence(f["detail"]) for f in last.findings if f["status"] != "met"]
                 sale = next((v for k, v in last.timing.items() if k.startswith("earliest sale")), None)
-                items.append(Item(1, "Lien file out of date", lease.unit_name, case.id, last.evaluated_at,
-                                  " ".join(why) + (f" Earliest sale under the statute: {day(sale)}." if sale else ""),
-                                  "A person reviews the file against the account as it is now and decides what happens to the sale.",
-                                  "Collections lead", f"/accounts/{case.id}/lien", money(owed)))
-            elif last is not None and last.state == "Counsel review required":
-                found = True
-                items.append(Item(3, "Counsel review required", lease.unit_name, case.id, last.evaluated_at, sentence(last.summary),
-                                  "Counsel's decision is recorded on the file. Gatehouse cannot record one yet, so this stays open.",
-                                  "Counsel", f"/accounts/{case.id}/lien", money(owed)))
+                what = " ".join(open_findings) if last.state not in ("Counsel review required",) and open_findings else sentence(last.summary)
+                items.append(Item(rank, head, lease.unit_name, case.id, last.evaluated_at,
+                                  what + (f" Earliest sale under the statute: {day(sale)}." if sale and rank <= 2 else ""),
+                                  proof, who, f"/accounts/{case.id}/lien", money(owed)))
+            if case.state == "paid":
+                continue
             if not found:
                 items.append(Item(4, "Past due", lease.unit_name, case.id, case.opened_at,
                                   f"{money(owed)} owed. No payment or lien step in progress.",
@@ -255,7 +267,7 @@ def router(pages: Pages) -> APIRouter:
             facilities = pages.facilities(s)
             if not facilities:
                 raise HTTPException(503, "No facility has been read from the FMS yet")
-            current = next((f for f in facilities if f.provider_id == facility), None) if facility else facilities[0]
+            current = next((f for f in facilities if f.provider_id == facility), None) if facility is not None else facilities[0]
             if current is None:
                 raise HTTPException(404, "No such facility")
             items = pages.today(s, current)

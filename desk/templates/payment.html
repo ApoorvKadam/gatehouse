@@ -34,7 +34,7 @@
     <dl class="kv">
       <dt>Written down first</dt><dd>{{ local(cmd.created_at) }}, before the FMS was called</dd>
       <dt>Sent to the FMS</dt><dd>{{ local(cmd.submitted_at) or 'Not sent' }}</dd>
-      <dt>Answer</dt><dd>{% if cmd.provider_payment_id %}{{ cmd.provider_payment_id }}, {{ cmd.provider_status }}{% elif cmd.submitted_at %}None before the timeout{% else %}None{% endif %}</dd>
+      <dt>Answer</dt><dd>{% if cmd.provider_payment_id %}{{ cmd.provider_payment_id }}, {{ cmd.provider_status }}{% elif cmd.submitted_at %}No usable answer: the outcome was not confirmed{% else %}None{% endif %}</dd>
       <dt>Checks since</dt><dd>{{ cmd.checks }}, last {{ local(cmd.last_checked_at) or 'not yet' }}</dd>
       <dt>Retried</dt><dd>No. A payment whose outcome is unknown is never sent again.</dd>
     </dl>
@@ -62,7 +62,7 @@
     <h2>What a person can decide</h2>
     <ul class="decisions">
       <li><b>This is the payment</b><span>Name the FMS payment that is this attempt. Gatehouse confirms it only once the ledger shows it applied.</span></li>
-      <li><b>Not charged</b><span>Refused while the FMS shows a matching payment as pending or succeeded, as it does here.</span></li>
+      <li><b>Not charged</b><span>Refused while the FMS shows this payment pending or succeeded. Every possible match has to be named, with why it is another payment.</span></li>
       <li><b>Keep open</b><span>Leave the account held and record what was checked.</span></li>
     </ul>
     <p class="note">Each decision needs a signed-in operator and a written note of what was checked. This preview is read-only, so the decisions are listed, not offered.</p>
@@ -70,16 +70,15 @@
   {% endif %}
 
   {% if truth %}
-  {% set mine = truth.payments|selectattr('paymentId', 'in', [cmd.provider_payment_id, cmd.suggested_payment_id])|list %}
   <section class="block wide truth">
     <h2>The simulator's own record, from {{ truth.recorded_at }}</h2>
     <dl class="kv">
       <dt>Payments on this lease</dt><dd>{{ truth.payments|length }}</dd>
-      {% for p in truth.payments %}<dt>{{ p.paymentId }}</dt><dd>{{ money(p.amount) }}, {{ p.status }}{% if p.applied %}, applied to the ledger{% endif %}{% if p in mine %} (this attempt){% endif %}</dd>{% endfor %}
+      {% for p in truth.payments %}<dt>{{ p.paymentId }}</dt><dd>{{ money(p.amount) }}, {{ p.status }}{% if p.applied %}, applied to the ledger{% endif %}{% if p.paymentId == cmd.provider_payment_id %} (this attempt){% elif p.paymentId == cmd.suggested_payment_id %} (possible match){% endif %}</dd>{% endfor %}
       <dt>Balance at the simulator</dt><dd>{{ money(truth.totalDue) }}</dd>
     </dl>
     <p>A real FMS cannot show this: the simulator keeps its own record of what it did. It was saved when this preview started, before anyone opened a page.
-    {% if cmd.state == 'NEEDS_STAFF' and truth.payments|length == 1 and mine %} It shows one charge on this lease, so holding the account instead of retrying is what kept this tenant from being charged twice.{% endif %}</p>
+    {% if cmd.state == 'NEEDS_STAFF' and truth.payments|length == 1 %} It shows one payment on this lease, and Gatehouse sent this payment once and did not retry it.{% endif %}</p>
   </section>
   {% endif %}
 </div>

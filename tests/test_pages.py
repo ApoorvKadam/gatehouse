@@ -36,19 +36,20 @@ def test_today_lists_each_open_item_with_what_proves_it_done(fms_url, sim):
         assert "Counsel review required" in albany and "Payment outcome unknown" not in albany
         # a facility id that is not ours is not quietly swapped for another facility
         assert visitor.get("/", params={"facility": "fac_HBtampa0001"}).status_code == 404
+        assert visitor.get("/?facility=").status_code == 404
 
 
 def test_the_lost_payment_shows_both_sides_and_offers_no_payment_button(fms_url, sim):
     with TestClient(preview(fms_url)) as visitor:
         page = visitor.get("/payments/1").text
         assert "Outcome unknown: held for a person" in page
-        assert "None before the timeout" in page and "never sent again" in page
+        assert "No usable answer" in page and "never sent again" in page
         assert "&ldquo;Yes, go ahead&rdquo;" in page or "Yes, go ahead" in page
         # the simulator's own record, saved when the world was built: one charge, applied
         assert "The simulator&#39;s own record" in page or "The simulator's own record" in page
-        assert "SUCCEEDED, applied to the ledger (this attempt)" in page and "charged twice" in page
+        assert "SUCCEEDED, applied to the ledger (possible match)" in page and "did not retry it" in page
         returned = visitor.get("/payments/2").text
-        assert "DIRECT_DEBIT_RETURN" in returned and "charged twice" not in returned
+        assert "DIRECT_DEBIT_RETURN" in returned and "(this attempt)" in returned and "did not retry it" not in returned
         assert "<form" not in page.split("<main>")[1] and "Mark paid" not in page
 
 
