@@ -263,6 +263,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         row = session.get(LienEvaluation, evaluation_id)
         if row is None:
             raise HTTPException(404, "evaluation not found")
+        get_case(session, row.case_id)   # same facility rule as the case
         return {"evaluation_id": row.id, "same_result": replay(row)}
 
     @app.get("/api/payments/{command_id}")

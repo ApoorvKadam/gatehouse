@@ -6,6 +6,7 @@ import hashlib
 from dataclasses import asdict
 
 from sqlalchemy import DDL, event, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .adapter import FMSAdapter, FMSError
@@ -56,7 +57,11 @@ def record_evidence(session: Session, case: DelinquencyCase, kind: str, facts: d
                        document_name=document_name, document_text=document_text, supersedes_id=supersedes,
                        document_sha256=hashlib.sha256(document_text.encode()).hexdigest() if document_text else None)
     session.add(row)
-    session.flush()
+    try:
+        session.flush()
+    except IntegrityError as exc:
+        session.rollback()
+        raise ValueError(f"record {supersedes} was already corrected; correct the latest one") from exc
     record(session, case, "lien evidence recorded", {"evidence": row.id, "kind": kind, "supersedes": supersedes}, actor=entered_by)
     session.commit()
     return row
@@ -88,6 +93,7 @@ def case_facts(session: Session, adapter: FMSAdapter, case: DelinquencyCase) -> 
         pass   # the evaluation reports exactly what could not be read
     # the ledger snapshots the notices name, and what has changed since on the charges a notice claimed
     snapshots, changes = {}, None
+    latest_notice = next((r for r in reversed(evidence) if r.kind == "notice"), None)
     for r in evidence:
         sid = r.facts.get("ledger_snapshot_id") if r.kind == "notice" else None
         snap = session.get(LedgerSnapshot, sid) if sid is not None else None
@@ -98,7 +104,7 @@ def case_facts(session: Session, adapter: FMSAdapter, case: DelinquencyCase) -> 
         except DateProblem:
             continue
         snapshots[str(sid)] = {"total_due": snap.total_due, "observed_on": observed}
-        if ledger is not None:
+        if ledger is not None and r is latest_notice:   # only the notice the evaluation uses
             changes = ledger_changes(snap.raw, ledger.raw)
     try:
         today = local_date(utcnow(), facility_zone(zone_name)).isoformat()
@@ -111,10 +117,14 @@ def case_facts(session: Session, adapter: FMSAdapter, case: DelinquencyCase) -> 
 def ledger_changes(then: dict, now: dict) -> list[str]:
     """What changed on the charges that were open in an earlier ledger: payments applied or reversed, waivers, amounts,
     charges that disappeared. New charges posted since are not changes to the claim."""
-    current = {e["bookEntryId"]: e for e in now.get("bookEntries", [])}
+    then_entries, now_entries = then.get("bookEntries") or [], now.get("bookEntries") or []
+    current = {e["bookEntryId"]: e for e in now_entries if isinstance(e, dict) and e.get("bookEntryId")}
     out = []
-    for e in then.get("bookEntries", []):
-        if e.get("type") != "CHARGE":
+    for e in then_entries:
+        if not isinstance(e, dict) or e.get("type") != "CHARGE":
+            continue
+        if not e.get("bookEntryId"):
+            out.append("a claimed charge has no entry id, so it cannot be compared with the current ledger")
             continue
         name = ((e.get("details") or {}).get("description") or (e.get("details") or {}).get("category") or e["bookEntryId"]).lower()
         later = current.get(e["bookEntryId"])

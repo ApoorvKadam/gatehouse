@@ -255,3 +255,10 @@ def test_the_same_facts_give_the_same_answer():
     f = facts(complete())
     assert evaluate(f) == evaluate(CaseFacts(**{k: getattr(f, k) for k in f.__dataclass_fields__}))
     assert f.digest() == facts(complete()).digest()
+
+
+def test_ledger_changes_cope_with_missing_lists_and_ids():
+    from desk.lien_files import ledger_changes
+    assert ledger_changes({"bookEntries": None}, {"bookEntries": None}) == []
+    then = {"bookEntries": [{"type": "CHARGE", "amount": 2500, "amountPaid": 0, "details": {"description": "Late fee"}}]}
+    assert "no entry id" in ledger_changes(then, {"bookEntries": []})[0]

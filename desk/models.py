@@ -226,7 +226,8 @@ class LienEvidence(Base):
     document_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     entered_by: Mapped[str] = mapped_column(String)
     entered_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-    supersedes_id: Mapped[int | None] = mapped_column(ForeignKey("lien_evidence.id"), nullable=True)
+    # one correction per record, enforced by the database so two concurrent corrections cannot both be current
+    supersedes_id: Mapped[int | None] = mapped_column(ForeignKey("lien_evidence.id"), nullable=True, unique=True)
 
 
 class LienEvaluation(Base):
