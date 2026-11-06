@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from .adapter import FMSAdapter, FMSError, NotFound, PermissionDenied, ProviderPayment
 from .cases import record, refresh_case
 from .db import utcnow
-from .models import DelinquencyCase, IdentityCheck, Lease, ObservedPayment, PaymentCommand
+from .models import HOLDING_STATES, DelinquencyCase, IdentityCheck, Lease, ObservedPayment, PaymentCommand
 
 RETURNED_STATUSES = {"REFUND_INITIATED", "REFUNDED", "DISPUTED", "DIRECT_DEBIT_RETURN"}
 UNRESOLVED = ("AWAITING_APPLICATION", "PENDING_AT_FMS", "OUTCOME_UNKNOWN")
@@ -25,6 +25,10 @@ UNRESOLVED = ("AWAITING_APPLICATION", "PENDING_AT_FMS", "OUTCOME_UNKNOWN")
 MAX_UNKNOWN_CHECKS = 3
 # how far back a lost payment may have been created relative to our submit time
 CLOCK_SKEW = timedelta(minutes=2)
+# how long the desk waits on the FMS before a person has to look: a payment the FMS calls SUCCEEDED that the
+# ledger does not show, or a payment still PENDING at the gateway
+APPLICATION_WAIT = timedelta(minutes=15)
+PENDING_WAIT = timedelta(hours=1)
 
 
 class PaymentRefused(Exception):
@@ -53,6 +57,8 @@ class Authorization:
         return Authorization(uuid.uuid4().hex, identity_verified, balance_seen, amount, channel)
 
 
+# a verified caller can pay for this long; after that they verify again, in any channel
+IDENTITY_VALID_FOR = timedelta(minutes=15)
 IDENTITY_TRIES = 3
 IDENTITY_LOCK = timedelta(minutes=30)
 
@@ -122,13 +128,14 @@ class PaymentService:
         if auth.amount <= 0:
             raise PaymentRefused("amount must be positive")
         in_flight = self.session.scalar(select(PaymentCommand).where(
-            PaymentCommand.case_id == case_id, PaymentCommand.state.in_(("SUBMITTING",) + UNRESOLVED + ("NEEDS_STAFF",))))
+            PaymentCommand.case_id == case_id, PaymentCommand.state.in_(HOLDING_STATES)))
         if in_flight is not None:
             raise PaymentRefused(f"payment {in_flight.id} on this account is not settled yet ({in_flight.state})")
         ledger = self.adapter.ledger(lease.provider_id)
         command = PaymentCommand(case_id=case_id, lease_id=lease.id, idempotency_key=key, amount=auth.amount,
                                  payment_method_id=payment_method_id, authorization=auth.__dict__, state="SUBMITTING",
-                                 balance_before=ledger.total_due, prepaid_before=ledger.prepaid)
+                                 balance_before=ledger.total_due, prepaid_before=ledger.prepaid,
+                                 entries_paid_before={e["bookEntryId"]: e.get("amountPaid", 0) for e in ledger.raw.get("bookEntries", [])})
         if ledger.total_due != auth.balance_seen:
             command.state = "NEEDS_REAUTHORIZATION"
             command.provider_reason = f"balance is now {ledger.total_due}, the tenant agreed while it was {auth.balance_seen}"
@@ -136,9 +143,12 @@ class PaymentService:
         try:
             self.session.commit()
         except IntegrityError:
-            # another request with the same authorization got here first
             self.session.rollback()
-            return self.session.scalar(select(PaymentCommand).where(PaymentCommand.idempotency_key == key))
+            same = self.session.scalar(select(PaymentCommand).where(PaymentCommand.idempotency_key == key))
+            if same is not None:
+                return same   # the same authorization got here first
+            # a different authorization for this account committed its payment between our check and our insert
+            raise PaymentRefused("another payment on this account is not settled yet")
         if command.state == "NEEDS_REAUTHORIZATION":
             record(self.session, case, "payment needs a new authorization", {"command": command.id, "balance": ledger.total_due})
             self.session.commit()
@@ -159,14 +169,14 @@ class PaymentService:
         self.session.commit()
         if command.state in UNRESOLVED:
             self.reconcile(command)
-        refresh_case(self.session, self.adapter, case)
+        self._refresh(case)
         self.session.commit()
         return command
 
     # ------------------------------------------------------------------ reconcile
     def reconcile(self, command: PaymentCommand) -> PaymentCommand:
         """Read the FMS once and move the command as far as the evidence allows. Never resubmits."""
-        if command.state not in UNRESOLVED + ("CONFIRMED",):
+        if command.state not in UNRESOLVED + ("CONFIRMED", "NEEDS_STAFF"):
             return command
         lease = self.session.get(Lease, command.lease_id)
         case = self.session.get(DelinquencyCase, command.case_id)
@@ -181,10 +191,10 @@ class PaymentService:
         for p in payments:
             self._observe(lease, p)
         match = next((p for p in payments if p.provider_id == command.provider_payment_id), None) if command.provider_payment_id else None
-        if command.state == "OUTCOME_UNKNOWN" and match is None:
+        if match is None and command.provider_payment_id is None and command.state in ("OUTCOME_UNKNOWN", "NEEDS_STAFF"):
             match = self._find_lost(command, payments)
             if match is None:
-                if command.checks >= MAX_UNKNOWN_CHECKS:
+                if command.state == "OUTCOME_UNKNOWN" and command.checks >= MAX_UNKNOWN_CHECKS:
                     command.state = "NEEDS_STAFF"
                     command.provider_reason = (f"no payment of {command.amount} cents appeared at the FMS after {command.checks} checks; "
                                                "someone has to confirm with the FMS before any new attempt")
@@ -196,7 +206,9 @@ class PaymentService:
         if match is None:
             self.session.commit()
             return command
-        command.provider_status, command.provider_reason = match.status, match.reason
+        command.provider_status = match.status
+        if command.state != "NEEDS_STAFF":
+            command.provider_reason = match.reason   # a person's open question stays on the command until it is answered
         if command.state == "CONFIRMED":
             if match.status in RETURNED_STATUSES:
                 command.state = "RETURNED"
@@ -205,14 +217,16 @@ class PaymentService:
             command.state = "DECLINED"
             record(self.session, case, "payment declined", {"command": command.id, "status": match.status, "reason": match.reason})
         elif match.status == "PENDING":
-            command.state = "PENDING_AT_FMS"
+            self._wait(command, case, "PENDING_AT_FMS", PENDING_WAIT,
+                       f"the FMS still reports payment {match.provider_id} as PENDING; check it with the processor before any new attempt")
         elif match.status == "SUCCEEDED":
-            if self._applied_to_lease(command, lease):
+            if self._applied_to_lease(command, lease, payments):
                 command.state, command.confirmed_at = "CONFIRMED", utcnow()
                 record(self.session, case, "payment confirmed", {"command": command.id, "payment": match.provider_id,
                                                                  "amount": command.amount})
             else:
-                command.state = "AWAITING_APPLICATION"
+                self._wait(command, case, "AWAITING_APPLICATION", APPLICATION_WAIT,
+                           f"the FMS reports payment {match.provider_id} as SUCCEEDED, but the lease ledger does not show it")
         elif match.status in RETURNED_STATUSES:
             command.state = "RETURNED"
         self.session.commit()
@@ -228,7 +242,9 @@ class PaymentService:
             stuck.submitted_at = stuck.submitted_at or stuck.created_at
         self.session.commit()
         commands = self.session.scalars(select(PaymentCommand).where(
-            (PaymentCommand.state.in_(UNRESOLVED)) | ((PaymentCommand.state == "CONFIRMED") & (PaymentCommand.confirmed_at >= recent)))).all()
+            (PaymentCommand.state.in_(UNRESOLVED))
+            | ((PaymentCommand.state == "NEEDS_STAFF") & (PaymentCommand.created_at >= recent))
+            | ((PaymentCommand.state == "CONFIRMED") & (PaymentCommand.confirmed_at >= recent)))).all()
         touched = set()
         for command in commands:
             self.reconcile(command)
@@ -238,7 +254,7 @@ class PaymentService:
             self.observe_case(case)
             touched.add(case.id)
         for case_id in touched:
-            refresh_case(self.session, self.adapter, self.session.get(DelinquencyCase, case_id))
+            self._refresh(self.session.get(DelinquencyCase, case_id))
         self.session.commit()
         return len(commands)
 
@@ -257,14 +273,38 @@ class PaymentService:
                 record(self.session, case, "payment taken outside the desk", {"payment": p.provider_id, "amount": p.amount}, source="fms")
 
     # ------------------------------------------------------------------ helpers
-    def _applied_to_lease(self, command: PaymentCommand, lease: Lease) -> bool:
-        """The FMS ledger, not the payment record, decides whether the money reached this lease."""
+    def _refresh(self, case: DelinquencyCase) -> None:
+        """Re-read a case from the FMS. One lease the FMS cannot answer for never stops the others."""
+        try:
+            refresh_case(self.session, self.adapter, case)
+        except FMSError as exc:
+            record(self.session, case, "fms read failed", {"error": str(exc)})
+
+    def _wait(self, command: PaymentCommand, case: DelinquencyCase, state: str, limit: timedelta, why: str) -> None:
+        """Keep waiting on the FMS, or hand the payment to a person once the wait is longer than it should be."""
+        if command.state == "NEEDS_STAFF":
+            return
+        if utcnow() - (command.submitted_at or command.created_at) > limit:
+            command.state, command.provider_reason = "NEEDS_STAFF", why
+            record(self.session, case, "payment needs staff", {"command": command.id, "reason": why})
+        else:
+            command.state = state
+
+    def _applied_to_lease(self, command: PaymentCommand, lease: Lease, payments: list[ProviderPayment]) -> bool:
+        """The FMS ledger, not the payment record, decides whether the money reached this lease.
+
+        Only money paid against the charges that existed when the tenant agreed, or added to prepaid, counts, so a
+        fee posted afterwards cannot hide the payment and a waiver cannot look like one. Every other payment the FMS
+        shows on the lease since then could explain that money, so it is taken out first: a payment taken at the
+        counter at the same time leaves this one unconfirmed rather than wrongly confirmed."""
         ledger = self.adapter.ledger(lease.provider_id)
-        later = self.session.scalars(select(PaymentCommand).where(
-            PaymentCommand.lease_id == lease.id, PaymentCommand.id != command.id, PaymentCommand.state == "CONFIRMED",
-            PaymentCommand.submitted_at > command.submitted_at)).all()
-        applied = (command.balance_before - ledger.total_due) + (ledger.prepaid - command.prepaid_before) - sum(c.amount for c in later)
-        return applied >= command.amount
+        now = {e["bookEntryId"]: e.get("amountPaid", 0) for e in ledger.raw.get("bookEntries", [])}
+        paid = sum(now[i] - was for i, was in (command.entries_paid_before or {}).items() if i in now)
+        paid += ledger.prepaid - command.prepaid_before
+        since = (command.submitted_at or command.created_at) - CLOCK_SKEW
+        others = sum(p.amount for p in payments if p.provider_id != command.provider_payment_id and p.status == "SUCCEEDED"
+                     and (p.created_at is None or p.created_at >= since))
+        return paid - others >= command.amount
 
     def _find_lost(self, command: PaymentCommand, payments: list[ProviderPayment]) -> ProviderPayment | None:
         claimed = set(self.session.scalars(select(PaymentCommand.provider_payment_id).where(

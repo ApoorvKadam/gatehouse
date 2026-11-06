@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base, utcnow
@@ -64,6 +64,11 @@ class DelinquencyCase(Base):
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+# a payment in one of these states still holds the account: no second payment may start until it settles
+HOLDING_STATES = ("SUBMITTING", "AWAITING_APPLICATION", "PENDING_AT_FMS", "OUTCOME_UNKNOWN", "NEEDS_STAFF")
+_HOLDING_SQL = text("state IN (" + ", ".join(f"'{s}'" for s in HOLDING_STATES) + ")")
+
+
 class PaymentCommand(Base):
     """An authorized intent to take one payment, and everything learned about it afterwards.
 
@@ -71,6 +76,9 @@ class PaymentCommand(Base):
     was attempted instead of nothing."""
 
     __tablename__ = "payment_commands"
+    # the database, not a read before the insert, keeps two requests from charging the same account at once
+    __table_args__ = (Index("one_holding_payment_per_case", "case_id", unique=True,
+                            sqlite_where=_HOLDING_SQL, postgresql_where=_HOLDING_SQL),)
     id: Mapped[int] = mapped_column(primary_key=True)
     case_id: Mapped[int] = mapped_column(ForeignKey("cases.id"))
     lease_id: Mapped[int] = mapped_column(ForeignKey("leases.id"))
@@ -81,6 +89,8 @@ class PaymentCommand(Base):
     state: Mapped[str] = mapped_column(String)
     balance_before: Mapped[int] = mapped_column(Integer)
     prepaid_before: Mapped[int] = mapped_column(Integer)
+    # amountPaid of each ledger entry when the tenant agreed; only money landing on these counts as this payment
+    entries_paid_before: Mapped[dict] = mapped_column(JSON, default=dict)
     provider_payment_id: Mapped[str | None] = mapped_column(String, nullable=True)
     provider_status: Mapped[str | None] = mapped_column(String, nullable=True)
     provider_reason: Mapped[str | None] = mapped_column(String, nullable=True)

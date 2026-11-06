@@ -212,7 +212,8 @@ def test_a_submission_interrupted_by_a_crash_is_looked_up_not_resent(session, ad
     ledger = adapter.ledger(DANA)
     command = PaymentCommand(case_id=case.id, lease_id=lease.id, idempotency_key="case-crash:auth-1", amount=24000,
                              payment_method_id="pm_DanaVisa4242", authorization={}, state="SUBMITTING",
-                             balance_before=ledger.total_due, prepaid_before=ledger.prepaid)
+                             balance_before=ledger.total_due, prepaid_before=ledger.prepaid,
+                             entries_paid_before={e["bookEntryId"]: e["amountPaid"] for e in ledger.raw["bookEntries"]})
     session.add(command)
     session.commit()
     adapter.make_payment(DANA, "pm_DanaVisa4242", 24000)   # the call went out just before the crash
@@ -242,3 +243,113 @@ def test_parallel_identity_guesses_are_counted_before_the_next_one_runs(adapter,
     with ThreadPoolExecutor(8) as pool:
         results = list(pool.map(guess, range(8)))
     assert sum(r is not None for r in results) == 3
+
+
+# ------------------------------------------------------------------ what on the ledger counts as this payment
+
+def test_a_fee_posted_after_the_payment_does_not_hold_it_unconfirmed(session, adapter, sim):
+    sim.behave(DANA, "late_application", lag=2)
+    command, _, _ = pay(session, adapter, DANA, "pm_DanaVisa4242", 24000)
+    sim.post("/sim/charges", {"leaseId": DANA, "amount": 2500, "description": "Late fee"})
+    settle(session, adapter)
+    assert session.get(PaymentCommand, command.id).state == "CONFIRMED"
+
+
+def test_a_counter_payment_at_the_same_time_is_not_taken_for_this_one(session, adapter, sim):
+    sim.behave(DANA, "late_application", lag=3)
+    command, _, _ = pay(session, adapter, DANA, "pm_DanaVisa4242", 24000)
+    sim.post("/sim/payments/offline", {"allocations": {DANA: 24000}})
+    PaymentService(session, adapter).reconcile(command)
+    assert command.state == "AWAITING_APPLICATION"   # the counter payment explains the drop in the balance
+    settle(session, adapter)
+    assert command.state == "CONFIRMED"   # ours landed too, as prepaid
+
+
+def test_a_payment_the_ledger_never_shows_goes_to_staff(session, adapter, sim):
+    sim.behave(DANA, "late_application", lag=1000)
+    command, case, _ = pay(session, adapter, DANA, "pm_DanaVisa4242", 24000)
+    command.submitted_at -= timedelta(minutes=16)
+    session.commit()
+    settle(session, adapter, times=1)
+    assert command.state == "NEEDS_STAFF" and "ledger does not show" in command.provider_reason
+    assert session.get(DelinquencyCase, case.id).state == "needs staff"
+
+
+def test_a_long_pending_payment_goes_to_staff_and_still_settles_later(session, adapter, sim):
+    sim.behave(DANA, "pending_then_succeed", lag=3)
+    command, _, _ = pay(session, adapter, DANA, "pm_DanaVisa4242", 24000)
+    assert command.state == "PENDING_AT_FMS"
+    command.submitted_at -= timedelta(hours=2)
+    session.commit()
+    PaymentService(session, adapter).reconcile(command)
+    assert command.state == "NEEDS_STAFF"
+    settle(session, adapter)
+    assert command.state == "CONFIRMED" and len(sim.payments(DANA)) == 1
+
+
+def test_two_payments_for_one_account_at_once_charge_it_once(adapter, sim, tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from desk.db import make_session_factory
+
+    sim.behave(DANA, "pending_then_succeed", lag=50)   # the first payment stays open while the others arrive
+    factory = make_session_factory(f"sqlite:///{tmp_path / 'desk.db'}")
+    with factory() as s:
+        case, _ = case_for(s, adapter, DANA)
+        s.commit()
+        case_id = case.id
+
+    def attempt(_):
+        with factory() as s:
+            try:
+                return PaymentService(s, adapter).take_payment(case_id, "pm_DanaVisa4242", Authorization.new(True, 24000, 24000)).state
+            except PaymentRefused:
+                return "refused"
+
+    with ThreadPoolExecutor(6) as pool:
+        results = list(pool.map(attempt, range(6)))
+    assert len(sim.payments(DANA)) == 1
+    assert sorted(results) == ["PENDING_AT_FMS"] + ["refused"] * 5
+
+
+def test_one_lease_the_fms_cannot_read_does_not_stop_the_pass(session, fms_url, sim):
+    from desk.adapter import FMSError
+
+    class Flaky(CubbyAdapter):
+        broken = False
+
+        def ledger(self, lease_provider_id):
+            if self.broken and lease_provider_id == MARCUS:
+                raise FMSError("timeout")
+            return super().ledger(lease_provider_id)
+
+    flaky = Flaky(fms_url, "sim_org_northstar_full", timeout_seconds=0.5)
+    marcus_case, _ = case_for(session, flaky, MARCUS)
+    dana_case, _ = case_for(session, flaky, DANA)
+    flaky.broken = True
+    sim.post("/sim/payments/offline", {"allocations": {DANA: 24000}})
+    PaymentService(session, flaky).reconcile_all()
+    assert session.get(DelinquencyCase, dana_case.id).state == "paid"
+    events = session.scalars(select(CaseEvent.kind).where(CaseEvent.case_id == marcus_case.id)).all()
+    assert "fms read failed" in events
+
+
+# ------------------------------------------------------------------ answers that are not FMS answers
+
+def test_a_proxy_error_page_is_not_taken_for_an_fms_answer():
+    import httpx
+
+    from desk.adapter import FMSError
+
+    proxy = CubbyAdapter("http://fms", "key", transport=httpx.MockTransport(lambda r: httpx.Response(502, text="<html>Bad Gateway</html>")))
+    with pytest.raises(FMSError):
+        proxy.ledger(DANA)
+    assert proxy.make_payment(DANA, "pm_DanaVisa4242", 24000).kind == "lost"
+
+
+def test_a_success_with_no_payment_id_is_treated_as_lost():
+    import httpx
+
+    body = {"status": "success", "data": {"payment": {"status": "SUCCEEDED", "amount": 24000}}}
+    odd = CubbyAdapter("http://fms", "key", transport=httpx.MockTransport(lambda r: httpx.Response(200, json=body)))
+    assert odd.make_payment(DANA, "pm_DanaVisa4242", 24000).kind == "lost"

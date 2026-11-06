@@ -15,6 +15,15 @@ def _parse_time(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value) if value else None
 
 
+def _json(response: httpx.Response) -> dict:
+    """A proxy's HTML 502 page or a cut-off body is not an FMS answer; treat it as no body."""
+    try:
+        body = response.json() if response.content else {}
+    except ValueError:
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
 class CubbyAdapter:
     provider = "cubby"
 
@@ -35,7 +44,7 @@ class CubbyAdapter:
 
     @staticmethod
     def _unwrap(path: str, response: httpx.Response) -> dict:
-        body = response.json() if response.content else {}
+        body = _json(response)
         if response.status_code == 404:
             raise NotFound("; ".join(body.get("errors", [])) or path)
         if response.status_code in (401, 403):
@@ -100,7 +109,7 @@ class CubbyAdapter:
         except httpx.TransportError as exc:
             # the connection broke after the request may have reached the FMS
             return SubmitOutcome(kind="lost", detail=f"connection failed: {exc.__class__.__name__}")
-        payload = response.json() if response.content else {}
+        payload = _json(response)
         if response.status_code >= 500:
             return SubmitOutcome(kind="lost", detail=f"HTTP {response.status_code}", errors=payload.get("errors", []))
         if response.status_code != 200:
@@ -112,4 +121,7 @@ class CubbyAdapter:
         kind = {"SUCCEEDED": "accepted", "DECLINED": "declined", "FAILED": "declined", "PENDING": "pending"}.get(payment.status)
         if kind is None:
             return SubmitOutcome(kind="lost", payment=payment, detail=f"unrecognized status {payment.status!r}")
+        if kind != "declined" and not payment.provider_id:
+            # money may have moved, but without an id the payment can only be found by searching for it
+            return SubmitOutcome(kind="lost", payment=payment, detail=f"{payment.status} with no payment id")
         return SubmitOutcome(kind=kind, payment=payment, detail=payment.reason)
