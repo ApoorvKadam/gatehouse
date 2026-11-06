@@ -221,4 +221,20 @@ def test_the_account_check_follows_a_changing_portfolio_but_not_another_account(
     with pytest.raises(RuntimeError, match="another FMS account"):
         bind_to_fms(factory, Portfolio("fac_Z"), "https://fms.example")
     with pytest.raises(RuntimeError, match="another FMS account"):
+        bind_to_fms(factory, Portfolio("fac_C", "fac_Z"), "https://fms.example")
+    bind_to_fms(factory, Portfolio("fac_B", "fac_C"), "https://fms.example")
+    with pytest.raises(RuntimeError, match="another FMS account"):   # lost one and gained one at once: rebind by hand
+        bind_to_fms(factory, Portfolio("fac_C", "fac_Z"), "https://fms.example")
+    with pytest.raises(RuntimeError, match="another FMS account"):
         bind_to_fms(factory, Portfolio("fac_B"), "https://other-fms.example")
+
+
+def test_a_recorded_no_is_not_a_yes(client, sim):
+    cid = dana_case(client)["case_id"]
+    check = client.post(f"/api/cases/{cid}/identity", json={"last_name": "Whitfield", "phone_last4": "0142", "unit_name": "B-1042"}).json()
+    proposal = client.post(f"/api/cases/{cid}/proposals", json={"identity_check_id": check["identity_check_id"], "amount": 24000}).json()
+    url = f"/api/cases/{cid}/proposals/{proposal['proposal_id']}/confirm"
+    for answer in ("no, do not charge my card", "yes but wait until Friday", "maybe"):
+        assert client.post(url, json={"confirmed_by": "J. Ortiz", "tenant_answer": answer}).status_code == 409
+    assert sim.payments("lease_WhitB1042") == []
+    assert client.post(url, json=YES).json()["state"] == "CONFIRMED"

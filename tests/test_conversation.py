@@ -249,6 +249,8 @@ def test_live_model_verifies_before_talking_money(session, adapter, sim):
     ("That comes to two hundred forty dollars.", True),
     ("That's the late fee listed on your account.", False),
     ("Would you like to pay all of it, or part of it?", False),
+    ("Your account is up to date.", True),
+    ("You don't need to pay anything else.", True),
 ])
 def test_the_reply_guard_catches_payment_claims_and_nothing_else(session, adapter, sim, said, replaced):
     model = ScriptedModel([tool("verify_identity", DANA_ID)], [text(said)])
@@ -295,3 +297,9 @@ def test_paying_everything_needs_no_figure_from_the_model(session, adapter, sim)
     reply = conv.say(session, "Whitfield 0142 B-1042, pay all of it")
     assert reply.proposed_amount == 24000 and "$240.00" in reply.text
     assert conv.say(session, "yes").payment_state == "CONFIRMED"
+
+
+def test_an_unverified_caller_never_reads_the_models_words(session, adapter, sim):
+    model = ScriptedModel([text("Your account is overdue, I see.")])
+    conv, case = start(session, adapter, model)
+    assert conv.say(session, "is my account overdue?").text.startswith("Before I can talk about the account")

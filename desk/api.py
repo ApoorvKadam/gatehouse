@@ -19,7 +19,7 @@ from .cases import queue, sync_facility
 from .config import Settings
 from .conversation import Conversation
 from .db import bind_to_fms, make_session_factory
-from .models import CaseEvent, DelinquencyCase, Lease, LedgerSnapshot, PaymentCommand
+from .models import CaseEvent, DelinquencyCase, DeskBinding, Facility, Lease, LedgerSnapshot, PaymentCommand
 from .payments import (
     IdentityClaim, PaymentRefused, PaymentService, check_identity, collected, confirm, propose, tenant_message,
 )
@@ -106,7 +106,13 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         return "operator"
 
     def get_case(session: Session, case_id: int) -> DelinquencyCase:
+        """A case on a facility the current FMS key can see; anything else is answered as not found."""
         case = session.get(DelinquencyCase, case_id)
+        if case is not None:
+            facility = session.get(Facility, session.get(Lease, case.lease_id).facility_id)
+            binding = session.get(DeskBinding, 1)
+            if binding is not None and facility.provider_id not in binding.facility_ids:
+                case = None
         if case is None:
             raise HTTPException(404, "case not found")
         return case
@@ -208,6 +214,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         command = session.get(PaymentCommand, command_id)
         if command is None:
             raise HTTPException(404, "payment not found")
+        get_case(session, command.case_id)   # same facility rule as the case
         return command_json(command)
 
     @app.post("/api/payments/{command_id}/resolve")
@@ -221,6 +228,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         command = session.get(PaymentCommand, command_id)
         if command is None:
             raise HTTPException(404, "payment not found")
+        get_case(session, command.case_id)
         if body.charged and not body.fms_payment_id:
             raise HTTPException(422, "a charged payment needs the FMS payment id")
         try:

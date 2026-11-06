@@ -89,8 +89,13 @@ class CubbyAdapter:
             raise NotFound(lease_provider_id)
         raw = ledgers[0]
         balances = raw.get("balances") or {}
-        return ProviderLedger(lease_provider_id=lease_provider_id, total_due=int(balances.get("totalDue", 0)),
-                              prepaid=int(balances.get("prepaid", 0)), raw=raw)
+        try:
+            # a missing balance is not a zero balance: only an explicit figure from the FMS can say nothing is due
+            total_due = int(balances["totalDue"])
+            prepaid = int(balances.get("prepaid") or 0)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise FMSError(f"/v1/ledgers/search: no readable totalDue for {lease_provider_id}") from exc
+        return ProviderLedger(lease_provider_id=lease_provider_id, total_due=total_due, prepaid=prepaid, raw=raw)
 
     def customer(self, customer_provider_id: str) -> ProviderCustomer:
         rows = self._read("/v1/customers/search", {"customerId": customer_provider_id}).get("customers", [])

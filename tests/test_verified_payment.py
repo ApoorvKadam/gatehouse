@@ -573,3 +573,56 @@ def test_a_reopened_case_survives_a_declined_repayment(session, adapter, sim):
     PaymentService(session, adapter).take_payment(case.id, "pm_DanaVisa4242", Authorization.new(True, 24000, 24000))
     PaymentService(session, adapter).reconcile_all()
     assert session.get(DelinquencyCase, case.id).state == "reopened"
+
+
+def test_a_payment_pending_at_the_fms_from_anyone_blocks_a_new_charge(session, adapter, sim):
+    sim.behave(DANA, "pending_then_succeed", lag=50)
+    adapter.make_payment(DANA, "pm_DanaVisa4242", 24000)   # autopay, still pending
+    with pytest.raises(PaymentRefused, match="still pending"):
+        pay(session, adapter, DANA, "pm_DanaVisa4242", 24000)
+    assert len(sim.payments(DANA)) == 1
+
+
+def test_a_pending_lead_cannot_be_named_away(session, adapter, sim):
+    sim.behave(DANA, "gateway_error")
+    command, _, _ = pay(session, adapter, DANA, "pm_DanaVisa4242", 24000)
+    sim.behave(DANA, "pending_then_succeed", lag=50)
+    lead = adapter.make_payment(DANA, "pm_DanaVisa4242", 24000).payment
+    settle(session, adapter)
+    assert command.state == "NEEDS_STAFF"
+    with pytest.raises(PaymentRefused, match="still PENDING"):
+        PaymentService(session, adapter).resolve_by_staff(command, False, f"{lead.provider_id} is the tenant's own app payment", "J. Ortiz")
+
+
+def test_staff_cannot_name_a_payment_that_existed_before_the_attempt(session, adapter, sim):
+    sim.behave(DANA, "decline")
+    old = adapter.make_payment(DANA, "pm_DanaVisa4242", 24000).payment
+    sim.behave(DANA, "gateway_error")
+    command, _, _ = pay(session, adapter, DANA, "pm_DanaVisa4242", 24000)
+    settle(session, adapter)
+    with pytest.raises(PaymentRefused, match="already on the lease"):
+        PaymentService(session, adapter).resolve_by_staff(command, True, "That one", "J. Ortiz", old.provider_id)
+
+
+def test_an_fms_amount_that_differs_from_the_authorized_one_goes_to_staff(session, fms_url, sim):
+    class Short(CubbyAdapter):
+        def payments_for_lease(self, lease_provider_id):
+            from dataclasses import replace
+            return [replace(p, amount=p.amount // 2) for p in super().payments_for_lease(lease_provider_id)]
+
+    short = Short(fms_url, "sim_org_northstar_full", timeout_seconds=2.0)
+    sim.behave(DANA, "late_application", lag=1)
+    command, _, _ = pay(session, short, DANA, "pm_DanaVisa4242", 24000)
+    settle(session, short)
+    assert command.state == "NEEDS_STAFF" and "12000 cents" in command.provider_reason
+
+
+def test_a_ledger_without_a_balance_is_not_a_zero_balance():
+    import httpx
+
+    from desk.adapter import FMSError
+
+    body = {"status": 200, "data": {"ledgers": [{"leaseId": DANA, "balances": {}, "bookEntries": []}]}}
+    odd = CubbyAdapter("http://fms", "key", transport=httpx.MockTransport(lambda r: httpx.Response(200, json=body)))
+    with pytest.raises(FMSError, match="totalDue"):
+        odd.ledger(DANA)

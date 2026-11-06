@@ -75,7 +75,8 @@ NUMBER_WORDS = re.compile(r"\d|\b(dollars?|cents?|bucks|hundred|thousand|zero)\b
 OUTCOME = re.compile(r"\b(went through|gone through|went thru|gone thru|cleared|clear|successful(ly)?|succeeded|processed|posted|applied|"
                      r"received|confirmed|approved|accepted|authori[sz]ed|done|finished|good to go|"
                      r"complete[d]?|settled|paid|charged|covered|taken care of|caught up|current|all set|nothing (is )?(owed|due)|"
-                     r"no (outstanding |remaining )?(balance|amount|money)|(don't|do not) owe)\b", re.I)
+                     r"no (outstanding |remaining )?(balance|amount|money)|(don't|do not) owe|up to date|in good standing|"
+                     r"(don't|do not|no) need to pay|nothing (else |more |further )?to pay|owe nothing|squared away|resolved)\b", re.I)
 SUBJECT = re.compile(r"\b(payment|balance|account|card|charge|rent|bill|you|your|it|that|everything)\b", re.I)
 SENTENCES = re.compile(r"[^.!?]+")
 MONEY_SPAN = re.compile(r"\$\s?[\d,]+(\.\d+)?")
@@ -194,14 +195,18 @@ class Conversation:
         """The model's text goes out only if it states no financial fact: no figure, and no outcome about a payment, the
         balance or the account. Otherwise the desk answers in its own words: the identity question before verification,
         the payment's status when there is one, or the balance from the ledger."""
+        if not self.identity_verified:
+            # before verification nothing the model wrote reaches the caller: the desk asks for identity itself
+            if text != IDENTITY_ASK:
+                record(session, session.get(DelinquencyCase, self.case_id), "model reply replaced",
+                       {"conversation": self.id, "model_said": text, "sent": IDENTITY_ASK}, source="chat")
+            return IDENTITY_ASK
         masked = MONEY_SPAN.sub(" AMOUNT ", text)
         figure = bool(NUMBER_WORDS.search(text))
         outcome = any(OUTCOME.search(sentence) and SUBJECT.search(sentence) for sentence in SENTENCES.findall(masked))
         if not (figure or outcome):
             return text
-        if not self.identity_verified:
-            replacement = IDENTITY_ASK
-        elif outcome and self.command_id:
+        if outcome and self.command_id:
             replacement = self._status_and_balance(session)
         else:
             replacement = self._balance_line(session)

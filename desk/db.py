@@ -58,8 +58,11 @@ def bind_to_fms(factory, adapter, fms_base_url: str, attempts: int = 10) -> None
             if session.scalar(select(Lease.id).limit(1)) is not None:
                 raise RuntimeError("this database already holds leases but records no FMS account; not starting")
             session.add(DeskBinding(id=1, fms_base_url=fms_base_url, facility_ids=facilities))
-        elif binding.fms_base_url != fms_base_url or not set(binding.facility_ids) & set(facilities):
-            raise RuntimeError("this database belongs to another FMS account; each operator needs its own database")
         else:
+            before, now = set(binding.facility_ids), set(facilities)
+            # one kind of change at a time: facilities added, or facilities removed. A key that sees some of the old
+            # facilities and some new ones may be another operator sharing one site, so a person rebinds explicitly.
+            if binding.fms_base_url != fms_base_url or not (before <= now or now <= before) or not (before & now):
+                raise RuntimeError("this database belongs to another FMS account; each operator needs its own database")
             binding.facility_ids = facilities
         session.commit()

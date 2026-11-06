@@ -8,6 +8,7 @@ with an owner (staff), and the account stays held until a person or the FMS sett
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import uuid
 from dataclasses import dataclass
@@ -77,6 +78,9 @@ class Authorization:
 
 # a verified caller can pay for this long; after that they verify again, in any channel
 IDENTITY_VALID_FOR = timedelta(minutes=15)
+# what counts as the tenant's yes at the desk: it starts with a yes and takes nothing back
+CLEAR_YES = re.compile(r"^\s*(yes|yeah|yep|yup|sure|ok|okay|confirm|confirmed|i confirm|go ahead|please do|do it|that's fine|that is fine)\b", re.I)
+NOT_YES = re.compile(r"\b(no|not|don't|do not|never|cancel|stop|wait|hold on|but)\b", re.I)
 # a proposal read back to the tenant has to be confirmed within this time, or read again
 PROPOSAL_VALID_FOR = timedelta(minutes=10)
 IDENTITY_TRIES = 3
@@ -172,6 +176,8 @@ def confirm(session: Session, adapter: FMSAdapter, case_id: int, proposal_id: st
         raise PaymentRefused("the proposal expired; read the balance to the tenant again")
     if not confirmed_by.strip() or not tenant_answer.strip():
         raise PaymentRefused("a confirmation needs who heard the tenant's yes and what the tenant said")
+    if not CLEAR_YES.match(tenant_answer) or NOT_YES.search(tenant_answer):
+        raise PaymentRefused(f"the tenant's answer {tenant_answer!r} is not a clear yes; nothing was charged")
     proposal.confirmed_by, proposal.tenant_answer = confirmed_by.strip(), tenant_answer.strip()
     verified = identity_fresh(session.get(IdentityCheck, proposal.identity_check_id), case_id)
     auth = Authorization(proposal.id, verified, proposal.balance_seen, proposal.amount, proposal.channel)
@@ -229,6 +235,11 @@ class PaymentService:
         command.balance_before, command.prepaid_before = ledger.total_due, ledger.prepaid
         command.entries_paid_before = {e["bookEntryId"]: e.get("amountPaid", 0) for e in ledger.raw.get("bookEntries", [])}
         command.fms_payments_before = {p.provider_id: p.status for p in known}
+        pending = [p.provider_id for p in known if p.status == "PENDING"]
+        if pending:
+            # a payment still pending at the FMS, from anyone, may yet succeed: charging now could charge twice
+            self._not_submitted(command, f"payment {pending[0]} on this lease is still pending at the FMS")
+            raise PaymentRefused(f"payment {pending[0]} on this lease is still pending at the FMS; wait for it to settle")
         if ledger.total_due != auth.balance_seen:
             command.state = "NEEDS_REAUTHORIZATION"
             command.provider_reason = f"balance is now {ledger.total_due}, the tenant agreed while it was {auth.balance_seen}"
@@ -341,6 +352,11 @@ class PaymentService:
         elif match.status == "PENDING":
             self._wait(command, case, "PENDING_AT_FMS", PENDING_WAIT,
                        f"the FMS still reports payment {match.provider_id} as PENDING; check it with the processor before any new attempt")
+        elif match.status == "SUCCEEDED" and match.amount != command.amount:
+            if command.state != "NEEDS_STAFF":
+                command.state = "NEEDS_STAFF"
+                command.provider_reason = f"the FMS reports payment {match.provider_id} for {match.amount} cents; {command.amount} was authorized"
+                record(self.session, case, "payment needs staff", {"command": command.id, "reason": command.provider_reason})
         elif match.status == "SUCCEEDED":
             try:
                 applied, ambiguous = self._applied_to_lease(command, lease, payments)
@@ -381,8 +397,12 @@ class PaymentService:
         lease = self.session.get(Lease, command.lease_id)
         payments = self.adapter.payments_for_lease(lease.provider_id)
         if charged:
-            if fms_payment_id not in {p.provider_id for p in payments}:
+            named = next((p for p in payments if p.provider_id == fms_payment_id), None)
+            if named is None:
                 raise PaymentRefused(f"payment {fms_payment_id} is not on this lease at the FMS")
+            impossible = self._cannot_be(command, lease, named)
+            if impossible:
+                raise PaymentRefused(f"payment {fms_payment_id} cannot be this attempt: {impossible}")
             owner = self.session.scalar(select(PaymentCommand).where(PaymentCommand.provider_payment_id == fms_payment_id,
                                                                      PaymentCommand.id != command.id))
             if owner is not None:
@@ -395,6 +415,10 @@ class PaymentService:
             leads = [] if command.provider_payment_id else self._lost_candidates(command, lease, payments)
             if command.suggested_payment_id and command.suggested_payment_id not in {p.provider_id for p in leads}:
                 leads += [p for p in payments if p.provider_id == command.suggested_payment_id]
+            still_open = [p for p in leads if p.status == "PENDING"]
+            if still_open:
+                raise PaymentRefused(f"payment {still_open[0].provider_id} at the FMS may be this attempt and is still PENDING; "
+                                     "it cannot be called not charged until it settles")
             unnamed = [p for p in leads if p.provider_id not in note]
             if unnamed:
                 raise PaymentRefused("payments at the FMS that may be this attempt: "
@@ -530,6 +554,21 @@ class PaymentService:
         """The one FMS payment that could be this submission, as a suggestion for staff. Zero or several find nothing."""
         candidates = self._lost_candidates(command, lease, payments)
         return candidates[0] if len(candidates) == 1 else None
+
+    def _cannot_be(self, command: PaymentCommand, lease: Lease, p: ProviderPayment) -> str | None:
+        """Why an FMS payment can be ruled out as this attempt from the record alone, or None."""
+        sent = command.submitted_at or command.created_at
+        if p.provider_id in (command.fms_payments_before or {}):
+            return "it was already on the lease before this attempt was sent"
+        if p.amount != command.amount:
+            return f"it is for {p.amount} cents and this attempt was for {command.amount}"
+        if p.customer_provider_id not in (None, lease.provider_customer_id):
+            return "it belongs to another customer"
+        if command.method_type and p.method_type and p.method_type != command.method_type:
+            return f"it was paid by {p.method_type}, this attempt by {command.method_type}"
+        if p.created_at is not None and p.created_at < sent - CLOCK_SKEW:
+            return "it was created before this attempt was sent"
+        return None
 
     def _lost_candidates(self, command: PaymentCommand, lease: Lease, payments: list[ProviderPayment]) -> list[ProviderPayment]:
         """FMS payments that could be this submission: same amount, same customer, same kind of card, created within
