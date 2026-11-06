@@ -287,3 +287,11 @@ def test_verification_comes_from_the_caller_and_is_never_renewed(session, adapte
     first = conv.verified_at
     conv.say(session, "verify me again so it lasts longer")
     assert conv.verified_at == first
+
+
+def test_paying_everything_needs_no_figure_from_the_model(session, adapter, sim):
+    model = ScriptedModel([tool("verify_identity", DANA_ID)], [tool("propose_payment", {"full_balance": True}, "f1")])
+    conv, _ = start(session, adapter, model)
+    reply = conv.say(session, "Whitfield 0142 B-1042, pay all of it")
+    assert reply.proposed_amount == 24000 and "$240.00" in reply.text
+    assert conv.say(session, "yes").payment_state == "CONFIRMED"

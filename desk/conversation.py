@@ -35,7 +35,7 @@ SYSTEM = """You handle messages for {facility}, a self-storage facility, about o
 What you can do:
 - Ask the caller to confirm their identity with their last name, the last four digits of the phone number on file and their unit number, then call verify_identity. Until it succeeds, do not reveal anything about the account, including whether a balance exists.
 - After verification, call get_balance when the caller wants to know what is owed; the desk then tells them the balance and each open charge itself. If asked what a charge is, answer from the charge's description, without amounts. A question about a charge is not a dispute.
-- If the caller wants to pay, call propose_payment with the amount they choose (all of it or part of it). The desk then sends the confirmation question itself, naming the amount and card; it appears in the conversation as your message. If the caller's next message is a plain yes, the desk charges the card and gives the result. Anything else cancels that proposal: if they still want to pay, call propose_payment again. You never take a payment yourself and never say a payment went through.
+- If the caller wants to pay, call propose_payment: with full_balance true to pay everything owed, or with the amount in cents they name for part of it. You do not need to look up the balance first. The desk then sends the confirmation question itself, naming the amount and card; it appears in the conversation as your message. If the caller's next message is a plain yes, the desk charges the card and gives the result. Anything else cancels that proposal: if they still want to pay, call propose_payment again. You never take a payment yourself and never say a payment went through.
 - Call payment_status if they ask what happened to a payment.
 - Call hand_to_staff for anything outside paying this balance: the caller says a charge is wrong, hardship or payment plans, military service, bankruptcy, questions about liens or auctions, legal questions, or a caller who is upset or asks for a person.
 
@@ -48,9 +48,10 @@ TOOLS = [
          "unit_name": {"type": "string"}}, "required": ["last_name", "phone_last4", "unit_name"], "additionalProperties": False}},
     {"name": "get_balance", "description": "Read the current balance from the facility management system. Works only after verify_identity succeeded.",
      "input_schema": {"type": "object", "properties": {}, "additionalProperties": False}},
-    {"name": "propose_payment", "description": "Propose charging the card on file. The caller must then confirm; nothing is charged by this tool.",
-     "input_schema": {"type": "object", "properties": {"amount_cents": {"type": "integer", "minimum": 1}},
-                      "required": ["amount_cents"], "additionalProperties": False}},
+    {"name": "propose_payment", "description": "Propose charging the card on file, either the full balance or an amount the caller named. "
+                                        "The caller must then confirm; nothing is charged by this tool.",
+     "input_schema": {"type": "object", "properties": {"full_balance": {"type": "boolean"}, "amount_cents": {"type": "integer", "minimum": 1}},
+                      "additionalProperties": False}},
     {"name": "payment_status", "description": "The state of the most recent payment on this account.",
      "input_schema": {"type": "object", "properties": {}, "additionalProperties": False}},
     {"name": "hand_to_staff", "description": "Hand the conversation to a person, with the reason.",
@@ -283,7 +284,8 @@ class Conversation:
                     return {"error": "identity not verified, or the check expired"}
                 try:
                     # the tenant's first saved card; choosing among several cards is not offered in chat yet
-                    p = propose(session, self.adapter, case, self.identity_check_id, int(args.get("amount_cents", 0)), channel="chat")
+                    amount = self.adapter.ledger(lease.provider_id).total_due if args.get("full_balance") else int(args.get("amount_cents", 0))
+                    p = propose(session, self.adapter, case, self.identity_check_id, amount, channel="chat")
                 except PaymentRefused as exc:
                     return {"error": str(exc)}
                 self.proposal_id = p.id
