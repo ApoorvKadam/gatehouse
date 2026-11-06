@@ -168,6 +168,16 @@ def create_app(database_url: str | None = None, lose_response_seconds: float = 8
         session.commit()
         return ok({"payments": [payment_json(p) for p in rows]})
 
+    @app.post("/v1/payment-methods/search")
+    def payment_methods_search(body: dict, key: ApiKey = Depends(caller), session: Session = Depends(db)):
+        cid = (body.get("where") or {}).get("customerId")
+        customer = session.get(Customer, cid or "")
+        if customer is None or customer.org_id != key.org_id:
+            raise ApiError(404, "Customer not found")
+        rows = session.scalars(select(PaymentMethod).where(PaymentMethod.customer_id == cid)).all()
+        return ok({"paymentMethods": [{"paymentMethodId": m.payment_method_id, "methodType": m.method_type,
+                                       "last4": m.last4} for m in rows]})
+
     # ---------------- make payment ----------------
     @app.post("/v1/leases/make-payment")
     def make_payment(body: dict, key: ApiKey = Depends(caller), session: Session = Depends(db)):

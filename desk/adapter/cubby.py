@@ -87,6 +87,9 @@ class CubbyAdapter:
                                 reason=p.get("reason"), created_at=_parse_time(p.get("createdAt")))
                 for p in data.get("payments", [])]
 
+    def payment_methods(self, customer_provider_id: str) -> list[dict]:
+        return self._read("/v1/payment-methods/search", {"customerId": customer_provider_id}).get("paymentMethods", [])
+
     # ------------------------------------------------------------------ the one write
     def make_payment(self, lease_provider_id: str, payment_method_id: str, amount: int) -> SubmitOutcome:
         body = {"leaseId": lease_provider_id, "paymentMethodId": payment_method_id, "amount": amount, "sendReceiptEmail": False}

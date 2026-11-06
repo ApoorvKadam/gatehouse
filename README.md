@@ -10,6 +10,7 @@ It exists because the expensive failures in collections are not missing features
 
 - **Past-due queue.** One worklist per facility: what is owed, what was last attempted, what is blocking the account and who has to act.
 - **Verified payments.** A payment is submitted once, with its intent recorded first. The desk reads the FMS's own payment record and the lease ledger before it calls the payment applied. Declines, pending gateway answers, lost responses and later returns each land in a defined state instead of a guess.
+- **Tenant conversation.** A tenant can check and pay a past-due balance by message. Claude handles the conversation but has no way to charge a card: it can only propose an amount. The card is charged only when the tenant's next message is a plain yes to that exact amount, and that check is code. Identity comes first, three wrong answers hand the thread to staff, and hardship, military service, liens and anything legal go to a person.
 - **Exceptions you can act on.** Every account that cannot move forward says why, what evidence or decision is missing, and what changes when it arrives.
 - **Lien evidence, not legal answers** (in progress). Notice and advertising steps are tracked against reviewed, versioned jurisdiction rules. Missing proof holds the account. Rules that have not been reviewed fail closed.
 
@@ -36,6 +37,13 @@ Every desk route expects `X-Desk-Token: <DESK_OPERATOR_TOKEN>`. A first look:
 ```bash
 curl -X POST -H "X-Desk-Token: $TOKEN" localhost:8000/api/facilities/fac_NSorlando01/sync
 curl -H "X-Desk-Token: $TOKEN" localhost:8000/api/facilities/fac_NSorlando01/queue
+```
+
+The conversation endpoint needs `ANTHROPIC_API_KEY` in `.env` (Claude Haiku 5.5 by default, `DESK_CHAT_MODEL` to change it). Each call's tokens and estimated cost are logged; a whole conversation costs well under a cent.
+
+```bash
+curl -X POST -H "X-Desk-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"text": "Hi, how much do I owe on my unit?"}' localhost:8000/api/cases/1/chat
 ```
 
 To watch the desk handle each FMS failure, run the scenarios against the simulator:

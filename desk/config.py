@@ -14,6 +14,7 @@ class Settings:
     operator_token: str | None
     # only for running on a laptop: without a token the API refuses every request unless this is set
     allow_without_token: bool = False
+    chat_model: str = "claude-haiku-5-5"
 
     @staticmethod
     def from_env() -> "Settings":
@@ -25,4 +26,5 @@ class Settings:
             reconcile_every_seconds=float(os.environ.get("DESK_RECONCILE_EVERY_SECONDS", "10")),
             operator_token=os.environ.get("DESK_OPERATOR_TOKEN") or None,
             allow_without_token=os.environ.get("DESK_ALLOW_WITHOUT_TOKEN") == "1",
+            chat_model=os.environ.get("DESK_CHAT_MODEL", "claude-haiku-5-5"),
         )

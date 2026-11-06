@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hmac
 import logging
+import os
 import uuid
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -16,6 +17,7 @@ from .adapter import FMSAdapter, FMSError
 from .adapter.cubby import CubbyAdapter
 from .cases import queue, refresh_case, sync_facility
 from .config import Settings
+from .conversation import Conversation
 from .db import make_session_factory, utcnow
 from .models import CaseEvent, DelinquencyCase, IdentityCheck, Lease, LedgerSnapshot, PaymentCommand
 from .payments import Authorization, IdentityClaim, PaymentRefused, PaymentService, collected, tenant_message, verify_identity
@@ -31,6 +33,11 @@ class IdentityIn(BaseModel):
     unit_name: str
 
 
+class ChatIn(BaseModel):
+    conversation_id: str | None = None
+    text: str = Field(min_length=1, max_length=1000)
+
+
 class PaymentIn(BaseModel):
     identity_check_id: str
     authorization_id: str = Field(min_length=8, description="chosen by the client when the tenant says yes; resending it never charges twice")
@@ -39,8 +46,14 @@ class PaymentIn(BaseModel):
     payment_method_id: str
 
 
-def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = None, start_worker: bool = True) -> FastAPI:
+def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = None, start_worker: bool = True,
+               chat_client=None) -> FastAPI:
     settings = settings or Settings.from_env()
+    if chat_client is None and os.environ.get("ANTHROPIC_API_KEY"):
+        import anthropic
+        chat_client = anthropic.Anthropic()
+    # ponytail: conversations live in this process and end with it; persist them when the desk runs more than one API process
+    conversations: dict[str, Conversation] = {}
     factory = make_session_factory(settings.database_url)
     adapter = adapter or CubbyAdapter(settings.fms_base_url, settings.fms_api_key, settings.fms_timeout_seconds)
     worker = Worker(factory, adapter, settings.reconcile_every_seconds)
@@ -139,6 +152,22 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
             raise HTTPException(409, str(exc)) from exc
         log.info("case %s payment %s %s", case.id, command.id, command.state)
         return command_json(command)
+
+    @app.post("/api/cases/{case_id}/chat")
+    def chat(case_id: int, body: ChatIn, session: Session = Depends(db), _: str = Depends(operator)):
+        """One tenant message in, the desk's reply out. The channel in front of it (SMS, web chat) calls this."""
+        case = get_case(session, case_id)
+        if chat_client is None:
+            raise HTTPException(503, "the desk has no model key configured")
+        if body.conversation_id is None:
+            conversation = Conversation(case.id, adapter, chat_client, settings.chat_model)
+            conversations[conversation.id] = conversation
+        else:
+            conversation = conversations.get(body.conversation_id)
+            if conversation is None or conversation.case_id != case.id:
+                raise HTTPException(404, "conversation not found")
+        reply = conversation.say(session, body.text)
+        return {"conversation_id": conversation.id, **reply.__dict__}
 
     @app.get("/api/payments/{command_id}")
     def payment(command_id: int, session: Session = Depends(db), _: str = Depends(operator)):
