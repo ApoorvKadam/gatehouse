@@ -5,7 +5,7 @@
 <p class="crumbs"><a href="/today?facility={{ facility.provider_id }}">Today at {{ facility.name }}</a></p>
 <div class="head">
   <h1>Unit {{ lease.unit_name }}</h1>
-  <p>{{ facility.name }} &middot; {{ lease.provider_id }}</p>
+  <p>{{ facility.name }} &middot; <span class="mono">{{ lease.provider_id }}</span></p>
 </div>
 <dl class="facts">
   <div><dt>Account</dt><dd>{{ case.state|capitalize }}</dd></div>
