@@ -433,6 +433,14 @@ class PaymentService:
                 raise PaymentRefused(f"payment {fms_payment_id} already belongs to payment {owner.id}")
             command.provider_payment_id, command.identified_by_staff = fms_payment_id, True
             if ledger_checked:
+                # the statement settles which payment the ledger money belongs to; it cannot stand in for the money
+                if named.status != "SUCCEEDED":
+                    self.session.rollback()
+                    raise PaymentRefused(f"payment {fms_payment_id} is {named.status} at the FMS; it cannot be confirmed as applied")
+                applied, ambiguous = self._applied_to_lease(command, lease, payments)
+                if not (applied or ambiguous):
+                    self.session.rollback()
+                    raise PaymentRefused(f"the ledger does not show money for payment {fms_payment_id}; it cannot be confirmed as applied")
                 command.state, command.confirmed_at = "CONFIRMED", utcnow()
             else:
                 command.state = "OUTCOME_UNKNOWN"

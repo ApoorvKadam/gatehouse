@@ -706,3 +706,14 @@ def test_a_resolved_dispute_waits_while_another_payment_holds_the_lease(session,
     session.commit()
     PaymentService(session, adapter).reconcile_all()   # no error, and the pass goes on
     assert a.state == "DISPUTED" and "SUCCEEDED again" in a.provider_reason
+
+
+def test_staff_cannot_confirm_a_payment_the_fms_or_the_ledger_contradicts(session, adapter, sim):
+    sim.behave(DANA, "gateway_error")
+    command, _, _ = pay(session, adapter, DANA, "pm_DanaVisa4242", 24000)
+    sim.behave(DANA, "decline")
+    declined = adapter.make_payment(DANA, "pm_DanaVisa4242", 24000).payment
+    settle(session, adapter)
+    with pytest.raises(PaymentRefused, match="DECLINED"):
+        PaymentService(session, adapter).resolve_by_staff(command, True, "Ledger checked", "J. Ortiz", declined.provider_id, ledger_checked=True)
+    assert command.state == "NEEDS_STAFF" and command.provider_payment_id is None
