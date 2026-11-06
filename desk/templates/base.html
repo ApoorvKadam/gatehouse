@@ -6,6 +6,7 @@
 <title>{% block title %}Gatehouse{% endblock %}</title>
 <link rel="preload" href="{{ url_for('static', path='public-sans.woff2') }}" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="{{ url_for('static', path='gatehouse.css') }}">
+<script>document.documentElement.classList.add("js")</script>
 </head>
 <body>
 <header class="top">
@@ -32,5 +33,17 @@
 {% block main %}{% endblock %}
 </main>
 <footer><div class="wrap"><span>Gatehouse</span><span>FMS shapes follow Cubby's public Operator API. Not an official integration.</span></div></footer>
+<script>
+// Reveal each marked block the first time it reaches the screen. Without this script, or with reduced motion,
+// everything is simply visible.
+(function () {
+  var marked = document.querySelectorAll("[data-reveal]");
+  if (!("IntersectionObserver" in window)) { marked.forEach(function (el) { el.classList.add("in"); }); return; }
+  var seen = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add("in"); seen.unobserve(e.target); } });
+  }, { threshold: 0.2 });
+  marked.forEach(function (el) { seen.observe(el); });
+})();
+</script>
 </body>
 </html>
