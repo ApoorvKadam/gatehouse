@@ -440,3 +440,7 @@ def test_next_months_rent_does_not_reopen_a_settled_case(session, adapter, sim):
     sim.post("/sim/charges", {"leaseId": DANA, "amount": 21500, "category": "RENT", "description": "December rent"})
     PaymentService(session, adapter).reconcile_all()
     assert session.get(DelinquencyCase, case.id).state == "paid"
+    # still watched: if the November payment comes back now, this case reopens
+    sim.post("/sim/payments/return", {"paymentId": sim.payments(DANA)[0]["paymentId"]})
+    PaymentService(session, adapter).reconcile_all()
+    assert session.get(DelinquencyCase, case.id).state == "reopened"

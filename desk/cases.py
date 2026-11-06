@@ -94,7 +94,7 @@ def refresh_case(session: Session, adapter: FMSAdapter, case: DelinquencyCase) -
             case.state = "paid"
         else:
             case.state, case.owner = ("reopened" if returned or before == "paid" else "open"), "front desk"
-        case.resolved_at = None
+            case.resolved_at = None
     case.hold_reasons = holds
     if case.state != before:
         record(session, case, "state changed", {"from": before, "to": case.state, "total_due": snap.total_due}, source="fms")
