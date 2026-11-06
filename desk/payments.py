@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from .adapter import FMSAdapter, FMSError, NotFound, PermissionDenied, ProviderPayment
 from .cases import record, refresh_case
 from .db import utcnow
-from .models import HOLDING_STATES, DelinquencyCase, IdentityCheck, Lease, ObservedPayment, PaymentCommand
+from .models import HOLDING_STATES, DelinquencyCase, IdentityCheck, Lease, ObservedPayment, PaymentCommand, PaymentProposal
 
 RETURNED_STATUSES = {"REFUND_INITIATED", "REFUNDED", "DISPUTED", "DIRECT_DEBIT_RETURN"}
 UNRESOLVED = ("AWAITING_APPLICATION", "PENDING_AT_FMS", "OUTCOME_UNKNOWN")
@@ -59,6 +59,8 @@ class Authorization:
 
 # a verified caller can pay for this long; after that they verify again, in any channel
 IDENTITY_VALID_FOR = timedelta(minutes=15)
+# a proposal read back to the tenant has to be confirmed within this time, or read again
+PROPOSAL_VALID_FOR = timedelta(minutes=10)
 IDENTITY_TRIES = 3
 IDENTITY_LOCK = timedelta(minutes=30)
 
@@ -110,6 +112,48 @@ def verify_identity(adapter: FMSAdapter, lease: Lease, claim: IdentityClaim) -> 
     return (True, "matched last name, phone and unit") if matches else (False, "the details do not match the tenant on file")
 
 
+def identity_fresh(check: IdentityCheck | None, case_id: int) -> bool:
+    return check is not None and check.case_id == case_id and check.verified and utcnow() - check.created_at <= IDENTITY_VALID_FOR
+
+
+def propose(session: Session, adapter: FMSAdapter, case: DelinquencyCase, identity_check_id: str, amount: int,
+            payment_method_id: str | None = None, channel: str = "desk") -> PaymentProposal:
+    """Build what will be read back to the tenant: an amount up to the FMS balance, on a card the FMS has on file
+    for this tenant, after a fresh identity check. Nothing is charged here."""
+    if not identity_fresh(session.get(IdentityCheck, identity_check_id), case.id):
+        raise PaymentRefused("the caller's identity has not been checked in the last 15 minutes")
+    lease = session.get(Lease, case.lease_id)
+    balance = adapter.ledger(lease.provider_id).total_due
+    if not 0 < amount <= balance:
+        raise PaymentRefused(f"amount must be between 1 and the balance of {balance} cents")
+    methods = adapter.payment_methods(lease.provider_customer_id)
+    method = next((m for m in methods if payment_method_id in (None, m["paymentMethodId"])), None)
+    if method is None:
+        raise PaymentRefused("that card is not on file for this tenant" if payment_method_id else "no saved card on file")
+    proposal = PaymentProposal(id=uuid.uuid4().hex, case_id=case.id, identity_check_id=identity_check_id, channel=channel,
+                               amount=amount, balance_seen=balance, payment_method_id=method["paymentMethodId"],
+                               card_last4=method.get("last4") or "", expires_at=utcnow() + PROPOSAL_VALID_FOR)
+    session.add(proposal)
+    session.commit()
+    return proposal
+
+
+def confirm(session: Session, adapter: FMSAdapter, case_id: int, proposal_id: str) -> PaymentCommand:
+    """The tenant said yes to this proposal. Confirming it again returns the same payment."""
+    proposal = session.get(PaymentProposal, proposal_id)
+    if proposal is None or proposal.case_id != case_id:
+        raise PaymentRefused("no such proposal on this account")
+    if proposal.command_id is not None:
+        return session.get(PaymentCommand, proposal.command_id)
+    if utcnow() > proposal.expires_at:
+        raise PaymentRefused("the proposal expired; read the balance to the tenant again")
+    auth = Authorization(proposal.id, True, proposal.balance_seen, proposal.amount, proposal.channel)
+    command = PaymentService(session, adapter).take_payment(case_id, proposal.payment_method_id, auth)
+    proposal.command_id = command.id
+    session.commit()
+    return command
+
+
 class PaymentService:
     def __init__(self, session: Session, adapter: FMSAdapter):
         self.session, self.adapter = session, adapter
@@ -131,8 +175,15 @@ class PaymentService:
             PaymentCommand.case_id == case_id, PaymentCommand.state.in_(HOLDING_STATES)))
         if in_flight is not None:
             raise PaymentRefused(f"payment {in_flight.id} on this account is not settled yet ({in_flight.state})")
+        method = next((m for m in self.adapter.payment_methods(lease.provider_customer_id)
+                       if m["paymentMethodId"] == payment_method_id), None)
+        if method is None:
+            raise PaymentRefused("that card is not on file for this tenant")
         ledger = self.adapter.ledger(lease.provider_id)
+        if ledger.total_due == auth.balance_seen and auth.amount > ledger.total_due:
+            raise PaymentRefused(f"amount is more than the balance of {ledger.total_due} cents")
         command = PaymentCommand(case_id=case_id, lease_id=lease.id, idempotency_key=key, amount=auth.amount,
+                                 method_type=method.get("methodType"),
                                  payment_method_id=payment_method_id, authorization=auth.__dict__, state="SUBMITTING",
                                  balance_before=ledger.total_due, prepaid_before=ledger.prepaid,
                                  entries_paid_before={e["bookEntryId"]: e.get("amountPaid", 0) for e in ledger.raw.get("bookEntries", [])})

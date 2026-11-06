@@ -89,6 +89,7 @@ class PaymentCommand(Base):
     state: Mapped[str] = mapped_column(String)
     balance_before: Mapped[int] = mapped_column(Integer)
     prepaid_before: Mapped[int] = mapped_column(Integer)
+    method_type: Mapped[str | None] = mapped_column(String, nullable=True)
     # amountPaid of each ledger entry when the tenant agreed; only money landing on these counts as this payment
     entries_paid_before: Mapped[dict] = mapped_column(JSON, default=dict)
     provider_payment_id: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -139,3 +140,24 @@ class IdentityCheck(Base):
     verified: Mapped[bool] = mapped_column(Boolean)
     reason: Mapped[str] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class PaymentProposal(Base):
+    """An amount and a card read back to a verified tenant, waiting for their yes.
+
+    The desk builds it from the FMS's own balance and the tenant's saved cards, never from what a client sends,
+    and a payment can only be taken by confirming one. Its id is the payment's idempotency key, so a second yes
+    or a double click returns the same payment."""
+
+    __tablename__ = "payment_proposals"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    case_id: Mapped[int] = mapped_column(ForeignKey("cases.id"))
+    identity_check_id: Mapped[str] = mapped_column(ForeignKey("identity_checks.id"))
+    channel: Mapped[str] = mapped_column(String)
+    amount: Mapped[int] = mapped_column(Integer)
+    balance_seen: Mapped[int] = mapped_column(Integer)
+    payment_method_id: Mapped[str] = mapped_column(String)
+    card_last4: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    command_id: Mapped[int | None] = mapped_column(ForeignKey("payment_commands.id"), nullable=True)

@@ -17,9 +17,9 @@ from .cases import queue, refresh_case, sync_facility
 from .config import Settings
 from .conversation import Conversation
 from .db import make_session_factory, utcnow
-from .models import CaseEvent, DelinquencyCase, IdentityCheck, Lease, LedgerSnapshot, PaymentCommand
+from .models import CaseEvent, DelinquencyCase, Lease, LedgerSnapshot, PaymentCommand
 from .payments import (
-    IDENTITY_VALID_FOR, Authorization, IdentityClaim, PaymentRefused, PaymentService, check_identity, collected, tenant_message,
+    IdentityClaim, PaymentRefused, PaymentService, check_identity, collected, confirm, propose, tenant_message,
 )
 from .worker import Worker
 
@@ -37,12 +37,10 @@ class ChatIn(BaseModel):
     text: str = Field(min_length=1, max_length=1000)
 
 
-class PaymentIn(BaseModel):
+class ProposalIn(BaseModel):
     identity_check_id: str
-    authorization_id: str = Field(min_length=8, description="chosen by the client when the tenant says yes; resending it never charges twice")
     amount: int = Field(gt=0)
-    balance_seen: int = Field(ge=0)
-    payment_method_id: str
+    payment_method_id: str | None = Field(default=None, description="a saved card of this tenant; the first one when left out")
 
 
 def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = None, start_worker: bool = True,
@@ -138,17 +136,26 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
             answer["total_due"] = session.get(LedgerSnapshot, case.last_snapshot_id).total_due
         return answer
 
-    @app.post("/api/cases/{case_id}/payments")
-    def take_payment(case_id: int, body: PaymentIn, session: Session = Depends(db), _: str = Depends(operator)):
+    @app.post("/api/cases/{case_id}/proposals")
+    def make_proposal(case_id: int, body: ProposalIn, session: Session = Depends(db), _: str = Depends(operator)):
+        """What the front desk reads back to the tenant before charging anything."""
         case = get_case(session, case_id)
-        check = session.get(IdentityCheck, body.identity_check_id)
-        fresh = check is not None and check.case_id == case.id and check.verified and utcnow() - check.created_at <= IDENTITY_VALID_FOR
-        auth = Authorization(body.authorization_id, bool(fresh), body.balance_seen, body.amount, channel="desk")
         try:
-            command = PaymentService(session, adapter).take_payment(case.id, body.payment_method_id, auth)
+            p = propose(session, adapter, case, body.identity_check_id, body.amount, body.payment_method_id, channel="desk")
         except PaymentRefused as exc:
             raise HTTPException(409, str(exc)) from exc
-        log.info("case %s payment %s %s", case.id, command.id, command.state)
+        return {"proposal_id": p.id, "amount": p.amount, "card_last4": p.card_last4, "expires_at": p.expires_at,
+                "read_back": f"We will charge ${p.amount / 100:,.2f} to the card ending in {p.card_last4}. Is that okay?"}
+
+    @app.post("/api/cases/{case_id}/proposals/{proposal_id}/confirm")
+    def confirm_proposal(case_id: int, proposal_id: str, session: Session = Depends(db), _: str = Depends(operator)):
+        """The tenant said yes. Sending this again returns the same payment and never charges twice."""
+        get_case(session, case_id)
+        try:
+            command = confirm(session, adapter, case_id, proposal_id)
+        except PaymentRefused as exc:
+            raise HTTPException(409, str(exc)) from exc
+        log.info("case %s payment %s %s", case_id, command.id, command.state)
         return command_json(command)
 
     @app.post("/api/cases/{case_id}/chat")

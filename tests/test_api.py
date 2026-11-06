@@ -50,9 +50,7 @@ def test_a_wrong_caller_learns_nothing_and_cannot_pay(client):
     check = client.post(f"/api/cases/{row['case_id']}/identity",
                         json={"last_name": "Whitfield", "phone_last4": "1111", "unit_name": "B-1042"}).json()
     assert check["verified"] is False and "total_due" not in check
-    r = client.post(f"/api/cases/{row['case_id']}/payments", json={
-        "identity_check_id": check["identity_check_id"], "authorization_id": "auth-wrong-caller", "amount": 24000,
-        "balance_seen": 24000, "payment_method_id": "pm_DanaVisa4242"})
+    r = client.post(f"/api/cases/{row['case_id']}/proposals", json={"identity_check_id": check["identity_check_id"], "amount": 24000})
     assert r.status_code == 409
 
 
@@ -61,10 +59,12 @@ def test_verified_payment_end_to_end_and_a_resend_charges_once(client, sim):
     check = client.post(f"/api/cases/{row['case_id']}/identity",
                         json={"last_name": "Whitfield", "phone_last4": "0142", "unit_name": "B-1042"}).json()
     assert check["verified"] and check["total_due"] == 24000
-    body = {"identity_check_id": check["identity_check_id"], "authorization_id": "auth-dana-0001", "amount": 24000,
-            "balance_seen": check["total_due"], "payment_method_id": "pm_DanaVisa4242"}
-    first = client.post(f"/api/cases/{row['case_id']}/payments", json=body).json()
-    again = client.post(f"/api/cases/{row['case_id']}/payments", json=body).json()
+    proposal = client.post(f"/api/cases/{row['case_id']}/proposals",
+                           json={"identity_check_id": check["identity_check_id"], "amount": 24000}).json()
+    assert proposal["card_last4"] == "4242" and "$240.00" in proposal["read_back"]
+    confirm_url = f"/api/cases/{row['case_id']}/proposals/{proposal['proposal_id']}/confirm"
+    first = client.post(confirm_url).json()
+    again = client.post(confirm_url).json()
     assert first["state"] == "CONFIRMED" and again["id"] == first["id"]
     assert len(sim.payments("lease_WhitB1042")) == 1
     detail = client.get(f"/api/cases/{row['case_id']}").json()
@@ -80,3 +80,13 @@ def test_identity_checks_lock_after_three_misses(client):
         assert client.post(f"/api/cases/{cid}/identity", json=wrong).json()["verified"] is False
     right = {"last_name": "Whitfield", "phone_last4": "0142", "unit_name": "B-1042"}
     assert client.post(f"/api/cases/{cid}/identity", json=right).status_code == 429
+
+
+def test_a_proposal_only_offers_what_the_fms_allows(client):
+    cid = dana_case(client)["case_id"]
+    check = client.post(f"/api/cases/{cid}/identity", json={"last_name": "Whitfield", "phone_last4": "0142", "unit_name": "B-1042"}).json()
+    base = {"identity_check_id": check["identity_check_id"]}
+    assert client.post(f"/api/cases/{cid}/proposals", json={**base, "amount": 99999}).status_code == 409
+    another_tenants_card = client.post(f"/api/cases/{cid}/proposals", json={**base, "amount": 24000, "payment_method_id": "pm_MarcVisa1881"})
+    assert another_tenants_card.status_code == 409 and "not on file" in another_tenants_card.json()["detail"]
+    assert client.post(f"/api/cases/{cid}/proposals/made-up-id/confirm").status_code == 409
