@@ -111,18 +111,42 @@ def lost(run: Run):
         final == "CONFIRMED" and run.fms_payments(DANA) == 1
 
 
-@scenario("FMS error, no payment made", "HTTP 500, nothing recorded")
+@scenario("FMS refuses the request", "HTTP 422 in its error envelope")
+def refused(run: Run):
+    session, adapter, case = run.start("reject")
+    c = PaymentService(session, adapter).take_payment(case.id, DANA_CARD, Authorization.new(True, 24000, 24000))
+    return f"{c.state}, account free", tenant_message(c), c.state == "REJECTED" and run.fms_payments(DANA) == 0
+
+
+@scenario("FMS fails mid-request", "HTTP 500, nothing recorded")
 def unknown(run: Run):
     session, adapter, case = run.start("server_error")
-    c = PaymentService(session, adapter).take_payment(case.id, DANA_CARD, Authorization.new(True, 24000, 24000))
+    service = PaymentService(session, adapter)
+    c = service.take_payment(case.id, DANA_CARD, Authorization.new(True, 24000, 24000))
     run.settle(session, adapter)
     c = session.get(PaymentCommand, c.id)
+    held = c.state
     try:
-        PaymentService(session, adapter).take_payment(case.id, DANA_CARD, Authorization.new(True, 24000, 24000))
+        service.take_payment(case.id, DANA_CARD, Authorization.new(True, 24000, 24000))
         blocked = False
     except PaymentRefused:
         blocked = True
-    return f"{c.state}, new attempts blocked", tenant_message(c), c.state == "NEEDS_STAFF" and blocked and run.fms_payments(DANA) == 0
+    service.resolve_by_staff(c, charged=False, note="Nothing in the FMS or the processor portal")
+    return f"{held}, new attempts blocked until staff cleared it", tenant_message(c), \
+        held == "NEEDS_STAFF" and blocked and c.state == "CLEARED_BY_STAFF" and run.fms_payments(DANA) == 0
+
+
+@scenario("Counter payment at the same time", "ours applies late; a cash payment lands first")
+def counter(run: Run):
+    session, adapter, case = run.start("late_application", lag=3)
+    c = PaymentService(session, adapter).take_payment(case.id, DANA_CARD, Authorization.new(True, 24000, 24000))
+    run.sim("/sim/payments/offline", {"allocations": {DANA: 24000}})
+    PaymentService(session, adapter).reconcile(c)
+    first = c.state
+    run.settle(session, adapter)
+    final = session.get(PaymentCommand, c.id).state
+    return f"{first} while only the cash was on the ledger, then {final}", tenant_message(c), \
+        first == "AWAITING_APPLICATION" and final == "CONFIRMED"
 
 
 @scenario("Same yes sent twice", "approves")
@@ -161,7 +185,7 @@ def read_only(run: Run):
     return c.state, tenant_message(c), c.state == "REJECTED" and run.fms_payments(DANA) == 0
 
 
-SCENARIOS = [approved, late, declined, pending, lost, unknown, twice, changed, returned, read_only]
+SCENARIOS = [approved, late, declined, pending, lost, refused, unknown, counter, twice, changed, returned, read_only]
 
 
 def main(argv: list[str] | None = None) -> int:
