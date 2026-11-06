@@ -103,21 +103,20 @@ def test_a_payment_still_pending_at_the_fms_is_shown_as_in_progress(fms_url, sim
         assert "Payment in progress" in unit and "No payment or lien step in progress" not in unit
 
 
-def test_a_lien_file_on_an_account_paid_since_says_so(fms_url, sim):
+def test_a_lien_file_shows_its_state_as_of_its_evaluation_beside_the_balance_now(fms_url, sim):
     app = preview(fms_url)
     with TestClient(app) as visitor, TestClient(app, headers={"X-Desk-Token": "op-token"}) as desk:
         # the tenant pays the rest at the counter; Gatehouse sees it on its next read of the FMS
         sim.post("/sim/payments/offline", {"allocations": {"lease_OkfrE0505": 11500}})
         assert desk.post("/api/reconcile").status_code == 200
-        rows = desk.get(f"/api/facilities/{ORLANDO}/queue").json()["rows"]
-        assert next(r for r in rows if r["lease"] == "lease_OkfrE0505")["state"] == "paid"
+        lien = visitor.get("/accounts/2/lien").text
+        assert "Account changed: re-review, as of" in lien and "Owed on this account, per the FMS: <b>$0.00</b>" in lien
         page = visitor.get("/").text
         unit = page[page.index("Unit E-505") - 400: page.index("Unit E-505") + 500]
-        assert "Lien file on a paid account" in unit and "The FMS now shows this account paid" in unit
+        assert "Lien file out of date" in unit and "As of the evaluation on" in unit
 
 
 def test_the_seeded_lien_file_is_not_called_stale_by_its_own_payment(fms_url, sim):
     with TestClient(preview(fms_url)) as visitor:
         lien = visitor.get("/accounts/2/lien").text
-        assert "Account changed: re-review" in lien
-        assert "The FMS now shows this account paid" not in lien and "not reflected here until the file is evaluated again" in lien
+        assert "Account changed: re-review, as of" in lien and "not reflected here until the file is evaluated again" in lien

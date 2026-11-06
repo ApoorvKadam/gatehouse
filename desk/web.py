@@ -45,7 +45,7 @@ IN_FLIGHT = {"SUBMITTING": "being sent to the FMS", "PENDING_AT_FMS": "pending a
 # until a person's decision is recorded, which Gatehouse cannot record yet, so these items do not close on their own.
 LIEN_ITEMS = {
     "Account changed: re-review": (1, "Lien file out of date", "A person reviews the file against the account as it is now and decides what happens to the sale.", "Collections lead"),
-    "FMS reports paid": (1, "Lien file on a paid account", "A person confirms the sale is cancelled everywhere it was listed.", "Collections lead"),
+    "FMS reports paid": (1, "Lien file: the FMS reported the account paid", "A person confirms the sale is cancelled everywhere it was listed.", "Collections lead"),
     "FMS data unavailable": (2, "Lien file cannot be checked", "Once the FMS answers, a person has the file evaluated again.", "Collections lead"),
     "Evidence incomplete": (2, "Lien file incomplete", "Every requirement has a record, with its document where one is needed.", "Front desk"),
     "Waiting for a timing threshold": (3, "Lien file waiting on a date", "After the date, a person has the file evaluated again.", "Collections lead"),
@@ -159,16 +159,6 @@ def describe(e: CaseEvent, commands: dict[int, PaymentCommand], evidence: dict[i
     return Entry(e.occurred_at, LANE_OF.get(kind, OBSERVED), title, text, e.actor if e.actor not in ("desk",) else "", pay_link)
 
 
-def balance_now(s: Session, lease: Lease, evaluation: LienEvaluation | None = None) -> int | None:
-    """The latest FMS balance Gatehouse has for this lease: its newest ledger reading, or the evaluation's own FMS
-    reading when that is newer. Read per lease, not per case, because a settled case can owe again under a new one."""
-    snap = s.scalar(select(LedgerSnapshot).where(LedgerSnapshot.lease_id == lease.id).order_by(LedgerSnapshot.observed_at.desc()).limit(1))
-    then = (evaluation.facts or {}).get("total_due_cents") if evaluation is not None else None
-    if evaluation is not None and then is not None and (snap is None or evaluation.evaluated_at > snap.observed_at):
-        return then
-    return snap.total_due if snap is not None else None
-
-
 @dataclass
 class Pages:
     factory: sessionmaker[Session]
@@ -226,18 +216,15 @@ class Pages:
                                       proof, "Front desk", f"/payments/{cmd.id}", money(owed)))
             last = s.scalar(select(LienEvaluation).where(LienEvaluation.case_id == case.id).order_by(LienEvaluation.id.desc()).limit(1))
             if last is not None:
+                # the evaluation's own state, labelled with its date; nothing here infers what it would say today
                 found = True
-                owed_now = balance_now(s, lease, last)
-                state = "FMS reports paid" if owed_now is not None and owed_now <= 0 else last.state
-                rank, head, proof, who = LIEN_ITEMS.get(state, (3, state, "A person reviews the file.", "Collections lead"))
+                rank, head, proof, who = LIEN_ITEMS.get(last.state, (3, last.state, "A person reviews the file.", "Collections lead"))
                 open_findings = [sentence(f["detail"]) for f in last.findings if f["status"] != "met"]
                 sale = next((v for k, v in last.timing.items() if k.startswith("earliest sale")), None)
-                if state == "FMS reports paid" and last.state != state:
-                    what = f"The FMS now shows this account paid. The file was last evaluated before that, as \u201c{last.state}\u201d."
-                else:
-                    what = " ".join(open_findings) if state != "Counsel review required" and open_findings else sentence(last.summary)
+                what = " ".join(open_findings) if last.state != "Counsel review required" and open_findings else sentence(last.summary)
                 items.append(Item(rank, head, lease.unit_name, case.id, last.evaluated_at,
-                                  what + (f" Earliest sale under the statute: {day(sale)}." if sale and rank <= 2 else ""),
+                                  f"As of the evaluation on {local(last.evaluated_at)}: " + what
+                                  + (f" Earliest sale under the statute: {day(sale)}." if sale and rank <= 2 else ""),
                                   proof, who, f"/accounts/{case.id}/lien", money(owed)))
             if case.state == "paid":
                 continue   # past due no longer; any open payment or lien work above still shows
@@ -338,7 +325,7 @@ def router(pages: Pages) -> APIRouter:
             if not evaluations:
                 raise HTTPException(404, "This account has no lien file")
             current, previous = evaluations[0], (evaluations[1] if len(evaluations) > 1 else None)
-            owed_now = balance_now(s, lease, current)
+            snap = s.get(LedgerSnapshot, case.last_snapshot_id) if case.last_snapshot_id else None
             before = {f["requirement"]: f for f in previous.findings} if previous else {}
             changed = [(before.get(f["requirement"]), f) for f in current.findings
                        if previous and before.get(f["requirement"]) != f]
@@ -346,7 +333,7 @@ def router(pages: Pages) -> APIRouter:
             findings = sorted(current.findings, key=lambda f: order.get(f["status"], 5))
             evidence = s.scalars(select(LienEvidence).where(LienEvidence.case_id == case.id).order_by(LienEvidence.id)).all()
             return templates.TemplateResponse(request, "lien.html", {
-                "case": case, "lease": lease, "facility": facility, "current": current, "previous": previous, "paid": owed_now is not None and owed_now <= 0, "money": money,
+                "case": case, "lease": lease, "facility": facility, "current": current, "previous": previous, "snap": snap, "money": money,
                 "changed": changed, "findings": findings, "evidence": evidence, "names": EVIDENCE_NAMES, "day": day,
                 "local": local, "nav": "today", "facilities": pages.facilities(s)})
 

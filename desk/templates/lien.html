@@ -6,8 +6,8 @@
   <h1>Lien file, unit {{ lease.unit_name }}</h1>
   <p>{{ facility.name }} ({{ facility.jurisdiction }}) &middot; evaluated {{ local(current.evaluated_at) }}</p>
 </div>
-<p class="state-line{% if current.state != 'Review packet assembled' or paid %} act{% endif %}">{{ current.state }}</p>
-{% if paid and current.state != 'FMS reports paid' %}<p class="lede"><b>The FMS now shows this account paid.</b> This evaluation was made before that. A person has to review the file and confirm any sale is cancelled.</p>{% endif %}
+<p class="state-line{% if current.state != 'Review packet assembled' %} act{% endif %}">{{ current.state }}, as of {{ local(current.evaluated_at) }}</p>
+{% if snap %}<p class="lede">Owed on this account, per the FMS: <b>{{ money(snap.total_due) }}</b>, read {{ local(snap.observed_at) }}.</p>{% endif %}
 <p class="lede">{{ current.summary }} Gatehouse never says a file is compliant or that a unit may be sold. The best a file can reach is a packet ready for a person to review. Files are evaluated when someone asks, not yet on their own: account changes after {{ local(current.evaluated_at) }} are not reflected here until the file is evaluated again.</p>
 
 {% if changed %}
