@@ -33,7 +33,9 @@ def test_today_lists_each_open_item_with_what_proves_it_done(fms_url, sim):
         assert "A person names the FMS payment that is this attempt" in page
         assert "Synthetic technical preview" in page
         albany = visitor.get("/", params={"facility": "fac_NSalbany001"}).text
-        assert "Sent to counsel" in albany and "Payment outcome unknown" not in albany
+        assert "Counsel review required" in albany and "Payment outcome unknown" not in albany
+        # a facility id that is not ours is not quietly swapped for another facility
+        assert visitor.get("/", params={"facility": "fac_HBtampa0001"}).status_code == 404
 
 
 def test_the_lost_payment_shows_both_sides_and_offers_no_payment_button(fms_url, sim):
@@ -43,7 +45,10 @@ def test_the_lost_payment_shows_both_sides_and_offers_no_payment_button(fms_url,
         assert "None before the timeout" in page and "never sent again" in page
         assert "&ldquo;Yes, go ahead&rdquo;" in page or "Yes, go ahead" in page
         # the simulator's own record, saved when the world was built: one charge, applied
-        assert "What actually happened, from the simulator" in page and "SUCCEEDED, applied to the ledger" in page
+        assert "The simulator&#39;s own record" in page or "The simulator's own record" in page
+        assert "SUCCEEDED, applied to the ledger (this attempt)" in page and "charged twice" in page
+        returned = visitor.get("/payments/2").text
+        assert "DIRECT_DEBIT_RETURN" in returned and "charged twice" not in returned
         assert "<form" not in page.split("<main>")[1] and "Mark paid" not in page
 
 
@@ -54,7 +59,7 @@ def test_the_record_keeps_each_source_in_its_own_lane(fms_url, sim):
         page = visitor.get(f"/accounts/{gina}").text
         for lane in ("The FMS said", "Gatehouse observed", "Gatehouse concluded", "A person decided"):
             assert lane in page
-        assert "9 legal checks recorded" in page and "Payment at the counter" in page
+        assert "9 legal checks recorded" in page and "Payment made outside Gatehouse" in page
         lien = visitor.get(f"/accounts/{gina}/lien").text
         assert "Account changed: re-review" in lien and "Changed since the evaluation" in lien
         assert "compliant" not in lien.replace("never says a file is compliant", "")
@@ -79,3 +84,19 @@ def test_the_screens_exist_only_in_the_preview(fms_url, sim):
                         reconcile_every_seconds=60, operator_token="op-token")
     with TestClient(create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 2.0), start_worker=False)) as c:
         assert c.get("/").status_code == 404 and c.get("/payments/1").status_code == 404
+
+
+def test_a_payment_still_pending_at_the_fms_is_shown_as_in_progress(fms_url, sim):
+    app = preview(fms_url)
+    with TestClient(app) as visitor, TestClient(app, headers={"X-Desk-Token": "op-token"}) as desk:
+        sim.behave("lease_RamnA0012", "pending_then_succeed", lag=5)
+        rows = desk.get(f"/api/facilities/{ORLANDO}/queue").json()["rows"]
+        case_id = next(r for r in rows if r["lease"] == "lease_RamnA0012")["case_id"]
+        check = desk.post(f"/api/cases/{case_id}/identity", json={"last_name": "Raman", "phone_last4": "0119", "unit_name": "A-012"}).json()
+        proposal = desk.post(f"/api/cases/{case_id}/proposals", json={"identity_check_id": check["identity_check_id"], "amount": 9500}).json()
+        paid = desk.post(f"/api/cases/{case_id}/proposals/{proposal['proposal_id']}/confirm",
+                         json={"confirmed_by": "J. Ortiz", "tenant_answer": "Yes"}).json()
+        assert paid["state"] == "PENDING_AT_FMS"
+        page = visitor.get("/").text
+        unit = page[page.index("Unit A-012") - 400: page.index("Unit A-012") + 400]
+        assert "Payment in progress" in unit and "No payment or lien step in progress" not in unit

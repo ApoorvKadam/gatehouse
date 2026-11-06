@@ -52,9 +52,9 @@
   </section>
 
   <section class="block">
-    <h2>What the tenant was told</h2>
-    <p class="told"><b>Sent by Gatehouse</b>{{ told }}</p>
-    <p class="note">Gatehouse writes every sentence a tenant reads. It says "applied" only after the FMS ledger shows the money.</p>
+    <h2>What Gatehouse tells the tenant</h2>
+    <p class="told"><b>For this payment as it stands now</b>{{ told }}</p>
+    <p class="note">Gatehouse writes every sentence a tenant reads about a payment. It says "applied" only after the FMS ledger shows the money. At the desk, staff read this sentence out; in the chat, Gatehouse sends it.</p>
   </section>
 
   {% if cmd.state == 'NEEDS_STAFF' %}
@@ -70,15 +70,16 @@
   {% endif %}
 
   {% if truth %}
+  {% set mine = truth.payments|selectattr('paymentId', 'in', [cmd.provider_payment_id, cmd.suggested_payment_id])|list %}
   <section class="block wide truth">
-    <h2>What actually happened, from the simulator</h2>
+    <h2>The simulator's own record, from {{ truth.recorded_at }}</h2>
     <dl class="kv">
-      <dt>Charges on this lease</dt><dd>{{ truth.payments|length }}</dd>
-      {% for p in truth.payments %}<dt>{{ p.paymentId }}</dt><dd>{{ money(p.amount) }}, {{ p.status }}{% if p.applied %}, applied to the ledger{% endif %}</dd>{% endfor %}
+      <dt>Payments on this lease</dt><dd>{{ truth.payments|length }}</dd>
+      {% for p in truth.payments %}<dt>{{ p.paymentId }}</dt><dd>{{ money(p.amount) }}, {{ p.status }}{% if p.applied %}, applied to the ledger{% endif %}{% if p in mine %} (this attempt){% endif %}</dd>{% endfor %}
       <dt>Balance at the simulator</dt><dd>{{ money(truth.totalDue) }}</dd>
-      <dt>Recorded</dt><dd>{{ truth.recorded_at }}, when this world was built</dd>
     </dl>
-    <p>A real FMS cannot show this. The simulator keeps its own record of what it did, so the preview can prove the card was charged once and that Gatehouse held the account instead of guessing.</p>
+    <p>A real FMS cannot show this: the simulator keeps its own record of what it did. It was saved when this preview started, before anyone opened a page.
+    {% if cmd.state == 'NEEDS_STAFF' and truth.payments|length == 1 and mine %} It shows one charge on this lease, so holding the account instead of retrying is what kept this tenant from being charged twice.{% endif %}</p>
   </section>
   {% endif %}
 </div>

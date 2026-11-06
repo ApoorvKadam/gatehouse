@@ -37,6 +37,10 @@ LANE_OF = {
     "handed to staff": CONCLUDED, "desk replied": CONCLUDED,
     "payment resolved by staff": DECIDED, "lien evidence recorded": DECIDED,
 }
+# payments that still hold the lease, and what each is waiting for
+IN_FLIGHT = {"SUBMITTING": "being sent to the FMS", "PENDING_AT_FMS": "pending at the FMS",
+             "AWAITING_APPLICATION": "accepted by the FMS but not yet on the ledger",
+             "OUTCOME_UNKNOWN": "unconfirmed: the FMS answer did not arrive and Gatehouse is checking"}
 EVIDENCE_NAMES = {"notice": "Lien notice", "mail_deposit": "Certificate of mailing", "posting": "Notice posted",
                   "publication": "Newspaper publication", "legal_check": "Legal check", "email_delivery": "Email delivery"}
 
@@ -113,7 +117,7 @@ def describe(e: CaseEvent, commands: dict[int, PaymentCommand], evidence: dict[i
     elif kind == "payment status changed after success":
         title, text = "Payment came back", f"The FMS now reports {d.get('fms_status')} for a payment Gatehouse had confirmed."
     elif kind == "payment taken outside the desk":
-        title, text = "Payment at the counter", f"{money(d.get('amount'))}, recorded as {d.get('payment')}."
+        title, text = "Payment made outside Gatehouse", f"{money(d.get('amount'))}, recorded as {d.get('payment')}."
     elif kind == "payment needs staff":
         title, text = "Held for a person", d.get("reason") or (cmd.provider_reason if cmd else "")
     elif kind == "lien file evaluated":
@@ -157,35 +161,47 @@ class Pages:
             owed = snap.total_due if snap else None
             found = False
             for cmd in s.scalars(select(PaymentCommand).where(PaymentCommand.case_id == case.id)).all():
+                how = "by phone" if (cmd.authorization or {}).get("channel") == "desk" else "in the tenant chat"
                 if cmd.state == "NEEDS_STAFF":
                     found = True
-                    lost = cmd.provider_payment_id is None
-                    items.append(Item(0, "Payment outcome unknown" if lost else "Payment needs a person", lease.unit_name, case.id,
-                                      cmd.created_at,
-                                      (f"A {money(cmd.amount)} card payment taken by phone. The FMS took a payment, but its answer "
-                                       "never reached Gatehouse, so the account is held and nothing was retried.") if lost else cmd.provider_reason or "",
-                                      "A person names the FMS payment that is this attempt, and the ledger shows it applied.",
+                    if cmd.provider_payment_id is None:
+                        what = (f"A {money(cmd.amount)} payment agreed {how}. The FMS answer never arrived, so Gatehouse holds the "
+                                "account and has not retried. "
+                                + (f"The FMS shows {cmd.suggested_payment_id}, which may be this attempt." if cmd.suggested_payment_id
+                                   else "No FMS payment matching this attempt has been found."))
+                        head = "Payment outcome unknown"
+                    else:
+                        what, head = sentence(cmd.provider_reason or "The FMS and the ledger disagree about this payment"), "Payment needs a person"
+                    items.append(Item(0, head, lease.unit_name, case.id, cmd.created_at, what,
+                                      "A person names the FMS payment that is this attempt and the ledger shows it, or records that it "
+                                      "was not charged once the FMS shows nothing that could be it.",
                                       "Collections lead", f"/payments/{cmd.id}", money(cmd.amount)))
+                elif cmd.state in IN_FLIGHT:
+                    found = True
+                    items.append(Item(1, "Payment in progress", lease.unit_name, case.id, cmd.created_at,
+                                      f"A {money(cmd.amount)} payment agreed {how} is {IN_FLIGHT[cmd.state]}. No other payment can start "
+                                      "on this lease until it settles.",
+                                      "The FMS reports it succeeded and the ledger shows it, or the FMS reports it declined.",
+                                      "Gatehouse checks on its own", f"/payments/{cmd.id}", money(cmd.amount)))
                 elif cmd.state == "RETURNED":
                     found = True
                     items.append(Item(2, "Payment returned", lease.unit_name, case.id, cmd.reversed_at or cmd.created_at,
-                                      f"{money(cmd.amount)} posted and was confirmed, then the bank returned it. The account is open again.",
-                                      f"The ledger shows the {money(owed)} paid again, or a person records why not.",
-                                      "Front desk", f"/payments/{cmd.id}", money(owed)))
+                                      f"{money(cmd.amount)} posted and was confirmed, then the FMS reported it returned. The account is open again.",
+                                      "The FMS ledger shows the balance paid.", "Front desk", f"/payments/{cmd.id}", money(owed)))
             last = s.scalar(select(LienEvaluation).where(LienEvaluation.case_id == case.id).order_by(LienEvaluation.id.desc()).limit(1))
             if last is not None and last.state == "Account changed: re-review":
                 found = True
+                why = [sentence(f["detail"]) for f in last.findings if f["status"] in ("review", "blocked")]
                 sale = next((v for k, v in last.timing.items() if k.startswith("earliest sale")), None)
                 items.append(Item(1, "Lien file out of date", lease.unit_name, case.id, last.evaluated_at,
-                                  "A payment posted after the lien notice went out, so the file no longer matches the balance."
-                                  + (f" Earliest sale under the statute: {day(sale)}." if sale else ""),
-                                  "A person reviews the file against today's balance and decides whether the sale can go on.",
+                                  " ".join(why) + (f" Earliest sale under the statute: {day(sale)}." if sale else ""),
+                                  "A person reviews the file against the account as it is now and decides what happens to the sale.",
                                   "Collections lead", f"/accounts/{case.id}/lien", money(owed)))
             elif last is not None and last.state == "Counsel review required":
                 found = True
-                items.append(Item(3, "Sent to counsel", lease.unit_name, case.id, last.evaluated_at,
-                                  "No reviewed lien rules for this state, so Gatehouse does not evaluate the file.",
-                                  "Counsel's review is recorded on the file.", "Counsel", f"/accounts/{case.id}/lien", money(owed)))
+                items.append(Item(3, "Counsel review required", lease.unit_name, case.id, last.evaluated_at, sentence(last.summary),
+                                  "Counsel's decision is recorded on the file. Gatehouse cannot record one yet, so this stays open.",
+                                  "Counsel", f"/accounts/{case.id}/lien", money(owed)))
             if not found:
                 items.append(Item(4, "Past due", lease.unit_name, case.id, case.opened_at,
                                   f"{money(owed)} owed. No payment or lien step in progress.",
@@ -239,7 +255,9 @@ def router(pages: Pages) -> APIRouter:
             facilities = pages.facilities(s)
             if not facilities:
                 raise HTTPException(503, "No facility has been read from the FMS yet")
-            current = next((f for f in facilities if f.provider_id == facility), facilities[0])
+            current = next((f for f in facilities if f.provider_id == facility), None) if facility else facilities[0]
+            if current is None:
+                raise HTTPException(404, "No such facility")
             items = pages.today(s, current)
             return templates.TemplateResponse(request, "today.html", {
                 "facilities": facilities, "facility": current, "items": items, "local": local, "nav": "today"})
