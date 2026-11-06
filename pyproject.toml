@@ -1,0 +1,26 @@
+[project]
+name = "past-due-desk"
+version = "0.1.0"
+description = "Collections reconciliation for storage FMS"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "sqlalchemy>=2.0",
+    "pydantic>=2.7",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+chat = ["anthropic>=0.40"]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["desk*", "fmssim*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
