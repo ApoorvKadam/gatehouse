@@ -162,7 +162,7 @@
         <table>
           <thead><tr><th>Requirement</th><th>Status</th></tr></thead>
           <tbody>
-          {% for f in (changed.findings|rejectattr('status', 'equalto', 'met')|list)[:3] %}<tr><td>{{ sentence(readable(f.detail)) }}</td><td><span class="status {{ f.status }}">{{ f.status }}</span></td></tr>{% endfor %}
+          {% for f in (changed.findings|rejectattr('status', 'equalto', 'met')|list)[:3] %}<tr><td>{{ sentence(readable(f.detail, f.verbatim)) }}</td><td><span class="status {{ f.status }}">{{ f.status }}</span></td></tr>{% endfor %}
           <tr><td class="muted">{{ changed.findings|selectattr('status', 'equalto', 'met')|list|length }} other requirements met, each with its record</td><td><span class="status met">met</span></td></tr>
           </tbody>
         </table>

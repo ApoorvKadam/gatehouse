@@ -239,6 +239,9 @@ class Finding:
     status: Literal["met", "missing", "review", "waiting", "blocked"]
     detail: str
     action: str = ""
+    # text in the detail quoted from a record (a charge description, a newspaper, who delivered the notice): a page
+    # may restyle amounts and dates in the engine's own words, never inside these
+    verbatim: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -368,7 +371,8 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
         if not records:
             out.append(Finding(label, basis, "missing", f"no {label} check is recorded", "record yes, no or unknown with its source"))
         elif len({c.answer for c in records}) > 1:
-            out.append(Finding(label, basis, "review", f"conflicting {label} checks: {said}", "resolve by superseding the wrong record; send to counsel"))
+            out.append(Finding(label, basis, "review", f"conflicting {label} checks: {said}", "resolve by superseding the wrong record; send to counsel",
+                               [c.source for c in records]))
         elif records[0].answer != clean:
             out.append(Finding(label, basis, "review", f"{label}: {said}", "send to counsel"))
         else:
@@ -423,22 +427,22 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
             if match is not None and (not match.get("category") or ledger_category != item.category):
                 out.append(Finding("charge category", "policy", "review",
                                    f"\"{item.description}\" is {item.category} in the notice and {match.get('category') or 'unclassified'} on the ledger",
-                                   "correct the notice; send to review"))
+                                   "correct the notice; send to review", [item.description]))
             if match is not None and match.get("due_on") and match["due_on"] != item.due_on.isoformat():
                 out.append(Finding("date the charge became due", "statute 83.806(2)(a)", "review",
                                    f"\"{item.description}\" is dated {item.due_on} in the notice and {match['due_on']} on the ledger",
-                                   "correct the notice; send to review"))
+                                   "correct the notice; send to review", [item.description]))
             if match is None:
                 out.append(Finding("itemized charge on the ledger", "statute 83.806(2)(a)", "review",
                                    f"\"{item.description}\" for {item.amount_cents} cents is not an open charge on the FMS ledger snapshot",
-                                   "correct the notice; send to review"))
+                                   "correct the notice; send to review", [item.description]))
     try:
         zone = facility_zone(facts.facility_time_zone)
         local_instant(datetime.combine(notice.sale_date, clock_time(notice.sale_time)), zone)
     except ValueError as exc:
         out.append(Finding("sale time", "statute 83.806(2)(d)", "review",
                            f"the stated sale time {notice.sale_time!r} on {notice.sale_date} is not a clear local time: {exc}",
-                           "state the sale time as, for example, 10:00 AM; send to review"))
+                           "state the sale time as, for example, 10:00 AM; send to review", [repr(notice.sale_time), str(exc)]))
     if sum(ch.isdigit() for ch in notice.owner_phone) < 10:
         out.append(Finding("owner contact", "statute 83.806(2)(e)", "missing", "the owner's telephone number is incomplete", "correct the notice"))
 
@@ -447,6 +451,7 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
 
     # delivery
     deliveries: list[tuple[date, str]] = []
+    quoted: dict[str, list[str]] = {}
     for e in for_notice("mail_deposit"):
         m = MailDeposit.model_validate(e["facts"])
         if m.first_class and m.certificate_of_mailing and m.postage_prepaid:
@@ -458,6 +463,7 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
     for e in for_notice("in_person_delivery"):
         p = InPersonDelivery.model_validate(e["facts"])
         deliveries.append((p.delivered_on, f"delivered in person on {p.delivered_on} by {p.delivered_by}"))
+        quoted[deliveries[-1][1]] = [p.delivered_by]
     unconfirmed_email, unconfirmed_sent = False, None
     for e in for_notice("email_delivery"):
         m = EmailDelivery.model_validate(e["facts"])
@@ -468,7 +474,9 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
             basis = "statute 83.806(1)" if m.delivered_on else "policy"
             deliveries.append((when, f"e-mail to {m.sent_to}, {m.confirmation} from the same address, delivery dated {when}"
                                      + ("" if m.delivered_on else " by the confirmation (policy)")))
-            out.append(Finding("e-mail confirmation", basis, "met", f"{m.confirmation} from {m.confirmation_from}"))
+            quoted[deliveries[-1][1]] = [m.sent_to, m.confirmation]
+            out.append(Finding("e-mail confirmation", basis, "met", f"{m.confirmation} from {m.confirmation_from}", "",
+                               [m.confirmation, m.confirmation_from]))
         else:
             unconfirmed_email = True
             unconfirmed_sent = max(unconfirmed_sent or m.sent_on, m.sent_on)
@@ -485,7 +493,7 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
     delivered_on, how = min(deliveries)
     if unconfirmed_email and fallback:
         delivered_on, how = min(fallback)   # policy: count from the fallback mailing
-    out.append(Finding("notice delivery", "statute 83.806(1)", "met", how))
+    out.append(Finding("notice delivery", "statute 83.806(1)", "met", how, "", quoted.get(how, [])))
     timing["notice delivered"] = delivered_on.isoformat()
     if notice.sum_due_since > delivered_on:
         out.append(Finding("date the sum became due", "statute 83.806(2)(a)", "review",
@@ -494,7 +502,7 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
     if not_yet_due:
         out.append(Finding("charges due at notice time", "statute 83.806(2)(a)", "review",
                            f"\"{not_yet_due[0].description}\" fell due {not_yet_due[0].due_on}, after the notice was delivered on {delivered_on}",
-                           "claim only what was due when the notice was delivered"))
+                           "claim only what was due when the notice was delivered", [not_yet_due[0].description]))
     earliest_due = min(c.due_on for c in notice.itemized_charges)
     if notice.sum_due_since != earliest_due:
         out.append(Finding("date the sum became due", "statute 83.806(2)(a)", "review",
@@ -512,9 +520,10 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
     elif any(p.conspicuous != "yes" for p in postings):
         out.append(Finding("conspicuous posting", "statute 83.806(1)", "review",
                            "the posting is not recorded as conspicuous: " + "; ".join(f"{p.location_detail}: {p.conspicuous}" for p in postings),
-                           "send to review"))
+                           "send to review", [p.location_detail for p in postings]))
     elif any(p.posted_on == delivered_on for p in postings):
-        out.append(Finding("conspicuous posting", "statute 83.806(1)", "met", f"posted on {delivered_on} ({postings[0].location_detail})"))
+        out.append(Finding("conspicuous posting", "statute 83.806(1)", "met", f"posted on {delivered_on} ({postings[0].location_detail})", "",
+                           [postings[0].location_detail]))
     else:
         out.append(Finding("posting date", "policy", "review", f"posted on {postings[-1].posted_on}, notice delivered {delivered_on}", "send to review"))
 
@@ -566,13 +575,15 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
                            f"publications on {first.published_on} and {pubs[1].published_on}, not seven days apart", "send to review"))
     elif pubs[1].newspaper.strip().lower() != first.newspaper.strip().lower():
         out.append(Finding("same newspaper both weeks", "policy", "review",
-                           f"published in {first.newspaper} and then in {pubs[1].newspaper}", "send to review"))
+                           f"published in {first.newspaper} and then in {pubs[1].newspaper}", "send to review", [first.newspaper, pubs[1].newspaper]))
     else:
-        out.append(Finding("advertisement", "statute 83.806(4)", "met", f"published {first.published_on} and {pubs[1].published_on} in {first.newspaper}"))
+        out.append(Finding("advertisement", "statute 83.806(4)", "met", f"published {first.published_on} and {pubs[1].published_on} in {first.newspaper}",
+                           "", [first.newspaper]))
     for p in pubs:
         if p.general_circulation_in_facility_area != "yes":
             out.append(Finding("newspaper of general circulation in the area", "statute 83.806(4)", "review",
-                               f"{p.newspaper}: {p.general_circulation_in_facility_area} ({p.circulation_source})", "send to review"))
+                               f"{p.newspaper}: {p.general_circulation_in_facility_area} ({p.circulation_source})", "send to review",
+                               [p.newspaper, p.circulation_source]))
         lacking = [name for name, ok in (("property description", p.includes_property_description), ("facility address", p.includes_facility_address),
                                          ("tenant name", p.includes_tenant_name), ("time, place and manner of sale", p.includes_sale_time_place_manner)) if not ok]
         if lacking:

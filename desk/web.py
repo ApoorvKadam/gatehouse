@@ -75,28 +75,35 @@ def local(when: datetime | None, zone: str = "America/New_York") -> str:
     return t.strftime("%b %-d, %-I:%M %p")
 
 
-def readable(text: str) -> str:
+def readable(text: str, verbatim=()) -> str:
     """Finding details come from the rules engine in cents and ISO dates; operators read dollars and dates.
-    Text in double quotes is quoted from a record (a charge description as printed on the notice) and is kept
-    exactly as written; only the engine's own wording around it is converted."""
-    return "".join(part if len(part) > 1 and part[0] == part[-1] == '"' else _engine_words(part)
-                   for part in re.split(r'("[^"]*")', text))
+    The parts a finding quotes from a record (its `verbatim` list, e.g. a charge description as printed on the notice)
+    are set aside first and put back exactly as written, so only the engine's own wording is converted."""
+    kept = sorted({v for v in (verbatim or []) if v}, key=len, reverse=True)
+    for i, v in enumerate(kept):
+        text = text.replace(v, f"\ue000{chr(0xE100 + i)}\ue000")
+    text = _engine_words(text)
+    for i, v in enumerate(kept):
+        text = text.replace(f"\ue000{chr(0xE100 + i)}\ue000", v)
+    return text
 
 
 def _engine_words(text: str) -> str:
-    """Amounts in cents and ISO dates in the engine's own phrasing. A date-shaped string that is not a real date is
-    left as it is, so nothing here can break the page."""
-    text = re.sub(r"claims (\d+) cents; the FMS ledger then showed (\d+)",
+    """Amounts in cents and ISO dates in the engine's own phrasing. A number or date that touches set-aside quoted
+    text is left alone, and a date-shaped string that is not a real date stays as it is, so nothing here can split
+    a figure or break the page."""
+    edge = r"\w\ue000-\uf8ff"
+    text = re.sub(r"claims (\d+) cents; the FMS ledger then showed (\d+)(?![" + edge + r"])",
                   lambda m: f"claims {money(int(m.group(1)))}; the FMS ledger then showed {money(int(m.group(2)))}", text)
     text = re.sub(r"from (\d+) to (\d+) cents", lambda m: f"from {money(int(m.group(1)))} to {money(int(m.group(2)))}", text)
-    text = re.sub(r"(\d+) cents", lambda m: money(int(m.group(1))), text)
+    text = re.sub(r"(?<![" + edge + r"])(\d+) cents", lambda m: money(int(m.group(1))), text)
 
     def as_day(m: re.Match) -> str:
         try:
             return day(m.group(1))
         except ValueError:
             return m.group(1)
-    return re.sub(r"\b(20\d\d-\d\d-\d\d)\b", as_day, text)
+    return re.sub(r"(?<![" + edge + r"-])(20\d\d-\d\d-\d\d)(?![" + edge + r"])", as_day, text)
 
 
 def sentence(text: str) -> str:
@@ -244,7 +251,7 @@ class Pages:
                 # the evaluation's own state, labelled with its date; nothing here infers what it would say today
                 found = True
                 rank, head, proof, who = LIEN_ITEMS.get(last.state, (3, last.state, "A person reviews the file.", "Collections lead"))
-                open_findings = [sentence(readable(f["detail"])) for f in last.findings if f["status"] != "met"]
+                open_findings = [sentence(readable(f["detail"], f.get("verbatim"))) for f in last.findings if f["status"] != "met"]
                 sale = next((v for k, v in last.timing.items() if k.startswith("earliest sale")), None)
                 what = " ".join(open_findings) if last.state != "Counsel review required" and open_findings else sentence(last.summary)
                 items.append(Item(rank, head, lease.unit_name, case.id, last.evaluated_at,

@@ -19,8 +19,8 @@
     <tbody>
     {% for old, new in changed %}
       <tr><td class="req">{{ new.requirement }}</td>
-        <td>{% if old %}<span class="status {{ old.status }}">{{ old.status }}</span>: {{ sentence(readable(old.detail)) }}{% else %}No finding{% endif %}</td>
-        <td><span class="status {{ new.status }}">{{ new.status }}</span>: {{ sentence(readable(new.detail)) }}{% if new.action %} <b>{{ new.action }}</b>{% endif %}</td></tr>
+        <td>{% if old %}<span class="status {{ old.status }}">{{ old.status }}</span>: {{ sentence(readable(old.detail, old.verbatim)) }}{% else %}No finding{% endif %}</td>
+        <td><span class="status {{ new.status }}">{{ new.status }}</span>: {{ sentence(readable(new.detail, new.verbatim)) }}{% if new.action %} <b>{{ new.action }}</b>{% endif %}</td></tr>
     {% endfor %}
     </tbody>
   </table>
@@ -35,7 +35,7 @@
     {% for f in findings %}
       <tr><td class="req">{{ f.requirement }}</td><td>{{ f.basis }}</td>
         <td class="status {{ f.status }}"><span class="mark{% if f.status == 'met' %} filled{% endif %}"></span>{{ f.status }}</td>
-        <td>{{ sentence(readable(f.detail)) }}{% if f.action %}<br><b>{{ f.action }}</b>{% endif %}</td></tr>
+        <td>{{ sentence(readable(f.detail, f.verbatim)) }}{% if f.action %}<br><b>{{ f.action }}</b>{% endif %}</td></tr>
     {% endfor %}
     </tbody>
   </table>
