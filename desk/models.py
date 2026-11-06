@@ -195,3 +195,18 @@ class DeskBinding(Base):
     facility_ids: Mapped[list] = mapped_column(JSON, default=list)
     fms_fingerprint: Mapped[str] = mapped_column(String, default="")
     bound_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class RuleSourceRow(Base):
+    """One row of a published lien-law dataset, stored exactly as published with the file it came from. Rows are
+    reference material for the people who write rule versions; nothing here is executable, and nothing edits them."""
+
+    __tablename__ = "rule_source_rows"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source: Mapped[str] = mapped_column(String)
+    file_sha256: Mapped[str] = mapped_column(String)
+    jurisdiction: Mapped[str] = mapped_column(String)
+    row: Mapped[dict] = mapped_column(JSON)
+    attribution: Mapped[str] = mapped_column(String)
+    imported_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    __table_args__ = (UniqueConstraint("file_sha256", "jurisdiction"),)
