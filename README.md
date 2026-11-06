@@ -26,7 +26,36 @@ Under active development. The verified-payment path comes first, then the lien e
 
 ## Running it
 
-Coming with the first release: `docker compose up` starts the desk, the worker and the FMS simulator with seeded synthetic facilities.
+```bash
+cp .env.example .env            # set DESK_OPERATOR_TOKEN to a long random string
+docker compose up --build       # desk on :8000, FMS simulator on :8100, reconciliation worker
+```
+
+Every desk route expects `X-Desk-Token: <DESK_OPERATOR_TOKEN>`. A first look:
+
+```bash
+curl -X POST -H "X-Desk-Token: $TOKEN" localhost:8000/api/facilities/fac_NSorlando01/sync
+curl -H "X-Desk-Token: $TOKEN" localhost:8000/api/facilities/fac_NSorlando01/queue
+```
+
+To watch the desk handle each FMS failure, run the scenarios against the simulator:
+
+```bash
+python -m desk.scenarios --fms http://localhost:8100
+```
+
+```
+PASS  Gateway pending                FMS: PENDING, settles two reads later
+                                     desk: PENDING_AT_FMS, then CONFIRMED; 1 charge
+                                     tenant hears: Your $240.00 payment is still processing. Please do not pay again; we will confirm the result.
+PASS  Response lost after charging   FMS: charges and applies, answers too late
+                                     desk: matched at the FMS, CONFIRMED; 1 charge
+PASS  FMS error, no payment made     FMS: HTTP 500, nothing recorded
+                                     desk: NEEDS_STAFF, new attempts blocked
+...
+```
+
+Tests run against the simulator over real HTTP: `pip install -e ".[dev]" && pytest`.
 
 ## Data, rules and limits
 
