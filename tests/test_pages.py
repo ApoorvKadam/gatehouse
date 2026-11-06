@@ -114,3 +114,10 @@ def test_a_lien_file_on_an_account_paid_since_says_so(fms_url, sim):
         page = visitor.get("/").text
         unit = page[page.index("Unit E-505") - 400: page.index("Unit E-505") + 500]
         assert "Lien file on a paid account" in unit and "The FMS now shows this account paid" in unit
+
+
+def test_the_seeded_lien_file_is_not_called_stale_by_its_own_payment(fms_url, sim):
+    with TestClient(preview(fms_url)) as visitor:
+        lien = visitor.get("/accounts/2/lien").text
+        assert "Account changed: re-review" in lien
+        assert "needs to be evaluated again" not in lien and "The FMS now shows this account paid" not in lien

@@ -34,7 +34,7 @@
     <dl class="kv">
       <dt>Written down first</dt><dd>{{ local(cmd.created_at) }}, before the FMS was called</dd>
       <dt>Sent to the FMS</dt><dd>{{ local(cmd.submitted_at) or 'Not sent' }}</dd>
-      <dt>Answer at the time</dt><dd>{% if sent and sent.fms_said == 'accepted' %}{{ sent.status }}{% if sent.detail %} ({{ sent.detail }}){% endif %}{% elif sent %}No usable answer: {{ sent.detail or 'the outcome was not confirmed' }}{% elif cmd.submitted_at %}Not recorded{% else %}Not sent{% endif %}</dd>
+      <dt>Answer at the time</dt><dd>{% if not sent %}{{ 'Not recorded' if cmd.submitted_at else 'Not sent' }}{% elif sent.fms_said == 'lost' %}No usable answer: {{ sent.detail or 'the outcome was not confirmed' }}{% else %}{{ sent.status or sent.fms_said|capitalize }}{% if sent.detail %} ({{ sent.detail }}){% endif %}{% endif %}</dd>
       <dt>Status at the FMS now</dt><dd>{% if cmd.provider_payment_id %}{{ cmd.provider_payment_id }}, {{ cmd.provider_status }}{% else %}No FMS payment identified as this attempt{% endif %}</dd>
       <dt>Checks since</dt><dd>{{ cmd.checks }}, last {{ local(cmd.last_checked_at) or 'not yet' }}</dd>
       <dt>Retried</dt><dd>No. A payment whose outcome is unknown is never sent again.</dd>
