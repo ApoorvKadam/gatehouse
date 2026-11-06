@@ -66,7 +66,8 @@ PASS  FMS fails mid-request             FMS: HTTP 500, nothing recorded
                                         desk: NEEDS_STAFF, new attempts blocked until staff cleared it
                                         tenant hears: We checked your $240.00 payment with our records: it was not charged.
 PASS  Counter payment at the same time  FMS: ours applies late; a cash payment lands first
-                                        desk: AWAITING_APPLICATION (the ledger cannot say whose money is whose), NEEDS_STAFF, staff identified it: CONFIRMED
+                                        desk: AWAITING_APPLICATION (the ledger cannot say whose money is whose), NEEDS_STAFF, staff checked the ledger: CONFIRMED
+                                        tenant hears: Your payment of $240.00 has been applied to your account.
 ...
 12 of 12 scenarios behaved as they should.
 ```
