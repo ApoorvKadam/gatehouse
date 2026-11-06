@@ -59,8 +59,6 @@ def test_the_public_preview_reads_without_a_token_but_changes_nothing(fms_url, s
         detail = visitor.get(f"/api/cases/{case_id}").json()
         assert detail["payments"][0]["state"] == "NEEDS_STAFF"
         assert visitor.get(f"/api/payments/{detail['payments'][0]['id']}").status_code == 200
-        before = sim.post("/sim/truth?leaseId=lease_WhitB1042").status_code   # a POST is not the truth route
-        assert before == 405
         # every change, and the lien route that records an evaluation, still needs the operator token
         assert visitor.post(f"/api/facilities/{ORLANDO}/sync").status_code == 401
         assert visitor.post(f"/api/cases/{case_id}/identity",

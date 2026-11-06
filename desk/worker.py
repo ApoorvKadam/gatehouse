@@ -28,6 +28,7 @@ class Worker:
         # monotonic time of the last pass that finished, failed or not; readiness reads it
         self.last_pass: float | None = None
         self.last_error: str | None = None
+        self.started_at = time.monotonic()
 
     def start(self) -> None:
         self.started_at = time.monotonic()

@@ -1,6 +1,8 @@
 FROM python:3.12-slim
 
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 TZ=America/New_York
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 TZ=America/New_York \
+    DESK_FMS_BASE_URL=http://127.0.0.1:8100 \
+    DESK_DATABASE_URL=sqlite:////app/data/desk.db SIM_DATABASE_URL=sqlite:////app/data/fmssim.db
 WORKDIR /app
 
 COPY pyproject.toml README.md ./
