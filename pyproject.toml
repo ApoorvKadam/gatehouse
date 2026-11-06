@@ -24,3 +24,6 @@ include = ["desk*", "fmssim*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.setuptools.package-data]
+desk = ["reference/*.csv"]

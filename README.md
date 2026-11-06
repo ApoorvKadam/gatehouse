@@ -13,7 +13,7 @@ It exists because the expensive failures in collections are not missing features
 - **One charge, confirmed by the ledger.** One open payment per unit, enforced by the database, and no new charge while any payment on the lease is still pending at the FMS, whoever took it. The intent is written before the FMS is called. A payment counts as applied only when money lands on the charges that were open when the tenant agreed and no other payment on the lease could have put it there. Cubby's ledger does not say which payment paid which charge, so when another payment is in motion the desk does not guess: a person decides.
 - **Every outcome has a state.** Declines (an HTTP 200 at Cubby), pending gateway answers, lost responses, FMS failures, late application, refunds, disputes and returns each land in a defined state. A pending payment is never retried. A lost response gets a suggested FMS payment, never an automatic match. What the desk cannot establish goes to staff, who need their own token and record what they found (naming a payment says which one an attempt was; confirming it posted takes their statement that they checked the ledger); "not charged" is refused while the FMS shows the payment pending or succeeded, or while a possible match is unaccounted for. The unit stays held until then.
 - **Tenant conversation.** A tenant can check and pay a past-due balance by message. Claude Haiku handles the conversation but has no tool that charges a card: it can propose an amount, and the card is charged only when the tenant's very next message is a plain yes to that proposal. The model never writes anything the tenant reads: it chooses an action (verify, read the balance, propose a payment, check its status, explain a charge, ask to clarify, hand off) and the desk sends its own sentence, built from the FMS ledger and the payment record. Text the model writes anyway is logged and not sent. Identity comes from what the caller types, lasts 15 minutes and is never renewed by the model; a conversation answers only the sender who started it. Three wrong identity answers, hardship, military service, liens and anything legal go to a person.
-- **Lien evidence, not legal answers** (next). Notice and advertising steps tracked against reviewed, versioned jurisdiction rules. Missing proof holds the account. Rules that have not been reviewed fail closed.
+- **Lien evidence, not legal answers.** For a Florida account, operators record the notice, how it was delivered, the posting, each newspaper publication and the legal checks (military disclosure and service, bankruptcy, vehicle or watercraft, dispute, secured party), each with its document. The desk evaluates the file against rule version FL-r1 and lists every open item with its basis: a section of Fla. Stat. 83.801-83.809, or an operator policy the desk applies on top of the statute. The best a file can reach is "Review packet assembled": every listed requirement has a record, with its document or transcription kept where one is needed. Nothing here authenticates those documents: a person still has to check them, and sale authorization is outside this desk. New York is reference only and every New York case goes to counsel; other states have no reviewed rule version.
 
 ## How it is built
 
@@ -73,6 +73,38 @@ PASS  Counter payment at the same time  FMS: ours applies late; a cash payment l
 ```
 
 Tests run against the simulator over real HTTP: `pip install -e ".[dev,chat]" && pytest`. One test calls the real model and is skipped unless `DESK_LIVE_MODEL=1` is set.
+
+## Lien files (Florida, rule version FL-r1)
+
+```bash
+curl -X POST -H "$H" -H "$J" localhost:8000/api/cases/1/lien/evidence -d '{"kind": "mail_deposit", "entered_by": "J. Ortiz",
+  "document_name": "certificate-of-mailing.pdf.txt", "document_text": "PS Form 3817 ...",
+  "facts": {"notice_id": 12, "deposited_on": "2026-10-02", "certificate_of_mailing": true, "postage_prepaid": true,
+            "address": "88 Pine St, Orlando FL", "address_basis": "rental agreement"}}'
+curl -H "$H" localhost:8000/api/cases/1/lien
+```
+
+How dates work: every date is a calendar date at the facility, in the time zone the FMS reports for it (no default). A stated payment deadline stays open through its whole local day, and the next step can start the day after. With delivery on November 6, the earliest deadline is November 20, the first publication can run November 21, the second on November 28, and the sale threshold under this policy is December 6.
+
+What the statute says and what is policy:
+
+| Check | Basis |
+|---|---|
+| Delivery in person, by e-mail, or by first-class mail (recorded as such) with a certificate of mailing; mail is presumed delivered on deposit | 83.806(1), (3) |
+| Unconfirmed e-mail needs the first-class fallback before any sale | 83.806(1) |
+| Notice content: itemized claim, property description, demand of at least 14 days after delivery, sale statement, owner contact | 83.806(2) |
+| Posting at the facility or on the unit, recorded with where and whether it was conspicuous | 83.806(1) |
+| Advertisement once a week for two consecutive weeks after the demand period, with its required content; sale at least 15 days after the first publication | 83.806(4) |
+| Rental agreement discloses uniformed-services membership; any charge that is not rent authorized by the agreement; a late fee above the statute's safe harbor ($20 or 20 percent of the monthly rent, whichever is greater) checked for reasonableness; vehicles and watercraft; secured parties; no document of title issued (which would put the arrangement under chapter 677) | 83.808(2), 83.808(3), 83.806(10), 83.805, 83.803(5) |
+| Each itemized charge is an open charge on the FMS ledger and was due when the notice was delivered, the stated due date is the earliest charge's, the sale time exists on the facility's clock, the owner's phone is complete; e-mail went to the tenant's last known address; the earliest sale is 15 days after the first publication | 83.806(1), 83.806(2), 83.806(4)(b)3 |
+| The newspaper is one of general circulation in the facility's area, with how that was established | 83.806(4) |
+| The itemized claim adds up and equals the FMS ledger snapshot the notice was built from, taken before delivery | 83.806(2)(a), compared as policy |
+| Posting dated the day of delivery; publications exactly seven days apart; an e-mail confirmed only by a later reply is dated by the reply; unconfirmed e-mail counts from the fallback mailing; every legal check recorded as yes, no or unknown, and anything but a clean no goes to counsel; any payment after delivery, or any change to the claimed charges since the snapshot (a waiver, a return, a new amount), reopens review; a payment on the delivery day counts as after it | policy |
+| Every record keeps its document (the notice, the certificate, the confirmation, the acknowledgment, the posting photo, the publisher's affidavit); delivery, posting and publication count only for the notice record they name, so a corrected notice is served again (new evidence for an old, corrected notice is refused) | policy |
+
+Each evaluation keeps the exact facts it read, including each document's hash and the rule version with a fingerprint of the code that evaluated it, and can be replayed only by that same code to the same result (`GET /api/lien/evaluations/{id}/replay`). Evidence is append-only in the database itself (no update, delete or replacing insert); a correction supersedes the record it fixes, once.
+
+Not covered: checking what a kept document actually says (a person does that), sending notices, scheduling or conducting sales, commercial reasonableness, lien priority, proceeds and surplus notices, the no-newspaper posting route (such files go to counsel), vehicle towing, and any reading of Cubby's delinquency exemptions as legal clearance. The append-only rule is enforced by triggers on SQLite; another database needs the same rule in its migrations. Like the payment confirmations, "entered by" is an attested name under one shared desk token.
 
 ## Limits
 
