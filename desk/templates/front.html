@@ -34,7 +34,7 @@
     <div>
       <span class="marker"><i style="background:var(--brick)"></i>Payments</span>
       <h2>A payment whose answer was lost is held, not retried.</h2>
-      <p>The tenant agreed to {{ money(held.amount) }} {{ "by phone" if (held.authorization or {}).get("channel") == "desk" else "in the tenant chat" }}. The FMS took a payment, and the connection broke before its answer arrived. Gatehouse does not charge again and does not tell the tenant it worked. It points to the FMS payment that may be this one and waits for a person.</p>
+      <p>The tenant agreed to {{ money(held.amount) }} {{ "by phone" if (held.authorization or {}).get("channel") == "desk" else "in the tenant chat" }}. No usable answer came back from the FMS{% if held_answer %} ({{ held_answer }}){% endif %}, so nobody can say yet whether the card was charged. Gatehouse does not charge again and does not tell the tenant it worked. It points to an FMS payment that may be this one and waits for a person to decide.</p>
       <a class="open" href="/payments/{{ held.id }}">Open this payment &rarr;</a>
     </div>
     <div class="frame">
@@ -43,7 +43,7 @@
         <dl class="kv">
           <dt>Tenant agreed to</dt><dd>{{ money(held.amount) }}, with a fresh identity check</dd>
           <dt>Sent to the FMS</dt><dd>Once, after the intent was written down</dd>
-          <dt>Answer</dt><dd>None usable: the connection broke</dd>
+          <dt>Answer</dt><dd>None usable{% if held_answer %}: {{ held_answer }}{% endif %}</dd>
           <dt>FMS shows</dt><dd>{{ held.suggested_payment_id or 'No matching payment yet' }}{% if held.suggested_payment_id %}, a possible match{% endif %}</dd>
           {% if truth %}<dt>Simulator's own record</dt><dd>{{ truth.payments|length }} charge on the lease, {{ truth.payments[0].status if truth.payments else '' }}</dd>{% endif %}
         </dl>
@@ -107,11 +107,11 @@
     <div>
       <span class="marker"><i style="background:var(--teal)"></i>Lien files</span>
       <h2>A lien file goes back to review when the account changes.</h2>
-      <p>For a Florida unit, every requirement of the lien statute is listed with its basis and the evidence on file: the notice, the certificate of mailing, the posting, both newspaper publications and the legal checks. A payment after the notice sends the file back to a person. Gatehouse never says a unit may be sold.</p>
+      <p>For a Florida unit, every requirement of the lien statute is listed with its basis and the evidence on file: the notice, the certificate of mailing, the posting, both newspaper publications and the legal checks. A payment after the notice sends the file back to a person. The excerpt shows the recorded result of the latest evaluation. Gatehouse never says a unit may be sold.</p>
       <a class="open" href="/accounts/{{ changed.case_id }}/lien">Open this lien file &rarr;</a>
     </div>
     <div class="frame">
-      <div class="frame-bar"><span><b>Lien file</b> &middot; Florida</span><span class="chip act">{{ changed.state }}</span></div>
+      <div class="frame-bar"><span><b>Lien file</b> &middot; Florida &middot; evaluated {{ local(changed.evaluated_at) }}</span><span class="chip act">{{ changed.state }}</span></div>
       <table>
         <thead><tr><th>Requirement</th><th>Status</th></tr></thead>
         <tbody>

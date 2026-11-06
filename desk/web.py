@@ -306,12 +306,12 @@ def router(pages: Pages) -> APIRouter:
             mine = select(DelinquencyCase.id).join(Lease, Lease.id == DelinquencyCase.lease_id).where(
                 Lease.facility_id.in_([f.id for f in facilities]))
             commands = s.scalars(select(PaymentCommand).where(PaymentCommand.case_id.in_(mine)).order_by(PaymentCommand.id)).all()
-            lost = {e.detail.get("command") for e in s.scalars(select(CaseEvent).where(
+            lost = {e.detail.get("command"): e.detail for e in s.scalars(select(CaseEvent).where(
                 CaseEvent.kind == "payment submitted", CaseEvent.case_id.in_(mine))).all() if (e.detail or {}).get("fms_said") == "lost"}
             # the example has to be what the overview says it is: held after a lost answer, with a possible FMS match
             held = next((c for c in commands if c.state == "NEEDS_STAFF" and c.id in lost and c.provider_payment_id is None
                          and c.suggested_payment_id), None)
-            returned = next((c for c in commands if c.state == "RETURNED"
+            returned = next((c for c in commands if c.state == "RETURNED" and c.confirmed_at is not None
                              and s.get(DelinquencyCase, c.case_id).state != "paid"), None)
             latest = {}
             for e in s.scalars(select(LienEvaluation).where(LienEvaluation.case_id.in_(mine)).order_by(LienEvaluation.id)).all():
@@ -328,7 +328,7 @@ def router(pages: Pages) -> APIRouter:
                     lanes.setdefault(e.lane, []).append(e)
             return templates.TemplateResponse(request, "front.html", {
                 "facility": home, "facilities": facilities, "items": items[:4], "open_count": len(items),
-                "held": held, "held_unit": s.get(Lease, held.lease_id).unit_name if held else None,
+                "held": held, "held_answer": (lost.get(held.id) or {}).get("detail") if held else None, "held_unit": s.get(Lease, held.lease_id).unit_name if held else None,
                 "returned": returned, "returned_unit": s.get(Lease, returned.lease_id).unit_name if returned else None,
                 "changed": changed, "counsel": counsel, "counsel_state": counsel_state, "record_case": record_case,
                 "record_unit": record_unit, "lanes": lanes, "lane_names": LANES,
