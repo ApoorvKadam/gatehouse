@@ -33,7 +33,7 @@ docker compose up --build       # one container: Gatehouse and its worker on :80
 
 The hosted preview sets `DESK_DEMO_SEED=1` and `DESK_PUBLIC_VIEW=1`: on an empty database Gatehouse builds a synthetic world by running its own flows against the simulator (a payment whose answer was lost, a returned payment, a Florida lien file reopened by a payment, a New York file sent to counsel), and anyone may read it without a token. Every change still needs the operator token, and the public view refuses to start against anything but the local simulator.
 
-There are no migrations yet: after pulling schema changes, start from fresh volumes (`docker compose down -v`).
+There are no migrations yet: after pulling schema changes, start from fresh volumes (`docker compose down -v`). That includes moving from the earlier three-service compose file, whose `desk-data` and `fms-data` volumes the single container does not use.
 
 Every desk route expects `X-Desk-Token: <DESK_OPERATOR_TOKEN>`; resolving a payment held for staff also needs `X-Staff-Token: <DESK_STAFF_TOKEN>`. Taking a payment at the front desk:
 

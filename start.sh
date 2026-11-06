@@ -6,6 +6,13 @@ set -uo pipefail
 
 port="${PORT:-8000}"
 
+# The public preview resets the simulator when it builds its synthetic world, so it gets its own simulator
+# database and never touches one kept on a volume.
+if [ "${DESK_PUBLIC_VIEW:-0}" = "1" ]; then
+  SIM_DATABASE_URL="sqlite:///$(mktemp -d)/fmssim.db"
+  export SIM_DATABASE_URL
+fi
+
 uvicorn fmssim.main:app --host 127.0.0.1 --port 8100 --log-level warning &
 sim=$!
 trap 'kill -TERM "$sim" ${desk:-} 2>/dev/null' TERM INT
