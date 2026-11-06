@@ -11,13 +11,15 @@ from desk.config import Settings
 from .conftest import FULL_KEY, ORLANDO
 
 TOKEN = "front-desk-token"
+STAFF = "collections-lead-token"
+YES = {"confirmed_by": "J. Ortiz", "tenant_answer": "Yes, go ahead"}
 
 
 @pytest.fixture
-def client(fms_url, sim):
+def client(fms_url, sim, request):
     settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY,
-                        fms_timeout_seconds=0.5, reconcile_every_seconds=60, operator_token=TOKEN)
-    app = create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 0.5), start_worker=False)
+                        fms_timeout_seconds=0.5, reconcile_every_seconds=60, operator_token=TOKEN, staff_token=STAFF)
+    app = create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 0.5), start_worker=False, chat_client=getattr(request, "param", None))
     with TestClient(app, headers={"X-Desk-Token": TOKEN}) as c:
         yield c
 
@@ -65,8 +67,9 @@ def test_verified_payment_end_to_end_and_a_resend_charges_once(client, sim):
                            json={"identity_check_id": check["identity_check_id"], "amount": 24000}).json()
     assert proposal["card_last4"] == "4242" and "$240.00" in proposal["read_back"]
     confirm_url = f"/api/cases/{row['case_id']}/proposals/{proposal['proposal_id']}/confirm"
-    first = client.post(confirm_url).json()
-    again = client.post(confirm_url).json()
+    assert client.post(confirm_url, json={"confirmed_by": "", "tenant_answer": "yes"}).status_code == 422
+    first = client.post(confirm_url, json=YES).json()
+    again = client.post(confirm_url, json=YES).json()
     assert first["state"] == "CONFIRMED" and again["id"] == first["id"]
     assert len(sim.payments("lease_WhitB1042")) == 1
     detail = client.get(f"/api/cases/{row['case_id']}").json()
@@ -91,7 +94,7 @@ def test_a_proposal_only_offers_what_the_fms_allows(client):
     assert client.post(f"/api/cases/{cid}/proposals", json={**base, "amount": 99999}).status_code == 409
     another_tenants_card = client.post(f"/api/cases/{cid}/proposals", json={**base, "amount": 24000, "payment_method_id": "pm_MarcVisa1881"})
     assert another_tenants_card.status_code == 409 and "not on file" in another_tenants_card.json()["detail"]
-    assert client.post(f"/api/cases/{cid}/proposals/made-up-id/confirm").status_code == 409
+    assert client.post(f"/api/cases/{cid}/proposals/made-up-id/confirm", json=YES).status_code == 409
 
 
 def test_a_proposal_cannot_outlive_the_identity_check(client):
@@ -107,7 +110,7 @@ def test_a_proposal_cannot_outlive_the_identity_check(client):
         row.created_at -= timedelta(minutes=16)
         s.get(PaymentProposal, proposal["proposal_id"]).expires_at += timedelta(hours=1)   # even a proposal that has not expired
         s.commit()
-    assert client.post(f"/api/cases/{cid}/proposals/{proposal['proposal_id']}/confirm").status_code == 409
+    assert client.post(f"/api/cases/{cid}/proposals/{proposal['proposal_id']}/confirm", json=YES).status_code == 409
 
 
 def test_staff_can_release_a_held_payment_only_with_a_note(client, sim):
@@ -115,13 +118,16 @@ def test_staff_can_release_a_held_payment_only_with_a_note(client, sim):
     sim.behave("lease_WhitB1042", "gateway_error")
     check = client.post(f"/api/cases/{cid}/identity", json={"last_name": "Whitfield", "phone_last4": "0142", "unit_name": "B-1042"}).json()
     proposal = client.post(f"/api/cases/{cid}/proposals", json={"identity_check_id": check["identity_check_id"], "amount": 24000}).json()
-    held = client.post(f"/api/cases/{cid}/proposals/{proposal['proposal_id']}/confirm").json()
+    held = client.post(f"/api/cases/{cid}/proposals/{proposal['proposal_id']}/confirm", json=YES).json()
     for _ in range(4):
         client.post("/api/reconcile")
     assert client.get(f"/api/payments/{held['id']}").json()["state"] == "NEEDS_STAFF"
-    assert client.post(f"/api/payments/{held['id']}/resolve", json={"charged": False, "note": "ok"}).status_code == 422
-    cleared = client.post(f"/api/payments/{held['id']}/resolve",
-                          json={"charged": False, "note": "No payment in the FMS or the processor portal, checked by J. Ortiz"}).json()
+    body = {"staff": "J. Ortiz", "charged": False, "note": "No payment in the FMS or the processor portal"}
+    resolve = f"/api/payments/{held['id']}/resolve"
+    assert client.post(resolve, json=body).status_code == 403            # the operator token alone is not enough
+    staff = {"X-Staff-Token": STAFF}
+    assert client.post(resolve, json={**body, "note": "ok"}, headers=staff).status_code == 422
+    cleared = client.post(resolve, json=body, headers=staff).json()
     assert cleared["state"] == "CLEARED_BY_STAFF" and "not charged" in cleared["tenant_message"]
     assert client.get(f"/api/cases/{cid}").json()["state"] == "open"
 
@@ -157,3 +163,42 @@ def test_an_fms_outage_is_a_502_not_a_crash(fms_url, sim):
         down.down = True
         r = c.post(f"/api/cases/{cid}/proposals", json={"identity_check_id": check["identity_check_id"], "amount": 24000})
         assert r.status_code == 502 and "did not answer" in r.json()["detail"]
+
+
+def test_a_database_with_records_but_no_account_refuses_to_start(fms_url, sim, tmp_path):
+    from desk.db import make_session_factory
+    from desk.models import Facility, Lease
+
+    url = f"sqlite:///{tmp_path / 'old.db'}"
+    with make_session_factory(url)() as s:
+        f = Facility(provider="cubby", provider_id="fac_x", name="Old", jurisdiction="FL", time_zone="America/New_York")
+        s.add(f)
+        s.flush()
+        s.add(Lease(facility_id=f.id, provider="cubby", provider_id="lease_x", provider_customer_id="cust_x", unit_name="A1",
+                    billing_cycle="MONTHLY"))
+        s.commit()
+    settings = Settings(database_url=url, fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=0.5,
+                        reconcile_every_seconds=60, operator_token=TOKEN)
+    with pytest.raises(RuntimeError, match="no FMS account"):
+        create_app(settings, start_worker=False)
+
+
+class _Greeter:
+    """A stand-in model that always answers with one plain sentence."""
+
+    def __init__(self):
+        self.messages = self
+
+    def create(self, **kwargs):
+        from types import SimpleNamespace
+        return SimpleNamespace(content=[SimpleNamespace(type="text", text="Hi, how can I help with your unit?")],
+                               stop_reason="end_turn", usage=SimpleNamespace(input_tokens=10, output_tokens=5))
+
+
+@pytest.mark.parametrize("client", [_Greeter()], indirect=True)
+def test_a_conversation_answers_only_the_sender_who_started_it(client):
+    cid = dana_case(client)["case_id"]
+    first = client.post(f"/api/cases/{cid}/chat", json={"sender": "+14075550142", "text": "hi"}).json()
+    other = client.post(f"/api/cases/{cid}/chat", json={"sender": "+13055550000", "text": "hi",
+                                                        "conversation_id": first["conversation_id"]})
+    assert other.status_code == 403

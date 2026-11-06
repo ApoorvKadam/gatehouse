@@ -62,6 +62,9 @@ class DelinquencyCase(Base):
     last_snapshot_id: Mapped[int | None] = mapped_column(ForeignKey("ledger_snapshots.id"), nullable=True)
     opened_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # a refresh that read the FMS before another one committed must not publish its older picture
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    __mapper_args__ = {"version_id_col": version}
 
 
 # a payment in one of these states still holds the account: no second payment may start until it settles
@@ -100,6 +103,10 @@ class PaymentCommand(Base):
     entries_paid_before: Mapped[dict] = mapped_column(JSON, default=dict)
     # every payment the FMS already showed on the lease, with its status, just before this one was sent
     fms_payments_before: Mapped[dict] = mapped_column(JSON, default=dict)
+    # an FMS payment that may be this lost submission; only staff can confirm that it is
+    suggested_payment_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    # when the FMS reported this payment returned, refunded or disputed
+    reversed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     provider_payment_id: Mapped[str | None] = mapped_column(String, nullable=True)
     provider_status: Mapped[str | None] = mapped_column(String, nullable=True)
     provider_reason: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -169,6 +176,9 @@ class PaymentProposal(Base):
     card_last4: Mapped[str] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     expires_at: Mapped[datetime] = mapped_column(DateTime)
+    # who reported the tenant's yes, and the tenant's words: the chat itself, or a named person at the desk
+    confirmed_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    tenant_answer: Mapped[str | None] = mapped_column(String, nullable=True)
     command_id: Mapped[int | None] = mapped_column(ForeignKey("payment_commands.id"), nullable=True)
 
 

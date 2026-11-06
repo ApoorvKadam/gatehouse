@@ -127,9 +127,12 @@ def test_a_lost_response_is_found_at_the_fms_instead_of_resent(session, adapter,
     submitted = session.scalar(select(CaseEvent).where(CaseEvent.case_id == case.id, CaseEvent.kind == "payment submitted"))
     assert submitted.detail["fms_said"] == "lost"
     settle(session, adapter)
-    assert len(sim.payments(DANA)) == 1
-    assert sim.total_due(DANA) == 0
-    assert session.get(PaymentCommand, command.id).state == "CONFIRMED"
+    assert len(sim.payments(DANA)) == 1 and sim.total_due(DANA) == 0
+    # nothing ties a payment to the request that made it, so the match is a suggestion a person confirms
+    command = session.get(PaymentCommand, command.id)
+    assert command.state == "NEEDS_STAFF" and command.suggested_payment_id == sim.payments(DANA)[0]["paymentId"]
+    PaymentService(session, adapter).resolve_by_staff(command, True, "Matches the processor record", "J. Ortiz", command.suggested_payment_id)
+    assert command.state == "CONFIRMED" and len(sim.payments(DANA)) == 1
 
 
 def test_a_request_the_fms_refuses_charged_nothing_and_holds_nothing(session, adapter, sim):
@@ -237,8 +240,9 @@ def test_a_submission_interrupted_by_a_crash_is_looked_up_not_resent(session, ad
     command.created_at = command.submitted_at = command.created_at - timedelta(minutes=5)
     session.commit()
     settle(session, adapter)
-    assert session.get(PaymentCommand, command.id).state == "CONFIRMED"
-    assert len(sim.payments(DANA)) == 1
+    command = session.get(PaymentCommand, command.id)
+    assert command.state == "NEEDS_STAFF" and command.suggested_payment_id == sim.payments(DANA)[0]["paymentId"]
+    assert len(sim.payments(DANA)) == 1   # looked up, never resent
 
 
 def test_a_crash_before_the_fms_was_called_releases_the_account(session, adapter, sim):
@@ -292,7 +296,12 @@ def test_a_counter_payment_at_the_same_time_is_not_taken_for_this_one(session, a
     PaymentService(session, adapter).reconcile(command)
     assert command.state == "AWAITING_APPLICATION"   # the counter payment explains the drop in the balance
     settle(session, adapter)
-    assert command.state == "CONFIRMED"   # ours landed too, as prepaid
+    # ours landed too, as prepaid, but the ledger cannot say which money is whose: never confirmed by inference
+    assert command.state == "AWAITING_APPLICATION"
+    command.submitted_at -= timedelta(minutes=16)
+    session.commit()
+    settle(session, adapter, times=1)
+    assert command.state == "NEEDS_STAFF" and "could have put it there" in command.provider_reason
 
 
 def test_a_payment_the_ledger_never_shows_goes_to_staff(session, adapter, sim):
@@ -314,6 +323,8 @@ def test_a_long_pending_payment_goes_to_staff_and_still_settles_later(session, a
     PaymentService(session, adapter).reconcile(command)
     assert command.state == "NEEDS_STAFF"
     settle(session, adapter)
+    assert command.state == "NEEDS_STAFF"   # it settled at the FMS, but a person owns it now
+    PaymentService(session, adapter).resolve_by_staff(command, True, "Processor shows it settled", "J. Ortiz", command.provider_payment_id)
     assert command.state == "CONFIRMED" and len(sim.payments(DANA)) == 1
 
 
@@ -404,7 +415,8 @@ def test_a_lost_payment_is_never_matched_to_one_that_existed_before_it(session, 
     sim.behave(DANA, "lose_response")
     command, _, _ = pay(session, adapter, DANA, "pm_DanaVisa4242", 24000)
     settle(session, adapter)
-    assert command.state == "CONFIRMED" and command.provider_payment_id != earlier.payment.provider_id
+    assert command.state == "NEEDS_STAFF"
+    assert command.suggested_payment_id not in (None, earlier.payment.provider_id)
 
 
 def test_a_returned_counter_payment_reopens_a_paid_account(session, adapter, sim):
@@ -454,3 +466,61 @@ def test_a_status_the_desk_does_not_know_ends_with_staff(session, adapter, sim):
     session.commit()
     PaymentService(session, adapter).reconcile(command)
     assert command.state == "NEEDS_STAFF" and "does not know" in command.provider_reason
+
+
+def test_a_stale_reconciliation_drops_out_without_an_error(adapter, sim, tmp_path):
+    from desk.db import make_session_factory
+
+    sim.behave(DANA, "late_application", lag=1)
+    factory = make_session_factory(f"sqlite:///{tmp_path / 'desk.db'}")
+    with factory() as a, factory() as b:
+        command, _, _ = pay(a, adapter, DANA, "pm_DanaVisa4242", 24000)
+        stale = a.get(PaymentCommand, command.id)
+        settle(b, adapter)
+        assert b.get(PaymentCommand, command.id).state == "CONFIRMED"
+        PaymentService(a, adapter).reconcile(stale)   # a's copy still says AWAITING_APPLICATION
+        b.expire_all()
+        assert b.get(PaymentCommand, command.id).state == "CONFIRMED"
+
+
+def test_staff_cannot_clear_a_payment_the_fms_still_shows_pending(session, adapter, sim):
+    sim.behave(DANA, "pending_then_succeed", lag=50)
+    command, _, _ = pay(session, adapter, DANA, "pm_DanaVisa4242", 24000)
+    command.submitted_at -= timedelta(hours=2)
+    session.commit()
+    PaymentService(session, adapter).reconcile(command)
+    assert command.state == "NEEDS_STAFF"
+    with pytest.raises(PaymentRefused, match="PENDING"):
+        PaymentService(session, adapter).resolve_by_staff(command, False, "Customer says it did not go through", "J. Ortiz")
+
+
+def test_staff_must_name_a_lead_before_calling_a_lost_payment_not_charged(session, adapter, sim):
+    sim.behave(DANA, "lose_response")
+    command, _, _ = pay(session, adapter, DANA, "pm_DanaVisa4242", 24000)
+    settle(session, adapter)
+    lead = command.suggested_payment_id
+    with pytest.raises(PaymentRefused, match=lead):
+        PaymentService(session, adapter).resolve_by_staff(command, False, "Nothing in the processor portal", "J. Ortiz")
+    assert command.state == "NEEDS_STAFF"
+
+
+def test_an_old_return_does_not_reopen_the_next_settled_episode(session, adapter, sim):
+    first, case, _ = pay(session, adapter, DANA, "pm_DanaVisa4242", 24000)
+    sim.post("/sim/payments/return", {"paymentId": first.provider_payment_id})
+    settle(session, adapter, times=1)
+    assert session.get(DelinquencyCase, case.id).state == "reopened"
+    again = PaymentService(session, adapter).take_payment(case.id, "pm_DanaVisa4242", Authorization.new(True, 24000, 24000))
+    assert again.state == "CONFIRMED" and session.get(DelinquencyCase, case.id).state == "paid"
+    sim.post("/sim/charges", {"leaseId": DANA, "amount": 21500, "category": "RENT", "description": "December rent"})
+    settle(session, adapter, times=1)
+    assert session.get(DelinquencyCase, case.id).state == "paid"
+
+
+def test_a_reopened_case_stays_reopened_on_the_next_pass(session, adapter, sim):
+    case, _ = case_for(session, adapter, DANA)
+    counter = sim.post("/sim/payments/offline", {"allocations": {DANA: 24000}}).json()["data"]["payment"]
+    PaymentService(session, adapter).reconcile_all()
+    sim.post("/sim/payments/return", {"paymentId": counter["paymentId"]})
+    PaymentService(session, adapter).reconcile_all()
+    PaymentService(session, adapter).reconcile_all()
+    assert session.get(DelinquencyCase, case.id).state == "reopened"

@@ -48,12 +48,13 @@ if __name__ == "__main__":
 
     from .adapter.cubby import CubbyAdapter
     from .config import Settings
-    from .db import make_session_factory
+    from .db import bind_to_fms, make_session_factory
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     s = Settings.from_env()
-    w = Worker(make_session_factory(s.database_url), CubbyAdapter(s.fms_base_url, s.fms_api_key, s.fms_timeout_seconds),
-               s.reconcile_every_seconds)
+    factory, fms = make_session_factory(s.database_url), CubbyAdapter(s.fms_base_url, s.fms_api_key, s.fms_timeout_seconds)
+    bind_to_fms(factory, fms, s.fms_base_url)   # the same check the API makes: never reconcile another account's records
+    w = Worker(factory, fms, s.reconcile_every_seconds)
     w.start()
     while True:
         time.sleep(3600)

@@ -104,11 +104,14 @@ def pending(run: Run):
 @scenario("Response lost after charging", "charges and applies, answers too late")
 def lost(run: Run):
     session, adapter, case = run.start("lose_response")
-    c = PaymentService(session, adapter).take_payment(case.id, DANA_CARD, Authorization.new(True, 24000, 24000))
+    service = PaymentService(session, adapter)
+    c = service.take_payment(case.id, DANA_CARD, Authorization.new(True, 24000, 24000))
     run.settle(session, adapter)
-    final = session.get(PaymentCommand, c.id).state
-    return f"matched at the FMS, {final}; {run.fms_payments(DANA)} charge", tenant_message(session.get(PaymentCommand, c.id)), \
-        final == "CONFIRMED" and run.fms_payments(DANA) == 1
+    c = session.get(PaymentCommand, c.id)
+    held, suggested = c.state, c.suggested_payment_id
+    service.resolve_by_staff(c, True, "Matches the processor record", "J. Ortiz", suggested)
+    return f"{held} with the FMS payment suggested; staff confirmed it: {c.state}; {run.fms_payments(DANA)} charge", \
+        tenant_message(c), held == "NEEDS_STAFF" and suggested is not None and c.state == "CONFIRMED" and run.fms_payments(DANA) == 1
 
 
 @scenario("FMS refuses the request", "HTTP 422 in its error envelope")
@@ -131,7 +134,7 @@ def unknown(run: Run):
         blocked = False
     except PaymentRefused:
         blocked = True
-    service.resolve_by_staff(c, charged=False, note="Nothing in the FMS or the processor portal")
+    service.resolve_by_staff(c, charged=False, note="Nothing in the FMS or the processor portal", staff="J. Ortiz")
     return f"{held}, new attempts blocked until staff cleared it", tenant_message(c), \
         held == "NEEDS_STAFF" and blocked and c.state == "CLEARED_BY_STAFF" and run.fms_payments(DANA) == 0
 
@@ -141,12 +144,10 @@ def counter(run: Run):
     session, adapter, case = run.start("late_application", lag=3)
     c = PaymentService(session, adapter).take_payment(case.id, DANA_CARD, Authorization.new(True, 24000, 24000))
     run.sim("/sim/payments/offline", {"allocations": {DANA: 24000}})
-    PaymentService(session, adapter).reconcile(c)
-    first = c.state
     run.settle(session, adapter)
-    final = session.get(PaymentCommand, c.id).state
-    return f"{first} while only the cash was on the ledger, then {final}", tenant_message(c), \
-        first == "AWAITING_APPLICATION" and final == "CONFIRMED"
+    c = session.get(PaymentCommand, c.id)
+    return f"{c.state}: both landed, and the ledger cannot say whose money is whose", tenant_message(c), \
+        c.state == "AWAITING_APPLICATION"
 
 
 @scenario("Same yes sent twice", "approves")

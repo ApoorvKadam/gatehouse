@@ -79,7 +79,9 @@ def refresh_case(session: Session, adapter: FMSAdapter, case: DelinquencyCase) -
     staff = [c for c in commands if c.state == "NEEDS_STAFF"]
     if staff:
         holds.append("a payment outcome could not be confirmed with the FMS; check the FMS before any new attempt")
-    returned = [c for c in commands if c.state in ("RETURNED", "REFUNDED", "REFUND_PENDING", "DISPUTED")]
+    # only a reversal after the case was last settled says anything about this episode
+    returned = [c for c in commands if c.state in ("RETURNED", "REFUNDED", "REFUND_PENDING", "DISPUTED")
+                and (case.resolved_at is None or (c.reversed_at is not None and c.reversed_at >= case.resolved_at))]
     before = case.state
     if staff:
         case.state, case.owner = "needs staff", "collections lead"
@@ -93,7 +95,7 @@ def refresh_case(session: Session, adapter: FMSAdapter, case: DelinquencyCase) -
             # new charges on a settled account are the next delinquency, which gets its own case
             case.state = "paid"
         else:
-            case.state, case.owner = ("reopened" if returned or before == "paid" else "open"), "front desk"
+            case.state, case.owner = ("reopened" if returned or before in ("paid", "reopened") else "open"), "front desk"
             case.resolved_at = None
     case.hold_reasons = holds
     if case.state != before:

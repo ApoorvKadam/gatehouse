@@ -15,6 +15,8 @@ class Settings:
     # only for running on a laptop: without a token the API refuses every request unless this is set
     allow_without_token: bool = False
     chat_model: str = "claude-haiku-5-5"
+    # resolving a payment held for staff needs this second token as well; without it the route is closed
+    staff_token: str | None = None
 
     @staticmethod
     def from_env() -> "Settings":
@@ -27,4 +29,5 @@ class Settings:
             operator_token=os.environ.get("DESK_OPERATOR_TOKEN") or None,
             allow_without_token=os.environ.get("DESK_ALLOW_WITHOUT_TOKEN") == "1",
             chat_model=os.environ.get("DESK_CHAT_MODEL", "claude-haiku-5-5"),
+            staff_token=os.environ.get("DESK_STAFF_TOKEN") or None,
         )

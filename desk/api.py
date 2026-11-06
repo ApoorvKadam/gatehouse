@@ -1,7 +1,6 @@
 """The desk's HTTP API: the past-due queue, a case with its full history, identity checks and payments."""
 from __future__ import annotations
 
-import hashlib
 import hmac
 import logging
 import os
@@ -9,17 +8,18 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
+from sqlalchemy.orm.exc import StaleDataError
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .adapter import FMSAdapter, FMSError
 from .adapter.cubby import CubbyAdapter
-from .cases import queue, refresh_case, sync_facility
+from .cases import queue, sync_facility
 from .config import Settings
 from .conversation import Conversation
-from .db import make_session_factory, utcnow
-from .models import CaseEvent, DelinquencyCase, DeskBinding, Lease, LedgerSnapshot, PaymentCommand
+from .db import bind_to_fms, make_session_factory
+from .models import CaseEvent, DelinquencyCase, Lease, LedgerSnapshot, PaymentCommand
 from .payments import (
     IdentityClaim, PaymentRefused, PaymentService, check_identity, collected, confirm, propose, tenant_message,
 )
@@ -36,6 +36,7 @@ class IdentityIn(BaseModel):
 
 class ChatIn(BaseModel):
     conversation_id: str | None = None
+    sender: str = Field(min_length=3, max_length=200, description="the channel's authenticated sender (a phone number, a session id)")
     text: str = Field(min_length=1, max_length=1000)
 
 
@@ -45,22 +46,16 @@ class ProposalIn(BaseModel):
     payment_method_id: str | None = Field(default=None, description="a saved card of this tenant; the first one when left out")
 
 
+class ConfirmIn(BaseModel):
+    confirmed_by: str = Field(min_length=2, description="the person at the desk who heard the tenant's yes")
+    tenant_answer: str = Field(min_length=1, max_length=500, description="what the tenant said, in their words")
+
+
 class StaffResolutionIn(BaseModel):
+    staff: str = Field(min_length=2, description="who checked")
     charged: bool = Field(description="what the FMS or the processor showed when staff checked")
     fms_payment_id: str | None = Field(default=None, description="required when charged: the FMS payment that is this attempt")
     note: str = Field(min_length=10, description="what was checked, where, and by whom")
-
-
-def bind_to_fms(factory, settings: Settings) -> None:
-    """Refuse to run a database that was set up for a different FMS account."""
-    fingerprint = hashlib.sha256(f"{settings.fms_base_url}\n{settings.fms_api_key}".encode()).hexdigest()
-    with factory() as session:
-        binding = session.get(DeskBinding, 1)
-        if binding is None:
-            session.add(DeskBinding(id=1, fms_fingerprint=fingerprint))
-            session.commit()
-        elif binding.fms_fingerprint != fingerprint:
-            raise RuntimeError("this database belongs to another FMS account; each operator needs its own database")
 
 
 def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = None, start_worker: bool = True,
@@ -73,8 +68,8 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
     # Running more than one API process needs them stored, and the channel in front must route each tenant to one.
     conversations: dict[str, Conversation] = {}
     factory = make_session_factory(settings.database_url)
-    bind_to_fms(factory, settings)
     adapter = adapter or CubbyAdapter(settings.fms_base_url, settings.fms_api_key, settings.fms_timeout_seconds)
+    bind_to_fms(factory, adapter, settings.fms_base_url)
     worker = Worker(factory, adapter, settings.reconcile_every_seconds)
 
     @asynccontextmanager
@@ -87,6 +82,10 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
 
     app = FastAPI(title="Past Due Desk", lifespan=lifespan)
     app.state.session_factory = factory
+
+    @app.exception_handler(StaleDataError)
+    async def changed_meanwhile(_, exc: StaleDataError):
+        return JSONResponse({"detail": "the record changed while this request was working on it; read it again and retry"}, status_code=409)
 
     @app.exception_handler(FMSError)
     async def fms_unavailable(_, exc: FMSError):
@@ -159,9 +158,8 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         answer = {"identity_check_id": check.id, "verified": verified, "reason": reason}
         if verified:
             # the balance is read out only to a verified caller
-            refresh_case(session, adapter, case)
-            session.commit()
-            answer["total_due"] = session.get(LedgerSnapshot, case.last_snapshot_id).total_due
+            answer["total_due"] = adapter.ledger(session.get(Lease, case.lease_id).provider_id).total_due
+            PaymentService(session, adapter)._refresh(case)
         return answer
 
     @app.post("/api/cases/{case_id}/proposals")
@@ -176,11 +174,11 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
                 "read_back": f"We will charge ${p.amount / 100:,.2f} to the card ending in {p.card_last4}. Is that okay?"}
 
     @app.post("/api/cases/{case_id}/proposals/{proposal_id}/confirm")
-    def confirm_proposal(case_id: int, proposal_id: str, session: Session = Depends(db), _: str = Depends(operator)):
-        """The tenant said yes. Sending this again returns the same payment and never charges twice."""
+    def confirm_proposal(case_id: int, proposal_id: str, body: ConfirmIn, session: Session = Depends(db), _: str = Depends(operator)):
+        """The tenant said yes, as heard by a named person. Sending this again returns the same payment."""
         get_case(session, case_id)
         try:
-            command = confirm(session, adapter, case_id, proposal_id)
+            command = confirm(session, adapter, case_id, proposal_id, f"desk: {body.confirmed_by}", body.tenant_answer)
         except PaymentRefused as exc:
             raise HTTPException(409, str(exc)) from exc
         log.info("case %s payment %s %s", case_id, command.id, command.state)
@@ -193,12 +191,15 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         if chat_client is None:
             raise HTTPException(503, "the desk has no model key configured")
         if body.conversation_id is None:
-            conversation = Conversation(case.id, adapter, chat_client, settings.chat_model)
+            conversation = Conversation(case.id, adapter, chat_client, settings.chat_model, sender=body.sender)
             conversations[conversation.id] = conversation
         else:
             conversation = conversations.get(body.conversation_id)
             if conversation is None or conversation.case_id != case.id:
                 raise HTTPException(404, "conversation not found")
+            if not hmac.compare_digest(conversation.sender, body.sender):
+                # a conversation id alone is not the tenant: the channel's sender has to match the one who started it
+                raise HTTPException(403, "this conversation belongs to another sender")
         reply = conversation.say(session, body.text)
         return {"conversation_id": conversation.id, **reply.__dict__}
 
@@ -210,15 +211,20 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         return command_json(command)
 
     @app.post("/api/payments/{command_id}/resolve")
-    def resolve(command_id: int, body: StaffResolutionIn, session: Session = Depends(db), _: str = Depends(operator)):
+    def resolve(command_id: int, body: StaffResolutionIn, session: Session = Depends(db), _: str = Depends(operator),
+                x_staff_token: str | None = Header(default=None)):
         """Staff settle a payment the desk could not: what they found at the FMS or the processor, in their words."""
+        if settings.staff_token is None:
+            raise HTTPException(503, "staff resolution is not configured")
+        if x_staff_token is None or not hmac.compare_digest(x_staff_token, settings.staff_token):
+            raise HTTPException(403, "staff token required")
         command = session.get(PaymentCommand, command_id)
         if command is None:
             raise HTTPException(404, "payment not found")
         if body.charged and not body.fms_payment_id:
             raise HTTPException(422, "a charged payment needs the FMS payment id")
         try:
-            command = PaymentService(session, adapter).resolve_by_staff(command, body.charged, body.note, body.fms_payment_id)
+            command = PaymentService(session, adapter).resolve_by_staff(command, body.charged, body.note, body.staff, body.fms_payment_id)
         except PaymentRefused as exc:
             raise HTTPException(409, str(exc)) from exc
         return command_json(command)
