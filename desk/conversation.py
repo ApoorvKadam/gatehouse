@@ -64,18 +64,16 @@ NO_PAYMENT_LINE = "I don't see a payment from this conversation yet. If you'd li
 # what the model must never say on its own: that money moved or that the account is settled
 # what the model must never say on its own. A payment outcome needs this conversation's payment confirmed; a settled
 # account needs the FMS ledger at zero right now. Amounts are masked first so "$240.00" cannot end a sentence early.
-PAYMENT_CLAIM = re.compile(
-    r"\bpayment\b[^.?!]{0,60}?\b(went through|has gone through|(has|have) been (applied|processed|posted|received|completed|charged)"
-    r"|was (applied|processed|posted|received|successful|completed|charged))"
-    r"|\bpayment (was |is |has been )?(successful|complete|completed|confirmed|done|approved)\b"
-    r"|\b(received|got|processed|applied|posted) (your|the) payment\b"
-    r"|\bcard\b[^.?!]{0,40}?\b(has been|was|got) charged\b|\b(successfully|been) (paid|charged)\b"
-    r"|\b(it|that|everything) went through\b", re.I)
-SETTLED_CLAIM = re.compile(
-    r"\byou('re| are) (now )?(all )?(paid up|paid in full|paid off|caught up|current|all set)\b"
-    r"|\byou (now )?(don't|do not) owe (anything|any more|anymore|a thing)\b|\bnothing (is )?(owed|due)\b"
-    r"|\b(balance|account)\b[^.?!]{0,30}?\b(zero|cleared|settled|paid off|paid in full|is paid)\b", re.I)
-MONEY = re.compile(r"\$\s?\d|\b\d[\d,.]*\s*dollars\b", re.I)
+# The model never states a financial fact; the desk does. A reply is replaced, failing closed, if it contains any
+# figure (a digit, or money written out), or an outcome word in a sentence about a payment, the balance, the account
+# or the card. Replacements are the desk's own sentences built from the ledger and the payment record, so a false
+# alarm costs some wording and never a wrong statement.
+NUMBER_WORDS = re.compile(r"\d|\b(dollars?|cents?|bucks|hundred|thousand|zero)\b", re.I)
+OUTCOME = re.compile(r"\b(went through|gone through|cleared|clear|successful(ly)?|succeeded|processed|posted|applied|received|confirmed|"
+                     r"complete[d]?|settled|paid|charged|covered|taken care of|caught up|current|all set|nothing (is )?(owed|due)|"
+                     r"no (outstanding |remaining )?(balance|amount|money)|(don't|do not) owe)\b", re.I)
+SUBJECT = re.compile(r"\b(payment|balance|account|card|charge|rent|bill|you|your|it|that|everything)\b", re.I)
+SENTENCES = re.compile(r"[^.!?]+")
 MONEY_SPAN = re.compile(r"\$\s?[\d,]+(\.\d+)?")
 
 
@@ -189,21 +187,20 @@ class Conversation:
         return STAFF_LINE
 
     def _checked(self, session: Session, text: str) -> str:
-        """The model's text goes out only if it claims nothing the desk cannot back: nothing about the account before the
-        caller is verified, no payment outcome unless this conversation's payment is confirmed, and no settled account
-        unless the FMS ledger shows nothing due right now."""
-        masked = MONEY_SPAN.sub("AMOUNT", text)
-        replacement = None
-        if not self.identity_verified and (MONEY.search(text) or PAYMENT_CLAIM.search(masked) or SETTLED_CLAIM.search(masked)):
-            replacement = IDENTITY_ASK
-        elif MONEY.search(text) or SETTLED_CLAIM.search(masked):
-            replacement = self._balance_line(session)   # figures come from the ledger, in the desk's words
-        elif PAYMENT_CLAIM.search(masked):
-            command = session.get(PaymentCommand, self.command_id) if self.command_id else None
-            if command is None or command.state != "CONFIRMED":
-                replacement = self._status_line(session)
-        if replacement is None:
+        """The model's text goes out only if it states no financial fact: no figure, and no outcome about a payment, the
+        balance or the account. Otherwise the desk answers in its own words: the identity question before verification,
+        the payment's status when there is one, or the balance from the ledger."""
+        masked = MONEY_SPAN.sub(" AMOUNT ", text)
+        figure = bool(NUMBER_WORDS.search(text))
+        outcome = any(OUTCOME.search(sentence) and SUBJECT.search(sentence) for sentence in SENTENCES.findall(masked))
+        if not (figure or outcome):
             return text
+        if not self.identity_verified:
+            replacement = IDENTITY_ASK
+        elif outcome and self.command_id:
+            replacement = self._status_line(session) + " " + self._balance_line(session)
+        else:
+            replacement = self._balance_line(session)
         record(session, session.get(DelinquencyCase, self.case_id), "model reply replaced",
                {"conversation": self.id, "model_said": text, "sent": replacement}, source="chat")
         return replacement
@@ -241,7 +238,13 @@ class Conversation:
         case = session.get(DelinquencyCase, self.case_id)
         try:
             if name == "verify_identity":
+                if self.identity_verified:
+                    return {"verified": True, "note": "already verified; a verification is not renewed, it expires"}
                 claim = IdentityClaim(str(args.get("last_name", "")), str(args.get("phone_last4", "")), str(args.get("unit_name", "")))
+                said = " ".join(m["content"] for m in self.messages if m["role"] == "user" and isinstance(m["content"], str)).lower()
+                if not all(v.strip() and v.strip().lower() in said for v in (claim.last_name, claim.phone_last4, claim.unit_name)):
+                    # the details must come from the caller in this conversation, not from the model's memory
+                    return {"verified": False, "reason": "ask the caller for their last name, phone last four and unit number"}
                 check = check_identity(session, self.adapter, case, claim)
                 if check is None:
                     self._to_staff(session, case, "identity not confirmed after three tries")

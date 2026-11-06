@@ -202,3 +202,23 @@ def test_a_conversation_answers_only_the_sender_who_started_it(client):
     other = client.post(f"/api/cases/{cid}/chat", json={"sender": "+13055550000", "text": "hi",
                                                         "conversation_id": first["conversation_id"]})
     assert other.status_code == 403
+
+
+def test_the_account_check_follows_a_changing_portfolio_but_not_another_account(tmp_path):
+    from desk.db import bind_to_fms, make_session_factory
+
+    class Portfolio:
+        def __init__(self, *ids):
+            self.ids = ids
+
+        def facilities(self):
+            return [{"facilityId": i} for i in self.ids]
+
+    factory = make_session_factory(f"sqlite:///{tmp_path / 'desk.db'}")
+    bind_to_fms(factory, Portfolio("fac_A"), "https://fms.example")
+    bind_to_fms(factory, Portfolio("fac_A", "fac_B"), "https://fms.example")   # a facility was added
+    bind_to_fms(factory, Portfolio("fac_B"), "https://fms.example")            # fac_A was sold
+    with pytest.raises(RuntimeError, match="another FMS account"):
+        bind_to_fms(factory, Portfolio("fac_Z"), "https://fms.example")
+    with pytest.raises(RuntimeError, match="another FMS account"):
+        bind_to_fms(factory, Portfolio("fac_B"), "https://other-fms.example")

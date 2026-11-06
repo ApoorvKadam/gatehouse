@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import timedelta
 from dataclasses import dataclass
 from typing import Callable
 
@@ -142,12 +143,19 @@ def unknown(run: Run):
 @scenario("Counter payment at the same time", "ours applies late; a cash payment lands first")
 def counter(run: Run):
     session, adapter, case = run.start("late_application", lag=3)
-    c = PaymentService(session, adapter).take_payment(case.id, DANA_CARD, Authorization.new(True, 24000, 24000))
+    service = PaymentService(session, adapter)
+    c = service.take_payment(case.id, DANA_CARD, Authorization.new(True, 24000, 24000))
     run.sim("/sim/payments/offline", {"allocations": {DANA: 24000}})
     run.settle(session, adapter)
     c = session.get(PaymentCommand, c.id)
-    return f"{c.state}: both landed, and the ledger cannot say whose money is whose", tenant_message(c), \
-        c.state == "AWAITING_APPLICATION"
+    waiting = c.state
+    c.submitted_at -= timedelta(minutes=16)   # the wait for the ledger runs out
+    session.commit()
+    run.settle(session, adapter, passes=1)
+    held = c.state
+    service.resolve_by_staff(c, True, "Processor shows the card payment; the cash was separate", "J. Ortiz", c.provider_payment_id)
+    return f"{waiting} (the ledger cannot say whose money is whose), {held}, staff identified it: {c.state}", tenant_message(c), \
+        waiting == "AWAITING_APPLICATION" and held == "NEEDS_STAFF" and c.state == "CONFIRMED"
 
 
 @scenario("Same yes sent twice", "approves")

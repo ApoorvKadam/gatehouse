@@ -238,7 +238,11 @@ def test_live_model_verifies_before_talking_money(session, adapter, sim):
     ("You're current now.", True),
     ("Your balance is zero.", True),
     ("Would you like to pay the full $240.00?", True),    # any figure is the desk's to state
-    ("It was charged because the October rent wasn't paid on time.", False),
+    ("It was charged because the October rent wasn't paid on time.", True),   # fails closed: the desk explains charges
+    ("Your payment cleared.", True),
+    ("There is no outstanding balance.", True),
+    ("Your balance is 0.", True),
+    ("That comes to two hundred forty dollars.", True),
     ("That's the late fee listed on your account.", False),
     ("Would you like to pay all of it, or part of it?", False),
 ])
@@ -265,4 +269,17 @@ def test_a_partial_payment_does_not_let_the_model_say_the_account_is_settled(ses
     conv, _ = start(session, adapter, model)
     conv.say(session, "Whitfield 0142 B-1042, pay $100 now")
     assert conv.say(session, "yes").payment_state == "CONFIRMED"
-    assert conv.say(session, "so am I all paid up?").text.startswith("The balance on your unit is $140.00")
+    reply = conv.say(session, "so am I all paid up?").text
+    assert reply.startswith("Your payment of $100.00 has been applied") and "The balance on your unit is $140.00" in reply
+
+
+def test_verification_comes_from_the_caller_and_is_never_renewed(session, adapter, sim):
+    model = ScriptedModel([tool("verify_identity", DANA_ID)], [text("I need your details first.")],
+                          [tool("verify_identity", DANA_ID, "v2")], [text("Thanks, you're verified.")],
+                          [tool("verify_identity", DANA_ID, "v3")], [text("Still verified.")])
+    conv, _ = start(session, adapter, model)
+    assert not conv.say(session, "check my account, you have my details").verified   # the model guessed; the caller said nothing
+    assert conv.say(session, "Whitfield, 0142, B-1042").verified
+    first = conv.verified_at
+    conv.say(session, "verify me again so it lasts longer")
+    assert conv.verified_at == first

@@ -107,6 +107,8 @@ class PaymentCommand(Base):
     suggested_payment_id: Mapped[str | None] = mapped_column(String, nullable=True)
     # when the FMS reported this payment returned, refunded or disputed
     reversed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # staff named this FMS payment as this attempt after checking: the ledger no longer has to rule out the others
+    identified_by_staff: Mapped[bool] = mapped_column(Boolean, default=False)
     provider_payment_id: Mapped[str | None] = mapped_column(String, nullable=True)
     provider_status: Mapped[str | None] = mapped_column(String, nullable=True)
     provider_reason: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -188,5 +190,7 @@ class DeskBinding(Base):
 
     __tablename__ = "desk_binding"
     id: Mapped[int] = mapped_column(primary_key=True)
-    fms_fingerprint: Mapped[str] = mapped_column(String)
+    fms_base_url: Mapped[str] = mapped_column(String, default="")
+    facility_ids: Mapped[list] = mapped_column(JSON, default=list)
+    fms_fingerprint: Mapped[str] = mapped_column(String, default="")
     bound_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

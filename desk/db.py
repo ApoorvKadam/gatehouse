@@ -33,9 +33,11 @@ def make_session_factory(url: str | None = None) -> sessionmaker[Session]:
 def bind_to_fms(factory, adapter, fms_base_url: str, attempts: int = 10) -> None:
     """Refuse to run against a database that holds another FMS account's records.
 
-    The account is identified by the FMS address and the facilities its key can see, which survive a key rotation.
-    An unbound database that already holds leases is refused too: nobody can say which account they came from."""
-    import hashlib
+    Cubby keys belong to an organization but the API exposes no organization id, so the account is recognized by
+    the FMS address and the facilities its key can see. A portfolio changes (a facility is added or sold), so the
+    database belongs to this account while the two facility lists share at least one facility, and the stored list
+    follows the current one. A different address, or no facility in common, is another account. An unbound database
+    that already holds leases is refused too: nobody can say which account they came from."""
     import time
 
     from sqlalchemy import select
@@ -50,13 +52,14 @@ def bind_to_fms(factory, adapter, fms_base_url: str, attempts: int = 10) -> None
             if attempt == attempts - 1:
                 raise RuntimeError("the FMS did not answer, so this database's account cannot be checked; not starting")
             time.sleep(1)
-    fingerprint = hashlib.sha256((fms_base_url + "\n" + ",".join(facilities)).encode()).hexdigest()
     with factory() as session:
         binding = session.get(DeskBinding, 1)
         if binding is None:
             if session.scalar(select(Lease.id).limit(1)) is not None:
                 raise RuntimeError("this database already holds leases but records no FMS account; not starting")
-            session.add(DeskBinding(id=1, fms_fingerprint=fingerprint))
-            session.commit()
-        elif binding.fms_fingerprint != fingerprint:
+            session.add(DeskBinding(id=1, fms_base_url=fms_base_url, facility_ids=facilities))
+        elif binding.fms_base_url != fms_base_url or not set(binding.facility_ids) & set(facilities):
             raise RuntimeError("this database belongs to another FMS account; each operator needs its own database")
+        else:
+            binding.facility_ids = facilities
+        session.commit()

@@ -130,7 +130,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
 
     @app.get("/api/facilities/{facility_id}/queue")
     def facility_queue(facility_id: str, session: Session = Depends(db), _: str = Depends(operator)):
-        return {"rows": [r.__dict__ for r in queue(session, facility_id)], "collected": collected(session, adapter.provider)}
+        return {"rows": [r.__dict__ for r in queue(session, facility_id)], "collected": collected(session, adapter.provider, facility_id)}
 
     @app.get("/api/cases/{case_id}")
     def case_detail(case_id: int, session: Session = Depends(db), _: str = Depends(operator)):

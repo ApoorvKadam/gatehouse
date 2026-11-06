@@ -387,15 +387,19 @@ class PaymentService:
                                                                      PaymentCommand.id != command.id))
             if owner is not None:
                 raise PaymentRefused(f"payment {fms_payment_id} already belongs to payment {owner.id}")
-            command.provider_payment_id, command.state = fms_payment_id, "OUTCOME_UNKNOWN"
+            command.provider_payment_id, command.state, command.identified_by_staff = fms_payment_id, "OUTCOME_UNKNOWN", True
         else:
             known = next((p for p in payments if p.provider_id == command.provider_payment_id), None) if command.provider_payment_id else None
             if known is not None and known.status not in ("DECLINED", "FAILED", "REJECTED"):
                 raise PaymentRefused(f"the FMS shows payment {known.provider_id} as {known.status}; it cannot be recorded as not charged")
-            lead = None if command.provider_payment_id else self._find_lost(command, lease, payments)
-            if lead is not None and lead.provider_id not in note:
-                raise PaymentRefused(f"payment {lead.provider_id} ({lead.status}) at the FMS may be this attempt: resolve it as charged, "
-                                     "or name it in the note and say why it is not")
+            leads = [] if command.provider_payment_id else self._lost_candidates(command, lease, payments)
+            if command.suggested_payment_id and command.suggested_payment_id not in {p.provider_id for p in leads}:
+                leads += [p for p in payments if p.provider_id == command.suggested_payment_id]
+            unnamed = [p for p in leads if p.provider_id not in note]
+            if unnamed:
+                raise PaymentRefused("payments at the FMS that may be this attempt: "
+                                     + ", ".join(f"{p.provider_id} ({p.status})" for p in unnamed)
+                                     + ". Resolve as charged, or name each in the note and say why it is not this attempt")
             command.state = "CLEARED_BY_STAFF"
         command.provider_reason = note
         record(self.session, case, "payment resolved by staff", {"command": command.id, "charged": charged, "staff": staff,
@@ -449,6 +453,12 @@ class PaymentService:
             return
         known = set(self.session.scalars(select(PaymentCommand.provider_payment_id).where(PaymentCommand.case_id == case.id)).all())
         for p in payments:
+            if p.status in REVERSALS:
+                # a desk payment that comes back after the watch window is still caught when its lease is read again
+                settled = self.session.scalar(select(PaymentCommand).where(PaymentCommand.provider_payment_id == p.provider_id,
+                                                                           PaymentCommand.state == "CONFIRMED"))
+                if settled is not None:
+                    self.reconcile(settled)
             new = self._observe(lease, p)
             if new and p.provider_id not in known and p.status == "SUCCEEDED":
                 record(self.session, case, "payment taken outside the desk", {"payment": p.provider_id, "amount": p.amount}, source="fms")
@@ -512,13 +522,18 @@ class PaymentService:
                      and p.status in ("SUCCEEDED", "PENDING")
                      and (p.status == "PENDING" or p.provider_id not in before or before[p.provider_id] == "PENDING"
                           or (p.created_at is not None and p.created_at >= sent - RECENT_OUTSIDE_PAYMENT))]
-        if paid >= command.amount and in_motion:
+        if paid >= command.amount and in_motion and not command.identified_by_staff:
             return False, f"the ledger shows the money, but payment {in_motion[0]} on this lease could have put it there"
         return paid >= command.amount, None
 
     def _find_lost(self, command: PaymentCommand, lease: Lease, payments: list[ProviderPayment]) -> ProviderPayment | None:
-        """The one FMS payment that can be this submission: same amount, same customer, same kind of card, created
-        within minutes of it, and not already some other command's. Zero or several candidates find nothing."""
+        """The one FMS payment that could be this submission, as a suggestion for staff. Zero or several find nothing."""
+        candidates = self._lost_candidates(command, lease, payments)
+        return candidates[0] if len(candidates) == 1 else None
+
+    def _lost_candidates(self, command: PaymentCommand, lease: Lease, payments: list[ProviderPayment]) -> list[ProviderPayment]:
+        """FMS payments that could be this submission: same amount, same customer, same kind of card, created within
+        minutes of it, new since it was sent, and not already some other command's."""
         claimed = set(self.session.scalars(select(PaymentCommand.provider_payment_id).where(
             PaymentCommand.provider_payment_id.is_not(None), PaymentCommand.id != command.id)).all())
         sent = command.submitted_at or command.created_at
@@ -528,7 +543,7 @@ class PaymentService:
                       and p.created_at is not None and sent - CLOCK_SKEW <= p.created_at <= sent + LOST_MATCH_WINDOW
                       and (p.customer_provider_id in (None, lease.provider_customer_id))
                       and (command.method_type is None or p.method_type == command.method_type)]
-        return candidates[0] if len(candidates) == 1 else None
+        return candidates
 
     def _observe(self, lease: Lease, p: ProviderPayment) -> bool:
         """Keep one row per FMS payment. Returns True the first time a payment is seen."""
@@ -548,10 +563,14 @@ class PaymentService:
         return False
 
 
-def collected(session: Session, provider: str) -> int:
-    """Money the FMS reports as collected, counted once per payment however many leases it covered."""
-    return sum(p.amount for p in session.scalars(select(ObservedPayment).where(ObservedPayment.provider == provider,
-                                                                                ObservedPayment.status == "SUCCEEDED")).all())
+def collected(session: Session, provider: str, facility_provider_id: str) -> int:
+    """Money the FMS reports as collected on this facility's tracked leases, counted once per payment however many
+    leases it covered."""
+    from .models import Facility
+    leases = set(session.scalars(select(Lease.provider_id).join(Facility, Facility.id == Lease.facility_id)
+                                 .where(Facility.provider == provider, Facility.provider_id == facility_provider_id)).all())
+    rows = session.scalars(select(ObservedPayment).where(ObservedPayment.provider == provider, ObservedPayment.status == "SUCCEEDED")).all()
+    return sum(p.amount for p in rows if leases & set(p.lease_provider_ids))
 
 
 def tenant_message(command: PaymentCommand) -> str:

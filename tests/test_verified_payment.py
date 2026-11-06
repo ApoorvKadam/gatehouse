@@ -194,7 +194,7 @@ def test_one_payment_covering_two_leases_is_counted_once(session, adapter, sim):
         lease = session.scalar(select(Lease).where(Lease.provider_id == lease_id))
         case = session.scalar(select(DelinquencyCase).where(DelinquencyCase.lease_id == lease.id))
         assert case.state == "paid"
-    assert collected(session, "cubby") == 22000
+    assert collected(session, "cubby", ORLANDO) == 22000 and collected(session, "cubby", "fac_NSalbany001") == 0
 
 
 def test_a_returned_payment_reopens_the_case(session, adapter, sim):
@@ -522,5 +522,54 @@ def test_a_reopened_case_stays_reopened_on_the_next_pass(session, adapter, sim):
     PaymentService(session, adapter).reconcile_all()
     sim.post("/sim/payments/return", {"paymentId": counter["paymentId"]})
     PaymentService(session, adapter).reconcile_all()
+    PaymentService(session, adapter).reconcile_all()
+    assert session.get(DelinquencyCase, case.id).state == "reopened"
+
+
+def test_staff_must_account_for_every_possible_match_before_not_charged(session, adapter, sim):
+    sim.behave(DANA, "lose_response")
+    command, _, _ = pay(session, adapter, DANA, "pm_DanaVisa4242", 24000)
+    sim.behave(DANA, "decline")
+    other = adapter.make_payment(DANA, "pm_DanaVisa4242", 24000).payment   # a second matching attempt, declined
+    settle(session, adapter, times=1)
+    suggested = command.suggested_payment_id
+    with pytest.raises(PaymentRefused, match=other.provider_id):
+        PaymentService(session, adapter).resolve_by_staff(command, False, f"{suggested} is the tenant's own app payment", "J. Ortiz")
+    assert command.state == "NEEDS_STAFF"
+
+
+def test_a_payment_staff_identify_completes_even_when_the_ledger_is_ambiguous(session, adapter, sim):
+    sim.behave(DANA, "late_application", lag=3)
+    command, _, _ = pay(session, adapter, DANA, "pm_DanaVisa4242", 24000)
+    sim.post("/sim/payments/offline", {"allocations": {DANA: 24000}})
+    settle(session, adapter)
+    command.submitted_at -= timedelta(minutes=16)
+    session.commit()
+    settle(session, adapter, times=1)
+    assert command.state == "NEEDS_STAFF"
+    PaymentService(session, adapter).resolve_by_staff(command, True, "Processor and FMS both show it", "J. Ortiz", command.provider_payment_id)
+    assert command.state == "CONFIRMED"
+
+
+def test_a_return_after_the_watch_window_is_still_caught(session, adapter, sim):
+    command, case, _ = pay(session, adapter, DANA, "pm_DanaVisa4242", 24000)
+    long_ago = command.confirmed_at - timedelta(days=200)
+    command.confirmed_at = long_ago
+    session.get(DelinquencyCase, case.id).resolved_at = long_ago
+    session.commit()
+    sim.post("/sim/payments/return", {"paymentId": command.provider_payment_id})
+    sync_facility(session, adapter, ORLANDO)   # the returned money makes the lease delinquent again: a new case
+    PaymentService(session, adapter).reconcile_all()
+    assert session.get(PaymentCommand, command.id).state == "RETURNED"
+
+
+def test_a_reopened_case_survives_a_declined_repayment(session, adapter, sim):
+    case, _ = case_for(session, adapter, DANA)
+    counter = sim.post("/sim/payments/offline", {"allocations": {DANA: 24000}}).json()["data"]["payment"]
+    PaymentService(session, adapter).reconcile_all()
+    sim.post("/sim/payments/return", {"paymentId": counter["paymentId"]})
+    PaymentService(session, adapter).reconcile_all()
+    sim.behave(DANA, "decline")
+    PaymentService(session, adapter).take_payment(case.id, "pm_DanaVisa4242", Authorization.new(True, 24000, 24000))
     PaymentService(session, adapter).reconcile_all()
     assert session.get(DelinquencyCase, case.id).state == "reopened"

@@ -67,7 +67,8 @@ def sim(fms_url):
 
 @pytest.fixture
 def adapter(fms_url):
-    a = CubbyAdapter(fms_url, FULL_KEY, timeout_seconds=0.5)
+    # below the simulator's 1.5 s lost-response delay, with room for a busy machine on ordinary reads
+    a = CubbyAdapter(fms_url, FULL_KEY, timeout_seconds=1.0)
     yield a
     a.close()
 

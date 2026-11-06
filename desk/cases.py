@@ -62,7 +62,7 @@ def current_case(session: Session, lease: Lease) -> DelinquencyCase | None:
 
 def reversed_at_fms(session: Session, lease: Lease, case: DelinquencyCase) -> bool:
     """A payment on this lease, taken by anyone, came back after this case was settled."""
-    since = case.resolved_at
+    since = case.resolved_at or case.opened_at
     rows = session.scalars(select(ObservedPayment).where(ObservedPayment.status.in_(FMS_REVERSAL_STATUSES))).all()
     return any(lease.provider_id in r.lease_provider_ids and (since is None or r.status_changed_at >= since) for r in rows)
 
@@ -91,11 +91,13 @@ def refresh_case(session: Session, adapter: FMSAdapter, case: DelinquencyCase) -
         case.state, case.owner = "paid", "front desk"
         case.resolved_at = case.resolved_at or utcnow()
     else:
-        if before == "paid" and not (returned or reversed_at_fms(session, lease, case)):
+        reversed_here = bool(returned) or reversed_at_fms(session, lease, case)
+        if before == "paid" and not reversed_here:
             # new charges on a settled account are the next delinquency, which gets its own case
             case.state = "paid"
         else:
-            case.state, case.owner = ("reopened" if returned or before in ("paid", "reopened") else "open"), "front desk"
+            # a reversal keeps the case reopened through later attempts, declined or pending, until it is paid
+            case.state, case.owner = ("reopened" if reversed_here or before in ("paid", "reopened") else "open"), "front desk"
             case.resolved_at = None
     case.hold_reasons = holds
     if case.state != before:
