@@ -626,3 +626,33 @@ def test_a_ledger_without_a_balance_is_not_a_zero_balance():
     odd = CubbyAdapter("http://fms", "key", transport=httpx.MockTransport(lambda r: httpx.Response(200, json=body)))
     with pytest.raises(FMSError, match="totalDue"):
         odd.ledger(DANA)
+
+
+def test_a_counter_payment_not_yet_on_the_ledger_blocks_a_new_charge(session, fms_url, sim):
+    class Unposted(CubbyAdapter):
+        """The FMS lists a counter payment as SUCCEEDED, but its ledger has not caught up."""
+        def payments_for_lease(self, lease_provider_id):
+            from dataclasses import replace
+            real = super().payments_for_lease(lease_provider_id)
+            fake = replace(real[0], provider_id="payment_counter01", status="SUCCEEDED", amount=24000) if real else None
+            return real + ([fake] if fake else [])
+
+    case, _ = case_for(session, CubbyAdapter(fms_url, "sim_org_northstar_full", timeout_seconds=2.0), DANA)
+    sim.behave(DANA, "decline")
+    CubbyAdapter(fms_url, "sim_org_northstar_full", timeout_seconds=2.0).make_payment(DANA, "pm_DanaVisa4242", 100)
+    sim.behave(DANA, "approve")
+    unposted = Unposted(fms_url, "sim_org_northstar_full", timeout_seconds=2.0)
+    with pytest.raises(PaymentRefused, match="not visibly on the ledger"):
+        PaymentService(session, unposted).take_payment(case.id, "pm_DanaVisa4242", Authorization.new(True, 24000, 24000))
+    assert all(p["status"] != "SUCCEEDED" for p in sim.payments(DANA))
+
+
+def test_staff_cannot_swap_the_payment_id_the_fms_gave_this_attempt(session, adapter, sim):
+    sim.behave(DANA, "pending_then_succeed", lag=50)
+    command, _, _ = pay(session, adapter, DANA, "pm_DanaVisa4242", 24000)
+    command.submitted_at -= timedelta(hours=2)
+    session.commit()
+    PaymentService(session, adapter).reconcile(command)
+    assert command.state == "NEEDS_STAFF"
+    with pytest.raises(PaymentRefused, match="already payment"):
+        PaymentService(session, adapter).resolve_by_staff(command, True, "It is this other one", "J. Ortiz", "payment_other")

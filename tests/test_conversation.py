@@ -247,7 +247,12 @@ def test_live_model_verifies_before_talking_money(session, adapter, sim):
     ("There is no outstanding balance.", True),
     ("Your balance is 0.", True),
     ("That comes to two hundred forty dollars.", True),
-    ("That's the late fee listed on your account.", False),
+    ("That's the late fee listed on your account.", True),   # a statement about money: the desk makes those
+    ("You owe us nothing.", True),
+    ("Your payment was credited to your account.", True),
+    ("Your debt has been erased.", True),
+    ("Thanks, you're verified.", False),
+    ("A team member will follow up with you.", False),
     ("Would you like to pay all of it, or part of it?", False),
     ("Your account is up to date.", True),
     ("You don't need to pay anything else.", True),

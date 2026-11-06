@@ -234,7 +234,19 @@ def test_a_recorded_no_is_not_a_yes(client, sim):
     check = client.post(f"/api/cases/{cid}/identity", json={"last_name": "Whitfield", "phone_last4": "0142", "unit_name": "B-1042"}).json()
     proposal = client.post(f"/api/cases/{cid}/proposals", json={"identity_check_id": check["identity_check_id"], "amount": 24000}).json()
     url = f"/api/cases/{cid}/proposals/{proposal['proposal_id']}/confirm"
-    for answer in ("no, do not charge my card", "yes but wait until Friday", "maybe"):
+    for answer in ("no, do not charge my card", "yes but wait until Friday", "maybe", "yes, only if the amount is $1",
+                   "yes, don\u2019t charge my card"):
         assert client.post(url, json={"confirmed_by": "J. Ortiz", "tenant_answer": answer}).status_code == 409
     assert sim.payments("lease_WhitB1042") == []
     assert client.post(url, json=YES).json()["state"] == "CONFIRMED"
+
+
+def test_a_facility_the_key_no_longer_sees_is_not_listed(client):
+    cid = dana_case(client)["case_id"]
+    from desk.models import DeskBinding
+    with client.app.state.session_factory() as s:
+        binding = s.get(DeskBinding, 1)
+        binding.facility_ids = [f for f in binding.facility_ids if f != ORLANDO]   # as if the facility had been sold
+        s.commit()
+    assert client.get(f"/api/facilities/{ORLANDO}/queue").status_code == 404
+    assert client.get(f"/api/cases/{cid}").status_code == 404

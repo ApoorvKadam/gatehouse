@@ -22,7 +22,9 @@ from sqlalchemy.orm import Session
 from .adapter import FMSAdapter, FMSError, NotFound, PermissionDenied, ProviderPayment
 from .cases import record, refresh_case
 from .db import utcnow
-from .models import HOLDING_STATES, DelinquencyCase, IdentityCheck, Lease, ObservedPayment, PaymentCommand, PaymentProposal
+from .models import (
+    HOLDING_STATES, DelinquencyCase, IdentityCheck, Lease, LedgerSnapshot, ObservedPayment, PaymentCommand, PaymentProposal,
+)
 
 # what the FMS can later say about a payment that succeeded, and the state the desk records for each; none of
 # them says anything about the balance, which only the ledger does
@@ -79,8 +81,8 @@ class Authorization:
 # a verified caller can pay for this long; after that they verify again, in any channel
 IDENTITY_VALID_FOR = timedelta(minutes=15)
 # what counts as the tenant's yes at the desk: it starts with a yes and takes nothing back
-CLEAR_YES = re.compile(r"^\s*(yes|yeah|yep|yup|sure|ok|okay|confirm|confirmed|i confirm|go ahead|please do|do it|that's fine|that is fine)\b", re.I)
-NOT_YES = re.compile(r"\b(no|not|don't|do not|never|cancel|stop|wait|hold on|but)\b", re.I)
+CLEAR_YES = re.compile(r"^\s*(yes|yes please|yeah|yep|yup|sure|ok|okay|confirm|confirmed|i confirm|go ahead|yes,? go ahead|"
+                       r"please go ahead|please do|do it|that's fine|that is fine)[\s.!]*$", re.I)
 # a proposal read back to the tenant has to be confirmed within this time, or read again
 PROPOSAL_VALID_FOR = timedelta(minutes=10)
 IDENTITY_TRIES = 3
@@ -176,7 +178,7 @@ def confirm(session: Session, adapter: FMSAdapter, case_id: int, proposal_id: st
         raise PaymentRefused("the proposal expired; read the balance to the tenant again")
     if not confirmed_by.strip() or not tenant_answer.strip():
         raise PaymentRefused("a confirmation needs who heard the tenant's yes and what the tenant said")
-    if not CLEAR_YES.match(tenant_answer) or NOT_YES.search(tenant_answer):
+    if not CLEAR_YES.match(tenant_answer.replace("\u2019", "'")):
         raise PaymentRefused(f"the tenant's answer {tenant_answer!r} is not a clear yes; nothing was charged")
     proposal.confirmed_by, proposal.tenant_answer = confirmed_by.strip(), tenant_answer.strip()
     verified = identity_fresh(session.get(IdentityCheck, proposal.identity_check_id), case_id)
@@ -227,8 +229,10 @@ class PaymentService:
                 return same   # the same authorization got here first
             raise PaymentRefused("another payment on this account is not settled yet")
         try:
-            ledger = self.adapter.ledger(lease.provider_id)
+            # payments first, then the balance: a payment that settles between the two reads is then either still
+            # pending in the first (refused below) or already counted in the second
             known = self.adapter.payments_for_lease(lease.provider_id)
+            ledger = self.adapter.ledger(lease.provider_id)
         except FMSError as exc:
             self._not_submitted(command, f"the FMS could not be read before charging: {exc}")
             raise PaymentRefused("the facility system did not answer; nothing was charged") from exc
@@ -240,6 +244,10 @@ class PaymentService:
             # a payment still pending at the FMS, from anyone, may yet succeed: charging now could charge twice
             self._not_submitted(command, f"payment {pending[0]} on this lease is still pending at the FMS")
             raise PaymentRefused(f"payment {pending[0]} on this lease is still pending at the FMS; wait for it to settle")
+        unposted = self._unposted_outside_payment(lease, known, ledger.total_due)
+        if unposted:
+            self._not_submitted(command, unposted)
+            raise PaymentRefused(unposted + "; check the ledger shows it before taking another payment")
         if ledger.total_due != auth.balance_seen:
             command.state = "NEEDS_REAUTHORIZATION"
             command.provider_reason = f"balance is now {ledger.total_due}, the tenant agreed while it was {auth.balance_seen}"
@@ -397,6 +405,8 @@ class PaymentService:
         lease = self.session.get(Lease, command.lease_id)
         payments = self.adapter.payments_for_lease(lease.provider_id)
         if charged:
+            if command.provider_payment_id and fms_payment_id != command.provider_payment_id:
+                raise PaymentRefused(f"this attempt is already payment {command.provider_payment_id} at the FMS; another id cannot replace it")
             named = next((p for p in payments if p.provider_id == fms_payment_id), None)
             if named is None:
                 raise PaymentRefused(f"payment {fms_payment_id} is not on this lease at the FMS")
@@ -508,6 +518,22 @@ class PaymentService:
         except StaleDataError:
             self.session.rollback()
             log.info("a newer reconciliation already updated this payment; dropped the older one")
+
+    def _unposted_outside_payment(self, lease: Lease, payments: list[ProviderPayment], total_due: int) -> str | None:
+        """A payment taken outside the desk in the last day that the ledger does not visibly reflect yet. It is reflected
+        when the balance has dropped by at least its amount since the desk's last snapshot from before it was taken."""
+        desk_ids = set(self.session.scalars(select(PaymentCommand.provider_payment_id).where(
+            PaymentCommand.provider_payment_id.is_not(None))).all())
+        cutoff = utcnow() - RECENT_OUTSIDE_PAYMENT
+        for p in payments:
+            if p.status != "SUCCEEDED" or p.provider_id in desk_ids or p.created_at is None or p.created_at < cutoff:
+                continue
+            before = self.session.scalar(select(LedgerSnapshot).where(LedgerSnapshot.lease_id == lease.id,
+                                                                       LedgerSnapshot.observed_at < p.created_at)
+                                         .order_by(LedgerSnapshot.observed_at.desc()).limit(1))
+            if before is None or before.total_due - total_due < p.amount:
+                return f"payment {p.provider_id} taken outside the desk is not visibly on the ledger yet"
+        return None
 
     def _not_submitted(self, command: PaymentCommand, why: str) -> None:
         command.state, command.provider_reason = "NOT_SUBMITTED", why

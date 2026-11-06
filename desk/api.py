@@ -105,6 +105,11 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
             raise HTTPException(401, "operator token required")
         return "operator"
 
+    def check_facility(session: Session, facility_id: str) -> None:
+        binding = session.get(DeskBinding, 1)
+        if binding is not None and facility_id not in binding.facility_ids:
+            raise HTTPException(404, "facility not found")
+
     def get_case(session: Session, case_id: int) -> DelinquencyCase:
         """A case on a facility the current FMS key can see; anything else is answered as not found."""
         case = session.get(DelinquencyCase, case_id)
@@ -128,6 +133,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
 
     @app.post("/api/facilities/{facility_id}/sync")
     def sync(facility_id: str, session: Session = Depends(db), _: str = Depends(operator)):
+        check_facility(session, facility_id)
         try:
             cases = sync_facility(session, adapter, facility_id)
         except FMSError as exc:
@@ -136,6 +142,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
 
     @app.get("/api/facilities/{facility_id}/queue")
     def facility_queue(facility_id: str, session: Session = Depends(db), _: str = Depends(operator)):
+        check_facility(session, facility_id)
         return {"rows": [r.__dict__ for r in queue(session, facility_id)], "collected": collected(session, adapter.provider, facility_id)}
 
     @app.get("/api/cases/{case_id}")

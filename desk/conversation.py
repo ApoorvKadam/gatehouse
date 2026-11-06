@@ -78,7 +78,10 @@ OUTCOME = re.compile(r"\b(went through|gone through|went thru|gone thru|cleared|
                      r"no (outstanding |remaining )?(balance|amount|money)|(don't|do not) owe|up to date|in good standing|"
                      r"(don't|do not|no) need to pay|nothing (else |more |further )?to pay|owe nothing|squared away|resolved)\b", re.I)
 SUBJECT = re.compile(r"\b(payment|balance|account|card|charge|rent|bill|you|your|it|that|everything)\b", re.I)
-SENTENCES = re.compile(r"[^.!?]+")
+# the model may ask about money ("Would you like to pay all of it?") but every statement about it is the desk's
+FINANCIAL = re.compile(r"\b(owe[sd]?|owing|debt|balance|account|payments?|paid|pay(ing)?|charge[sd]?|fees?|rent|bill|money|"
+                       r"credit(ed)?|due|card|refund(ed)?|amount|erased|wiped|forgiven|written off|zeroed)\b", re.I)
+SENTENCES = re.compile(r"[^.!?]+[.!?]*")
 MONEY_SPAN = re.compile(r"\$\s?[\d,]+(\.\d+)?")
 
 
@@ -203,7 +206,9 @@ class Conversation:
             return IDENTITY_ASK
         masked = MONEY_SPAN.sub(" AMOUNT ", text)
         figure = bool(NUMBER_WORDS.search(text))
-        outcome = any(OUTCOME.search(sentence) and SUBJECT.search(sentence) for sentence in SENTENCES.findall(masked))
+        sentences = SENTENCES.findall(masked)
+        outcome = any(OUTCOME.search(x) and SUBJECT.search(x) for x in sentences)
+        outcome = outcome or any(FINANCIAL.search(x) and not x.strip().endswith("?") for x in sentences)
         if not (figure or outcome):
             return text
         if outcome and self.command_id:
