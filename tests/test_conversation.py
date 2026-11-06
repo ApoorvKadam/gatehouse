@@ -222,3 +222,18 @@ def test_live_model_verifies_before_talking_money(session, adapter, sim):
     fourth = conv.say(session, "Actually, before I pay, what is the extra $25?")
     assert fourth.proposed_amount is None and commands(session) == []
     assert conv.cost_usd < 0.05
+
+
+@pytest.mark.parametrize("said, replaced", [
+    ("Good news, your payment went through!", True),
+    ("Your $240.00 payment has been applied.", True),
+    ("You're all paid up now.", True),
+    ("Your balance is now paid.", True),
+    ("It was charged because the October rent wasn't paid on time.", False),
+    ("The $25.00 late fee was posted on October 6.", False),
+    ("Would you like to pay the full $240.00?", False),
+])
+def test_the_reply_guard_catches_payment_claims_and_nothing_else(session, adapter, sim, said, replaced):
+    model = ScriptedModel([tool("verify_identity", DANA_ID)], [text(said)])
+    conv, _ = start(session, adapter, model)
+    assert (conv.say(session, "Whitfield 0142 B-1042").text != said) is replaced

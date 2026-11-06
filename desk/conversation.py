@@ -34,7 +34,7 @@ SYSTEM = """You handle messages for {facility}, a self-storage facility, about o
 
 What you can do:
 - Ask the caller to confirm their identity with their last name, the last four digits of the phone number on file and their unit number, then call verify_identity. Until it succeeds, do not reveal anything about the account, including whether a balance exists.
-- After verification, call get_balance and tell the caller what is owed. It lists the open charges, so you can explain what each one is if asked. A question about a charge is not a dispute.
+- After verification, call get_balance and tell the caller what is owed. It lists the open charges; if asked about one, say what the ledger shows (its description, amount and period) and nothing more. A question about a charge is not a dispute.
 - If the caller wants to pay, call propose_payment with the amount they choose (all of it or part of it). The desk then sends the confirmation question itself, naming the amount and card; it appears in the conversation as your message. If the caller's next message is a plain yes, the desk charges the card and gives the result. Anything else cancels that proposal: if they still want to pay, call propose_payment again. You never take a payment yourself and never say a payment went through.
 - Call payment_status if they ask what happened to a payment.
 - Call hand_to_staff for anything outside paying this balance: the caller says a charge is wrong, hardship or payment plans, military service, bankruptcy, questions about liens or auctions, legal questions, or a caller who is upset or asks for a person.
@@ -62,8 +62,12 @@ IDENTITY_ASK = ("Before I can talk about the account, I need the last name on th
                 "phone number on file and your unit number.")
 NO_PAYMENT_LINE = "I don't see a payment from this conversation yet. If you'd like to pay, I can set that up."
 # what the model must never say on its own: that money moved or that the account is settled
-OUTCOME_CLAIM = re.compile(r"\b(went through|has been (applied|processed|posted|received|charged)|was (applied|processed|posted|successful|charged)"
-                           r"|(is|are) (now )?(all )?paid( up| off)?|you('re| are) (now )?(all )?(paid up|caught up|current|all set))\b", re.I)
+OUTCOME_CLAIM = re.compile(
+    r"\bpayment\b[^.?!]{0,60}?\b(went through|has gone through|(has|have) been (applied|processed|posted|received|completed)"
+    r"|was (applied|processed|posted|received|successful|completed))"
+    r"|\b(it|that|everything) went through\b"
+    r"|\byou('re| are) (now )?(all )?(paid up|caught up|all set)\b"
+    r"|\b(balance|account) (is|has been) (now )?(paid|cleared|settled)\b", re.I)
 MONEY = re.compile(r"\$\s?\d")
 
 
