@@ -547,7 +547,13 @@ def test_a_payment_staff_identify_completes_even_when_the_ledger_is_ambiguous(se
     session.commit()
     settle(session, adapter, times=1)
     assert command.state == "NEEDS_STAFF"
-    PaymentService(session, adapter).resolve_by_staff(command, True, "Processor and FMS both show it", "J. Ortiz", command.provider_payment_id)
+    # naming the payment says which one this attempt is, not that it posted: still ambiguous, still unconfirmed
+    PaymentService(session, adapter).resolve_by_staff(command, True, "Processor shows this card payment", "J. Ortiz", command.provider_payment_id)
+    assert command.state != "CONFIRMED"
+    command.state = "NEEDS_STAFF"
+    session.commit()
+    PaymentService(session, adapter).resolve_by_staff(command, True, "FMS ledger shows both payments applied", "J. Ortiz",
+                                                      command.provider_payment_id, ledger_checked=True)
     assert command.state == "CONFIRMED"
 
 

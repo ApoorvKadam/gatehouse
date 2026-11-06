@@ -55,6 +55,7 @@ class StaffResolutionIn(BaseModel):
     staff: str = Field(min_length=2, description="who checked")
     charged: bool = Field(description="what the FMS or the processor showed when staff checked")
     fms_payment_id: str | None = Field(default=None, description="required when charged: the FMS payment that is this attempt")
+    ledger_checked: bool = Field(default=False, description="when charged: the person checked the FMS ledger shows this payment applied")
     note: str = Field(min_length=10, description="what was checked, where, and by whom")
 
 
@@ -239,7 +240,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         if body.charged and not body.fms_payment_id:
             raise HTTPException(422, "a charged payment needs the FMS payment id")
         try:
-            command = PaymentService(session, adapter).resolve_by_staff(command, body.charged, body.note, body.staff, body.fms_payment_id)
+            command = PaymentService(session, adapter).resolve_by_staff(command, body.charged, body.note, body.staff, body.fms_payment_id, body.ledger_checked)
         except PaymentRefused as exc:
             raise HTTPException(409, str(exc)) from exc
         return command_json(command)

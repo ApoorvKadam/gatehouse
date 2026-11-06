@@ -405,11 +405,12 @@ class PaymentService:
         return command
 
     def resolve_by_staff(self, command: PaymentCommand, charged: bool, note: str, staff: str,
-                         fms_payment_id: str | None = None) -> PaymentCommand:
+                         fms_payment_id: str | None = None, ledger_checked: bool = False) -> PaymentCommand:
         """A named person checked the FMS or the processor for a payment the desk could not settle on its own.
 
-        "Charged" names the FMS payment, which must be on this lease and belong to no other command; reconciliation
-        then settles it from the evidence. "Not charged" releases the unit, so it is refused while the FMS shows this
+        "Charged" names the FMS payment, which must be on this lease and belong to no other command. Naming it says which
+        payment this attempt is, not that it posted: reconciliation then settles it from the ledger as usual, unless the
+        person also states they checked the ledger shows it, which confirms it under their name. "Not charged" releases the unit, so it is refused while the FMS shows this
         payment as anything but declined, and while a payment that may be this one sits at the FMS, unless the note
         names that payment (the person looked at it and says it is something else)."""
         if command.state != "NEEDS_STAFF":
@@ -430,7 +431,11 @@ class PaymentService:
                                                                      PaymentCommand.id != command.id))
             if owner is not None:
                 raise PaymentRefused(f"payment {fms_payment_id} already belongs to payment {owner.id}")
-            command.provider_payment_id, command.state, command.identified_by_staff = fms_payment_id, "OUTCOME_UNKNOWN", True
+            command.provider_payment_id, command.identified_by_staff = fms_payment_id, True
+            if ledger_checked:
+                command.state, command.confirmed_at = "CONFIRMED", utcnow()
+            else:
+                command.state = "OUTCOME_UNKNOWN"
         else:
             known = next((p for p in payments if p.provider_id == command.provider_payment_id), None) if command.provider_payment_id else None
             if known is not None and known.status not in ("DECLINED", "FAILED", "REJECTED"):
@@ -450,9 +455,10 @@ class PaymentService:
             command.state = "CLEARED_BY_STAFF"
         command.provider_reason = note
         record(self.session, case, "payment resolved by staff", {"command": command.id, "charged": charged, "staff": staff,
-                                                                 "fms_payment": fms_payment_id, "note": note}, actor=staff)
+                                                                 "fms_payment": fms_payment_id, "ledger_checked": ledger_checked,
+                                                                 "note": note}, actor=staff)
         self.session.commit()
-        if charged:
+        if charged and not ledger_checked:
             self.reconcile(command)
         self._refresh(case)
         self.session.commit()
@@ -553,6 +559,9 @@ class PaymentService:
         confirmed = set(self.session.scalars(select(PaymentCommand.provider_payment_id).where(
             PaymentCommand.provider_payment_id.is_not(None), PaymentCommand.state == "CONFIRMED")).all())
         cutoff = utcnow() - RECENT_OUTSIDE_PAYMENT
+        undated = [p for p in payments if p.status == "SUCCEEDED" and p.provider_id not in confirmed and p.created_at is None]
+        if undated:
+            return f"payment {undated[0].provider_id} at the FMS has no date, so whether it is on the ledger cannot be checked"
         recent = [p for p in payments if p.status == "SUCCEEDED" and p.provider_id not in confirmed
                   and p.created_at is not None and p.created_at >= cutoff]
         if not recent:
@@ -566,7 +575,10 @@ class PaymentService:
         now = {e["bookEntryId"]: e.get("amountPaid", 0) for e in ledger.raw.get("bookEntries", [])}
         increase = sum(now.get(i, 0) - was for i, was in then.items()) + sum(v for i, v in now.items() if i not in then)
         increase += ledger.prepaid - before.prepaid
-        if increase < sum(p.amount for p in recent):
+        # desk payments posted since that snapshot account for part of the increase too
+        required = sum(p.amount for p in recent) + sum(p.amount for p in payments if p.provider_id in confirmed
+                                                       and p.created_at is not None and p.created_at > before.observed_at)
+        if increase < required:
             return f"payment {recent[0].provider_id} taken outside the desk is not visibly on the ledger yet"
         return None
 
@@ -607,7 +619,7 @@ class PaymentService:
                      and p.status in ("SUCCEEDED", "PENDING")
                      and (p.status == "PENDING" or p.provider_id not in before or before[p.provider_id] == "PENDING"
                           or (p.created_at is not None and p.created_at >= sent - RECENT_OUTSIDE_PAYMENT))]
-        if paid >= command.amount and in_motion and not command.identified_by_staff:
+        if paid >= command.amount and in_motion:
             return False, f"the ledger shows the money, but payment {in_motion[0]} on this lease could have put it there"
         return paid >= command.amount, None
 

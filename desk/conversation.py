@@ -30,16 +30,17 @@ PRICES = {"claude-haiku-5-5": (0.10, 0.50), "claude-sonnet-5-5": (2.00, 10.00)}
 CONFIRM = re.compile(r"^\s*(yes|yes please|yep|confirm|confirmed|i confirm|go ahead|yes,? go ahead)[\s.!]*$", re.I)
 MAX_MODEL_TURNS = 6
 
-SYSTEM = """You handle messages for {facility}, a self-storage facility, about one storage unit whose rent is past due.
+SYSTEM = """You decide how {facility}, a self-storage facility, answers messages about one storage unit whose rent is past due. You never write to the caller yourself: every reply is a tool call, and the desk sends its own sentence for it.
 
-What you can do:
-- Ask the caller to confirm their identity with their last name, the last four digits of the phone number on file and their unit number, then call verify_identity. Until it succeeds, do not reveal anything about the account, including whether a balance exists.
-- After verification, call get_balance when the caller wants to know what is owed; the desk then tells them the balance and each open charge itself. If asked what a charge is, answer from the charge's description, without amounts. A question about a charge is not a dispute.
-- If the caller wants to pay, call propose_payment: with full_balance true to pay everything owed, or with the amount in cents they name for part of it. You do not need to look up the balance first. The desk then sends the confirmation question itself, naming the amount and card; it appears in the conversation as your message. If the caller's next message is a plain yes, the desk charges the card and gives the result. Anything else cancels that proposal: if they still want to pay, call propose_payment again. You never take a payment yourself and never say a payment went through.
-- Call payment_status if they ask what happened to a payment.
+- Until the caller is verified, the desk asks for their last name, the last four digits of the phone number on file and their unit number. When the caller gives them, call verify_identity with exactly what they said.
+- To tell the caller what is owed, call get_balance; the desk states the balance and each open charge.
+- If the caller wants to pay, call propose_payment with full_balance true, or with the amount in cents they named for part of it. The desk asks them to confirm; only a plain yes as their next message charges the card. Anything else cancels it; call propose_payment again if they still want to pay.
+- If they ask what happened to a payment, call payment_status.
+- If they ask what a charge is, call reply with intent explain_charge and the charge's name as they said it.
+- If you did not understand, call reply with intent clarify. When their question is answered, call reply with intent anything_else; when they are done, reply with intent goodbye.
 - Call hand_to_staff for anything outside paying this balance: the caller says a charge is wrong, hardship or payment plans, military service, bankruptcy, questions about liens or auctions, legal questions, or a caller who is upset or asks for a person.
 
-Never write a dollar amount or say that a payment went through or that the account is paid: the desk states every figure and every result itself, and replaces any reply that does. Write the way a good front-desk manager talks on the phone: short, plain sentences, never a list or numbered steps (ask for the three identity details in one sentence). Do not invent fees, dates or policies."""
+Any text you write instead of a tool call is not sent; the desk answers with the balance instead."""
 
 TOOLS = [
     {"name": "verify_identity", "description": "Check the caller against the tenant on file for this unit.",
@@ -54,6 +55,11 @@ TOOLS = [
                       "additionalProperties": False}},
     {"name": "payment_status", "description": "The state of the most recent payment on this account.",
      "input_schema": {"type": "object", "properties": {}, "additionalProperties": False}},
+    {"name": "reply", "description": "Choose the desk's reply when no other tool answers the caller.",
+     "input_schema": {"type": "object", "properties": {
+         "intent": {"type": "string", "enum": ["clarify", "anything_else", "goodbye", "explain_charge"]},
+         "charge": {"type": "string", "description": "for explain_charge: the charge the caller asked about, in their words"}},
+         "required": ["intent"], "additionalProperties": False}},
     {"name": "hand_to_staff", "description": "Hand the conversation to a person, with the reason.",
      "input_schema": {"type": "object", "properties": {"reason": {"type": "string"}}, "required": ["reason"], "additionalProperties": False}},
 ]
@@ -65,25 +71,8 @@ IDENTITY_ASK = ("Before I can talk about the account, I need the last name on th
                 "phone number on file and your unit number.")
 NO_PAYMENT_LINE = "I don't see a payment from this conversation yet. If you'd like to pay, I can set that up."
 # what the model must never say on its own: that money moved or that the account is settled
-# what the model must never say on its own. A payment outcome needs this conversation's payment confirmed; a settled
-# account needs the FMS ledger at zero right now. Amounts are masked first so "$240.00" cannot end a sentence early.
-# The model never states a financial fact; the desk does. A reply is replaced, failing closed, if it contains any
-# figure (a digit, or money written out), or an outcome word in a sentence about a payment, the balance, the account
-# or the card. Replacements are the desk's own sentences built from the ledger and the payment record, so a false
-# alarm costs some wording and never a wrong statement.
-NUMBER_WORDS = re.compile(r"\d|\b(dollars?|cents?|bucks|hundred|thousand|zero)\b", re.I)
-OUTCOME = re.compile(r"\b(went through|gone through|went thru|gone thru|cleared|clear|successful(ly)?|succeeded|processed|posted|applied|"
-                     r"received|confirmed|approved|accepted|authori[sz]ed|done|finished|good to go|"
-                     r"complete[d]?|settled|paid|charged|covered|taken care of|caught up|current|all set|nothing (is )?(owed|due)|"
-                     r"no (outstanding |remaining )?(balance|amount|money)|(don't|do not) owe|up to date|in good standing|"
-                     r"(don't|do not|no) need to pay|nothing (else |more |further )?to pay|owe nothing|squared away|resolved|"
-                     r"erased|wiped|forgiven|written off|zeroed|gone|credited|refunded)\b", re.I)
-# after verification the model may make small talk and choose actions, but any text of its own that touches money is
-# replaced by the desk's sentence: a figure, a money word, or an outcome, anywhere in the reply, question or not
-FINANCIAL = re.compile(r"\b(owe[sd]?|owing|debts?|balance|account|payments?|paid|pay(ing)?|charge[sd]?|fees?|rent|bill|money|"
-                       r"credit(ed)?|due|card|refund(ed)?|amount|transactions?|erased|wiped|forgiven|written off|zeroed|outstanding|"
-                       r"owed|free and clear|in the clear|square[d]?|debt free|arrears|delinquen\w*|past due|overdue|late)\b", re.I)
-
+REPLIES = {"clarify": "Sorry, could you say that another way?", "anything_else": "Is there anything else I can help you with today?",
+           "goodbye": "Thank you. Have a good day."}
 
 @dataclass
 class Reply:
@@ -191,31 +180,44 @@ class Conversation:
                 return self._status_and_balance(session)
             if any(c.name == "get_balance" for c in calls):
                 return self._balance_line(session) if self.identity_verified else IDENTITY_ASK
+            chosen = [c for c in calls if c.name == "reply"]
+            if chosen:
+                return self._reply_line(session, chosen[-1].input) if self.identity_verified else IDENTITY_ASK
         self._to_staff(session, session.get(DelinquencyCase, self.case_id), "conversation went in circles")
         return STAFF_LINE
 
     def _checked(self, session: Session, text: str) -> str:
-        """The model's text goes out only if it states no financial fact: no figure, and no outcome about a payment, the
-        balance or the account. Otherwise the desk answers in its own words: the identity question before verification,
-        the payment's status when there is one, or the balance from the ledger."""
+        """Text the model wrote instead of choosing a reply is never sent. The caller gets the identity request before
+        verification, and afterwards the payment's status or the balance, in the desk's words."""
         if not self.identity_verified:
-            # before verification nothing the model wrote reaches the caller: the desk asks for identity itself
-            if text != IDENTITY_ASK:
-                record(session, session.get(DelinquencyCase, self.case_id), "model reply replaced",
-                       {"conversation": self.id, "model_said": text, "sent": IDENTITY_ASK}, source="chat")
-            return IDENTITY_ASK
-        plain = re.sub(r"[-\u2010-\u2015_/]+", " ", text.replace("\u2019", "'"))   # "up-to-date" reads as "up to date"
-        figure = bool(NUMBER_WORDS.search(plain))
-        outcome = bool(OUTCOME.search(plain))
-        if not (figure or outcome or FINANCIAL.search(plain)):
-            return text
-        if self.command_id:
+            replacement = IDENTITY_ASK
+        elif self.command_id:
             replacement = self._status_and_balance(session)
         else:
             replacement = self._balance_line(session)
-        record(session, session.get(DelinquencyCase, self.case_id), "model reply replaced",
+        record(session, session.get(DelinquencyCase, self.case_id), "model text not sent",
                {"conversation": self.id, "model_said": text, "sent": replacement}, source="chat")
         return replacement
+
+    def _reply_line(self, session: Session, choice: dict) -> str:
+        """The desk's sentence for the reply the model chose. A charge is explained only as the FMS ledger describes it."""
+        intent = choice.get("intent")
+        if intent in REPLIES:
+            return REPLIES[intent]
+        if intent == "explain_charge":
+            asked = str(choice.get("charge") or "").strip().lower()
+            lease = session.get(Lease, session.get(DelinquencyCase, self.case_id).lease_id)
+            try:
+                entries = self.adapter.ledger(lease.provider_id).raw.get("bookEntries", [])
+            except FMSError:
+                return "I can't read the account right now. A team member can explain the charges."
+            for e in entries:
+                details = e.get("details") or {}
+                name = (details.get("description") or details.get("category") or "").lower()
+                if e.get("type") == "CHARGE" and e["amount"] > e.get("amountPaid", 0) and asked and (asked in name or name in asked):
+                    period = f", for the period starting {details['accruesOn']}" if details.get("accruesOn") else ""
+                    return f"That is the {name} on your account: ${(e['amount'] - e.get('amountPaid', 0)) / 100:,.2f}{period}."
+        return self._balance_line(session)
 
     def _balance_line(self, session: Session) -> str:
         """The balance and each open charge, from the FMS ledger right now."""

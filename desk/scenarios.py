@@ -153,8 +153,9 @@ def counter(run: Run):
     session.commit()
     run.settle(session, adapter, passes=1)
     held = c.state
-    service.resolve_by_staff(c, True, "Processor shows the card payment; the cash was separate", "J. Ortiz", c.provider_payment_id)
-    return f"{waiting} (the ledger cannot say whose money is whose), {held}, staff identified it: {c.state}", tenant_message(c), \
+    service.resolve_by_staff(c, True, "FMS ledger shows the card payment and the cash, each applied", "J. Ortiz",
+                             c.provider_payment_id, ledger_checked=True)
+    return f"{waiting} (the ledger cannot say whose money is whose), {held}, staff checked the ledger: {c.state}", tenant_message(c), \
         waiting == "AWAITING_APPLICATION" and held == "NEEDS_STAFF" and c.state == "CONFIRMED"
 
 
