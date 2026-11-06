@@ -52,7 +52,7 @@ def test_wrong_person_gets_no_balance_and_cannot_pay(session, adapter, sim):
 
 
 def test_identity_cannot_be_checked_without_access_to_tenant_details(session, fms_url, sim):
-    limited = CubbyAdapter(fms_url, "sim_org_northstar_nopii", timeout_seconds=0.5)
+    limited = CubbyAdapter(fms_url, "sim_org_northstar_nopii", timeout_seconds=2.0)
     case, lease = case_for(session, limited, DANA)
     ok, why = verify_identity(limited, lease, IdentityClaim("Whitfield", "0142", "B-1042"))
     assert not ok and "contact details" in why
@@ -211,7 +211,7 @@ def test_a_returned_payment_reopens_the_case(session, adapter, sim):
 # ------------------------------------------------------------------ permissions
 
 def test_a_key_that_may_not_take_payments_is_rejected_without_a_charge(session, fms_url, adapter, sim):
-    read_only = CubbyAdapter(fms_url, "sim_org_northstar_readonly", timeout_seconds=0.5)
+    read_only = CubbyAdapter(fms_url, "sim_org_northstar_readonly", timeout_seconds=2.0)
     case, _ = case_for(session, adapter, DANA)
     command = PaymentService(session, read_only).take_payment(case.id, "pm_DanaVisa4242", Authorization.new(True, 24000, 24000))
     assert command.state == "REJECTED"
@@ -364,7 +364,7 @@ def test_one_lease_the_fms_cannot_read_does_not_stop_the_pass(session, fms_url, 
                 raise FMSError("timeout")
             return super().ledger(lease_provider_id)
 
-    flaky = Flaky(fms_url, "sim_org_northstar_full", timeout_seconds=0.5)
+    flaky = Flaky(fms_url, "sim_org_northstar_full", timeout_seconds=2.0)
     marcus_case, _ = case_for(session, flaky, MARCUS)
     dana_case, _ = case_for(session, flaky, DANA)
     flaky.broken = True

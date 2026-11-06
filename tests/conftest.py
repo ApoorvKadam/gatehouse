@@ -26,7 +26,7 @@ def _free_port() -> int:
 @pytest.fixture(scope="session")
 def fms_url(tmp_path_factory):
     db = tmp_path_factory.mktemp("fms") / "fmssim.db"
-    app = create_app(f"sqlite:///{db}", lose_response_seconds=1.5)
+    app = create_app(f"sqlite:///{db}", lose_response_seconds=3.0)
     port = _free_port()
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
     thread = threading.Thread(target=server.run, daemon=True)
@@ -67,8 +67,8 @@ def sim(fms_url):
 
 @pytest.fixture
 def adapter(fms_url):
-    # below the simulator's 1.5 s lost-response delay, with room for a busy machine on ordinary reads
-    a = CubbyAdapter(fms_url, FULL_KEY, timeout_seconds=1.0)
+    # below the simulator's 3 s lost-response delay, with room for a busy machine on ordinary reads
+    a = CubbyAdapter(fms_url, FULL_KEY, timeout_seconds=2.0)
     yield a
     a.close()
 

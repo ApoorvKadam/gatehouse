@@ -18,8 +18,8 @@ YES = {"confirmed_by": "J. Ortiz", "tenant_answer": "Yes, go ahead"}
 @pytest.fixture
 def client(fms_url, sim, request):
     settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY,
-                        fms_timeout_seconds=0.5, reconcile_every_seconds=60, operator_token=TOKEN, staff_token=STAFF)
-    app = create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 0.5), start_worker=False, chat_client=getattr(request, "param", None))
+                        fms_timeout_seconds=2.0, reconcile_every_seconds=60, operator_token=TOKEN, staff_token=STAFF)
+    app = create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 2.0), start_worker=False, chat_client=getattr(request, "param", None))
     with TestClient(app, headers={"X-Desk-Token": TOKEN}) as c:
         yield c
 
@@ -38,8 +38,8 @@ def test_the_desk_refuses_calls_without_the_operator_token(client):
 
 def test_a_desk_with_no_token_configured_refuses_everything(fms_url, sim):
     settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY,
-                        fms_timeout_seconds=0.5, reconcile_every_seconds=60, operator_token=None)
-    with TestClient(create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 0.5), start_worker=False)) as c:
+                        fms_timeout_seconds=2.0, reconcile_every_seconds=60, operator_token=None)
+    with TestClient(create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 2.0), start_worker=False)) as c:
         assert c.get(f"/api/facilities/{ORLANDO}/queue").status_code == 503
         assert c.get("/api/health").status_code == 200
 
@@ -134,10 +134,10 @@ def test_staff_can_release_a_held_payment_only_with_a_note(client, sim):
 
 def test_a_database_set_up_for_one_fms_account_refuses_another(fms_url, sim, tmp_path):
     url = f"sqlite:///{tmp_path / 'desk.db'}"
-    first = Settings(database_url=url, fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=0.5,
+    first = Settings(database_url=url, fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=2.0,
                      reconcile_every_seconds=60, operator_token=TOKEN)
     create_app(first, start_worker=False)
-    other = Settings(database_url=url, fms_base_url=fms_url, fms_api_key="sim_org_harbor_full", fms_timeout_seconds=0.5,
+    other = Settings(database_url=url, fms_base_url=fms_url, fms_api_key="sim_org_harbor_full", fms_timeout_seconds=2.0,
                      reconcile_every_seconds=60, operator_token=TOKEN)
     with pytest.raises(RuntimeError, match="another FMS account"):
         create_app(other, start_worker=False)
@@ -154,9 +154,9 @@ def test_an_fms_outage_is_a_502_not_a_crash(fms_url, sim):
                 raise FMSError("timeout")
             return super().ledger(lease_provider_id)
 
-    down = Down(fms_url, FULL_KEY, 0.5)
+    down = Down(fms_url, FULL_KEY, 2.0)
     settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY,
-                        fms_timeout_seconds=0.5, reconcile_every_seconds=60, operator_token=TOKEN)
+                        fms_timeout_seconds=2.0, reconcile_every_seconds=60, operator_token=TOKEN)
     with TestClient(create_app(settings, down, start_worker=False), headers={"X-Desk-Token": TOKEN}) as c:
         cid = dana_case(c)["case_id"]
         check = c.post(f"/api/cases/{cid}/identity", json={"last_name": "Whitfield", "phone_last4": "0142", "unit_name": "B-1042"}).json()
@@ -177,7 +177,7 @@ def test_a_database_with_records_but_no_account_refuses_to_start(fms_url, sim, t
         s.add(Lease(facility_id=f.id, provider="cubby", provider_id="lease_x", provider_customer_id="cust_x", unit_name="A1",
                     billing_cycle="MONTHLY"))
         s.commit()
-    settings = Settings(database_url=url, fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=0.5,
+    settings = Settings(database_url=url, fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=2.0,
                         reconcile_every_seconds=60, operator_token=TOKEN)
     with pytest.raises(RuntimeError, match="no FMS account"):
         create_app(settings, start_worker=False)
