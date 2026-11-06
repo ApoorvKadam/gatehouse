@@ -102,7 +102,10 @@ class CubbyAdapter:
 
     def payments_for_lease(self, lease_provider_id: str) -> list[ProviderPayment]:
         data = self._read("/v1/payments/search", {"leaseId": lease_provider_id})
-        return [_payment(p) for p in data.get("payments", [])]
+        try:
+            return [_payment(p) for p in data.get("payments", [])]
+        except (ValueError, TypeError) as exc:
+            raise FMSError(f"/v1/payments/search: unreadable payment ({exc})") from exc
 
     def payment_methods(self, customer_provider_id: str) -> list[dict]:
         return self._read("/v1/payment-methods/search", {"customerId": customer_provider_id}).get("paymentMethods", [])
@@ -128,7 +131,10 @@ class CubbyAdapter:
             # page is not the FMS speaking at all. Wrongly calling it "nothing charged" invites a second charge;
             # wrongly holding it costs a staff check. So it is looked up, and staff can release it.
             return SubmitOutcome(kind="lost", detail=f"HTTP {response.status_code}", errors=errors)
-        payment = _payment((payload.get("data") or {}).get("payment") or {}, amount)
+        try:
+            payment = _payment((payload.get("data") or {}).get("payment") or {}, amount)
+        except (ValueError, TypeError):
+            return SubmitOutcome(kind="lost", detail="a 200 answer whose payment could not be read")
         kind = {"SUCCEEDED": "accepted", "DECLINED": "declined", "FAILED": "declined", "PENDING": "pending"}.get(payment.status)
         if kind is None:
             return SubmitOutcome(kind="lost", payment=payment, detail=f"unrecognized status {payment.status!r}")

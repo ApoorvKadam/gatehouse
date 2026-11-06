@@ -135,3 +135,25 @@ def test_a_database_set_up_for_one_fms_account_refuses_another(fms_url, sim, tmp
                      reconcile_every_seconds=60, operator_token=TOKEN)
     with pytest.raises(RuntimeError, match="another FMS account"):
         create_app(other, start_worker=False)
+
+
+def test_an_fms_outage_is_a_502_not_a_crash(fms_url, sim):
+    from desk.adapter import FMSError
+
+    class Down(CubbyAdapter):
+        down = False
+
+        def ledger(self, lease_provider_id):
+            if self.down:
+                raise FMSError("timeout")
+            return super().ledger(lease_provider_id)
+
+    down = Down(fms_url, FULL_KEY, 0.5)
+    settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY,
+                        fms_timeout_seconds=0.5, reconcile_every_seconds=60, operator_token=TOKEN)
+    with TestClient(create_app(settings, down, start_worker=False), headers={"X-Desk-Token": TOKEN}) as c:
+        cid = dana_case(c)["case_id"]
+        check = c.post(f"/api/cases/{cid}/identity", json={"last_name": "Whitfield", "phone_last4": "0142", "unit_name": "B-1042"}).json()
+        down.down = True
+        r = c.post(f"/api/cases/{cid}/proposals", json={"identity_check_id": check["identity_check_id"], "amount": 24000})
+        assert r.status_code == 502 and "did not answer" in r.json()["detail"]

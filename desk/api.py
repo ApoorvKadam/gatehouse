@@ -8,6 +8,7 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -86,6 +87,11 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
 
     app = FastAPI(title="Past Due Desk", lifespan=lifespan)
     app.state.session_factory = factory
+
+    @app.exception_handler(FMSError)
+    async def fms_unavailable(_, exc: FMSError):
+        log.warning("FMS call failed: %s", exc)
+        return JSONResponse({"detail": "the facility system did not answer; nothing was changed by this request"}, status_code=502)
 
     def db():
         with factory() as session:

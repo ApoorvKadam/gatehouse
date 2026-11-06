@@ -306,6 +306,9 @@ class PaymentService:
             command.provider_payment_id = match.provider_id
             record(self.session, case, "lost payment found at the fms", {"command": command.id, "payment": match.provider_id})
         if match is None:
+            if command.state in UNRESOLVED:
+                self._wait(command, case, command.state, PENDING_WAIT,
+                           f"payment {command.provider_payment_id} no longer appears at the FMS; check it before any new attempt")
             self._save()
             return command
         command.provider_status = match.status
@@ -339,6 +342,9 @@ class PaymentService:
                            f"the FMS reports payment {match.provider_id} as SUCCEEDED, but the lease ledger does not show it")
         elif match.status in REVERSALS:
             command.state = REVERSALS[match.status]
+        else:
+            self._wait(command, case, command.state, PENDING_WAIT,
+                       f"the FMS reports payment {match.provider_id} as {match.status!r}, which the desk does not know; check it before any new attempt")
         self._save()
         return command
 

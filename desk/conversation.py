@@ -63,12 +63,14 @@ IDENTITY_ASK = ("Before I can talk about the account, I need the last name on th
 NO_PAYMENT_LINE = "I don't see a payment from this conversation yet. If you'd like to pay, I can set that up."
 # what the model must never say on its own: that money moved or that the account is settled
 OUTCOME_CLAIM = re.compile(
-    r"\bpayment\b[^.?!]{0,60}?\b(went through|has gone through|(has|have) been (applied|processed|posted|received|completed)"
-    r"|was (applied|processed|posted|received|successful|completed))"
+    r"\bpayment\b[^.?!]{0,60}?\b(went through|has gone through|(has|have) been (applied|processed|posted|received|completed|charged)"
+    r"|was (applied|processed|posted|received|successful|completed|charged))"
+    r"|\bcard\b[^.?!]{0,40}?\b(has been|was|got) charged\b"
     r"|\b(it|that|everything) went through\b"
-    r"|\byou('re| are) (now )?(all )?(paid up|caught up|all set)\b"
+    r"|\byou('re| are) (now )?(all )?(paid up|paid in full|caught up|current|all set)\b"
     r"|\b(balance|account) (is|has been) (now )?(paid|cleared|settled)\b", re.I)
 MONEY = re.compile(r"\$\s?\d")
+MONEY_SPAN = re.compile(r"\$\s?[\d,]+(\.\d+)?")
 
 
 @dataclass
@@ -127,6 +129,10 @@ class Conversation:
             log.info("conversation %s: payment refused: %s", self.id, exc)
             self._to_staff(session, session.get(DelinquencyCase, self.case_id), f"payment refused: {exc}")
             return "I can't take a payment on this account right now. A team member will check it and contact you."
+        except FMSError as exc:
+            # take_payment raises this only before anything is sent to the FMS
+            log.warning("conversation %s: FMS unavailable on confirm: %s", self.id, exc)
+            return "I couldn't reach our system, and nothing was charged. Please try again in a few minutes."
         self.command_id = command.id
         return tenant_message(command)
 
@@ -154,7 +160,7 @@ class Conversation:
             if not calls:
                 text = " ".join(b.text for b in response.content if b.type == "text").strip()
                 return self._checked(session, text) or "Sorry, could you say that again?"
-            results = [{"type": "tool_result", "tool_use_id": c.id, "content": json.dumps(self._run_tool(session, lease, c.name, c.input))}
+            results = [{"type": "tool_result", "tool_use_id": c.id, "content": json.dumps(self._safe_tool(session, lease, c))}
                        for c in calls]
             self.messages.append({"role": "user", "content": results})
             # these answers are the desk's own words, not the model's
@@ -174,7 +180,7 @@ class Conversation:
         replacement = None
         if MONEY.search(text) and not self.identity_verified:
             replacement = IDENTITY_ASK
-        elif OUTCOME_CLAIM.search(text):
+        elif OUTCOME_CLAIM.search(MONEY_SPAN.sub("AMOUNT", text)):   # "$240.00" must not end the sentence early
             command = session.get(PaymentCommand, self.command_id) if self.command_id else None
             if command is None or command.state != "CONFIRMED":
                 replacement = self._status_line(session)
@@ -187,6 +193,14 @@ class Conversation:
     def _status_line(self, session: Session) -> str:
         command = session.get(PaymentCommand, self.command_id) if self.command_id else None
         return tenant_message(command) if command else NO_PAYMENT_LINE
+
+    def _safe_tool(self, session: Session, lease: Lease, call) -> dict:
+        """Every tool call gets a result, whatever happens, or the conversation history can no longer be sent."""
+        try:
+            return self._run_tool(session, lease, call.name, call.input)
+        except Exception:
+            log.exception("conversation %s: tool %s failed", self.id, call.name)
+            return {"error": "the desk could not do that just now"}
 
     def _run_tool(self, session: Session, lease: Lease, name: str, args: dict) -> dict:
         case = session.get(DelinquencyCase, self.case_id)

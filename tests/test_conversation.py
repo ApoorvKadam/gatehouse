@@ -229,6 +229,10 @@ def test_live_model_verifies_before_talking_money(session, adapter, sim):
     ("Your $240.00 payment has been applied.", True),
     ("You're all paid up now.", True),
     ("Your balance is now paid.", True),
+    ("Your payment of $240.00 has been applied.", True),
+    ("Your card has been charged.", True),
+    ("You're current now.", True),
+    ("The $25.00 late fee was charged on October 6.", False),
     ("It was charged because the October rent wasn't paid on time.", False),
     ("The $25.00 late fee was posted on October 6.", False),
     ("Would you like to pay the full $240.00?", False),
@@ -237,3 +241,14 @@ def test_the_reply_guard_catches_payment_claims_and_nothing_else(session, adapte
     model = ScriptedModel([tool("verify_identity", DANA_ID)], [text(said)])
     conv, _ = start(session, adapter, model)
     assert (conv.say(session, "Whitfield 0142 B-1042").text != said) is replaced
+
+
+def test_a_tool_call_that_fails_keeps_the_conversation_usable(session, adapter, sim):
+    model = ScriptedModel([tool("verify_identity", DANA_ID)], [text("You're verified.")],
+                          [tool("propose_payment", {"amount_cents": "all of it"}, "b1")], [text("How much would you like to pay?")],
+                          [text("Sure.")])
+    conv, _ = start(session, adapter, model)
+    conv.say(session, "Whitfield 0142 B-1042")
+    assert conv.say(session, "pay it").text == "How much would you like to pay?"
+    assert "could not do that" in model.sent[-1][-1]["content"][0]["content"]
+    assert conv.say(session, "thanks").text == "Sure."   # the history is still valid

@@ -444,3 +444,13 @@ def test_next_months_rent_does_not_reopen_a_settled_case(session, adapter, sim):
     sim.post("/sim/payments/return", {"paymentId": sim.payments(DANA)[0]["paymentId"]})
     PaymentService(session, adapter).reconcile_all()
     assert session.get(DelinquencyCase, case.id).state == "reopened"
+
+
+def test_a_status_the_desk_does_not_know_ends_with_staff(session, adapter, sim):
+    command, case, _ = pay(session, adapter, DANA, "pm_DanaVisa4242", 24000)
+    sim.post("/sim/payments/return", {"paymentId": command.provider_payment_id, "status": "UNDER_REVIEW"})
+    command.state = "AWAITING_APPLICATION"   # as if the desk had not seen it settle yet
+    command.submitted_at -= timedelta(hours=2)
+    session.commit()
+    PaymentService(session, adapter).reconcile(command)
+    assert command.state == "NEEDS_STAFF" and "does not know" in command.provider_reason
