@@ -1,23 +1,22 @@
 {% extends "base.html" %}
 {% block title %}Payment of {{ money(cmd.amount) }}, unit {{ lease.unit_name }} | Gatehouse{% endblock %}
 {% block main %}
-<p class="crumbs"><a href="/?facility={{ facility.provider_id }}">Today at {{ facility.name }}</a> / <a href="/accounts/{{ case.id }}">Unit {{ lease.unit_name }}</a></p>
-<div class="title">
+<div class="wrap">
+<p class="crumbs"><a href="/today?facility={{ facility.provider_id }}">Today at {{ facility.name }}</a> / <a href="/accounts/{{ case.id }}">Unit {{ lease.unit_name }}</a></p>
+<div class="head">
   <h1>{{ money(cmd.amount) }} card payment, unit {{ lease.unit_name }}</h1>
   <p>Attempt {{ cmd.id }} &middot; started {{ local(cmd.created_at) }}</p>
 </div>
 {% set held = cmd.state in ('NEEDS_STAFF', 'OUTCOME_UNKNOWN') %}
-<p class="state-line{% if held or cmd.state == 'RETURNED' %} act{% endif %}">
-  {% if cmd.state == 'NEEDS_STAFF' and not cmd.provider_payment_id %}Outcome unknown: held for a person
+<div class="state"><span class="chip {{ 'act' if held else ('wait' if cmd.state in ('RETURNED', 'REFUNDED', 'REFUND_PENDING', 'DISPUTED') else ('done' if cmd.state == 'CONFIRMED' else 'plain')) }}">{% if cmd.state == 'NEEDS_STAFF' and not cmd.provider_payment_id %}Outcome unknown: held for a person
   {% elif cmd.state == 'RETURNED' %}{% if cmd.confirmed_at %}Confirmed, then returned{% else %}Returned before Gatehouse confirmed it{% endif %}
   {% elif cmd.state == 'CONFIRMED' %}Confirmed by the FMS ledger
-  {% else %}{{ cmd.state|replace('_', ' ')|capitalize }}{% endif %}
-</p>
+  {% else %}{{ cmd.state|replace('_', ' ')|capitalize }}{% endif %}</span></div>
 {% if case.hold_reasons %}<p class="lede">{% for r in case.hold_reasons %}{{ sentence(r) }} {% endfor %}</p>{% endif %}
 
-<div class="columns">
-  <section class="block">
-    <h2>What the tenant agreed to</h2>
+<div class="grid2">
+  <section class="panel">
+    <h2><span class="lane-dot lane-decided"></span>What the tenant agreed to</h2>
     {% if proposal %}
     <dl class="kv">
       <dt>Amount</dt><dd>{{ money(proposal.amount) }}, card ending {{ proposal.card_last4 }}</dd>
@@ -29,8 +28,8 @@
     {% else %}<p>No recorded agreement.</p>{% endif %}
   </section>
 
-  <section class="block">
-    <h2>What Gatehouse sent and heard back</h2>
+  <section class="panel">
+    <h2><span class="lane-dot lane-observed"></span>What Gatehouse sent and heard back</h2>
     <dl class="kv">
       <dt>Written down first</dt><dd>{{ local(cmd.created_at) }}, before the FMS was called</dd>
       <dt>Sent to the FMS</dt><dd>{{ local(cmd.submitted_at) or 'Not sent' }}</dd>
@@ -41,8 +40,8 @@
     </dl>
   </section>
 
-  <section class="block">
-    <h2>What the FMS shows now</h2>
+  <section class="panel">
+    <h2><span class="lane-dot lane-fms"></span>What the FMS shows now</h2>
     <dl class="kv">
       {% if cmd.suggested_payment_id %}<dt>Possible match</dt><dd>{{ cmd.suggested_payment_id }}: same lease and amount, created after this attempt. Not matched automatically.</dd>{% endif %}
       <dt>Payments before this one</dt><dd>{% if cmd.fms_payments_before %}{{ cmd.fms_payments_before|length }}{% else %}None on this lease{% endif %}</dd>
@@ -52,15 +51,15 @@
     <p class="note">Cubby's ledger does not say which payment paid which charge. When the balance drops but the answer was lost, the ledger alone cannot prove this attempt is the payment that dropped it.</p>
   </section>
 
-  <section class="block">
-    <h2>What Gatehouse tells the tenant</h2>
+  <section class="panel">
+    <h2><span class="lane-dot lane-concluded"></span>What Gatehouse tells the tenant</h2>
     <p class="told"><b>For this payment as it stands now</b>{{ told }}</p>
     <p class="note">Gatehouse writes every sentence a tenant reads about a payment. It says "applied" only after the FMS ledger shows the money. At the desk, staff read this sentence out; in the chat, Gatehouse sends it.</p>
   </section>
 
   {% if cmd.state == 'NEEDS_STAFF' %}
-  <section class="block wide">
-    <h2>What a person can decide</h2>
+  <section class="panel wide">
+    <h2><span class="lane-dot lane-decided"></span>What a person can decide</h2>
     <ul class="decisions">
       <li><b>This is the payment</b><span>Name the FMS payment that is this attempt. Gatehouse confirms it only once the ledger shows it applied.</span></li>
       <li><b>Not charged</b><span>Refused while the FMS shows this payment as anything but declined, failed or rejected, or while any possible match is pending. Every possible match has to be named, with why it is another payment.</span></li>
@@ -71,7 +70,7 @@
   {% endif %}
 
   {% if truth %}
-  <section class="block wide truth">
+  <section class="panel wide truth">
     <h2>The simulator's own record, from {{ truth.recorded_at }}</h2>
     <dl class="kv">
       <dt>Payments on this lease</dt><dd>{{ truth.payments|length }}</dd>
@@ -82,5 +81,6 @@
     {% if cmd.state == 'NEEDS_STAFF' and truth.payments|length == 1 %} It shows one payment on this lease, and Gatehouse sent this payment once and did not retry it.{% endif %}</p>
   </section>
   {% endif %}
+</div>
 </div>
 {% endblock %}

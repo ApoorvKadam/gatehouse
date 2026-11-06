@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block title %}Gatehouse: unfinished work in self-storage, checked against the FMS{% endblock %}
+{% block main %}
+<section class="wrap hero">
+  <div>
+    <span class="marker"><i style="background:var(--teal)"></i>For self-storage operators</span>
+    <h1>Work your systems call done, checked until the FMS shows it.</h1>
+    <p>Gatehouse watches an operator's facility management system and the systems around it. It opens an item for every unfinished piece of work, names the fact that will close it, and sends disagreements to a person with the evidence.</p>
+    <div class="actions">
+      <a class="button primary" href="/today">Open today's work</a>
+      <a class="button" href="#built">See what is built</a>
+    </div>
+  </div>
+  <div class="frame" aria-label="Today, live">
+    <div class="frame-bar"><span><b>Today</b> &middot; {{ facility.name }}</span><span>{{ open_count }} open</span></div>
+    <table>
+      <tbody>
+      {% for i in items %}
+        <tr>
+          <td><span class="chip {{ 'act' if i.rank < 2 else ('wait' if i.rank < 4 else 'plain') }}">{{ i.head }}</span><div class="small muted" style="margin-top:6px">Unit {{ i.unit }} &middot; {{ i.who }}</div></td>
+          <td class="num amount">{{ i.amount }}</td>
+          <td class="num"><a href="{{ i.link }}">Open</a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+<div class="stripe" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+
+{% if held %}
+<section class="feature" id="built">
+  <div class="wrap">
+    <div>
+      <span class="marker"><i style="background:var(--brick)"></i>Payments</span>
+      <h2>A payment whose answer was lost is held, not retried.</h2>
+      <p>The tenant agreed to {{ money(held.amount) }} by phone. The FMS took a payment, and the connection broke before its answer arrived. Gatehouse does not charge again and does not tell the tenant it worked. It points to the FMS payment that may be this one and waits for a person.</p>
+      <a class="open" href="/payments/{{ held.id }}">Open this payment &rarr;</a>
+    </div>
+    <div class="frame">
+      <div class="frame-bar"><span><b>Payment</b> &middot; unit {{ held_unit }}</span><span class="chip act">Outcome unknown</span></div>
+      <div class="frame-body">
+        <dl class="kv">
+          <dt>Tenant agreed to</dt><dd>{{ money(held.amount) }}, with a fresh identity check</dd>
+          <dt>Sent to the FMS</dt><dd>Once, after the intent was written down</dd>
+          <dt>Answer</dt><dd>None usable: the connection broke</dd>
+          <dt>FMS shows</dt><dd>{{ held.suggested_payment_id or 'No matching payment yet' }}{% if held.suggested_payment_id %}, a possible match{% endif %}</dd>
+          {% if truth %}<dt>Simulator's own record</dt><dd>{{ truth.payments|length }} charge on the lease, {{ truth.payments[0].status if truth.payments else '' }}</dd>{% endif %}
+        </dl>
+      </div>
+    </div>
+  </div>
+</section>
+{% endif %}
+
+{% if record_case %}
+<section class="feature band">
+  <div class="wrap">
+    <div>
+      <span class="marker"><i style="background:var(--navy)"></i>The record</span>
+      <h2>Every fact keeps its source.</h2>
+      <p>Each account's history is kept in four lanes: what the FMS said, what Gatehouse observed, what Gatehouse concluded, and what a person decided. Reading down a lane gives one source's account, so nobody has to guess who said a payment went through.</p>
+      <a class="open" href="/accounts/{{ record_case }}">Open the account record &rarr;</a>
+    </div>
+    <div class="frame">
+      <div class="frame-bar"><span><b>Account record</b> &middot; unit {{ held_unit }}</span></div>
+      <div class="mini-lanes">
+        {% for key, label in lane_names %}
+        <div>
+          <h3><span class="lane-{{ key }}" style="width:8px;height:8px;border-radius:2px;display:inline-block"></span>{{ label }}</h3>
+          {% for e in lanes.get(key, [])[:2] %}<p><b>{{ e.title }}</b></p>{% else %}<p class="muted">Nothing yet</p>{% endfor %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</section>
+{% endif %}
+
+{% if returned %}
+<section class="feature">
+  <div class="wrap">
+    <div>
+      <span class="marker"><i style="background:var(--amber)"></i>Returns and disputes</span>
+      <h2>A payment that comes back reopens the account.</h2>
+      <p>A payment that posted can still be returned by the bank, refunded or disputed weeks later. Gatehouse keeps watching confirmed payments, and when the FMS reports one reversed, the account opens again and the work goes back on Today.</p>
+      <a class="open" href="/payments/{{ returned.id }}">Open this payment &rarr;</a>
+    </div>
+    <div class="frame">
+      <div class="frame-bar"><span><b>Payment</b> &middot; unit {{ returned_unit }}</span><span class="chip wait">Returned</span></div>
+      <div class="frame-body">
+        <dl class="kv">
+          <dt>Amount</dt><dd>{{ money(returned.amount) }}</dd>
+          <dt>Confirmed on the ledger</dt><dd>{{ local(returned.confirmed_at) if returned.confirmed_at else 'Never' }}</dd>
+          <dt>FMS now reports</dt><dd>{{ returned.provider_status }}</dd>
+          <dt>Account</dt><dd>Open again, back on Today</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+</section>
+{% endif %}
+
+{% if changed %}
+<section class="feature band">
+  <div class="wrap">
+    <div>
+      <span class="marker"><i style="background:var(--teal)"></i>Lien files</span>
+      <h2>A lien file goes back to review when the account changes.</h2>
+      <p>For a Florida unit, every requirement of the lien statute is listed with its basis and the evidence on file: the notice, the certificate of mailing, the posting, both newspaper publications and the legal checks. A payment after the notice sends the file back to a person. Gatehouse never says a unit may be sold.</p>
+      <a class="open" href="/accounts/{{ changed.case_id }}/lien">Open this lien file &rarr;</a>
+    </div>
+    <div class="frame">
+      <div class="frame-bar"><span><b>Lien file</b> &middot; Florida</span><span class="chip act">{{ changed.state }}</span></div>
+      <table>
+        <thead><tr><th>Requirement</th><th>Status</th></tr></thead>
+        <tbody>
+        {% for f in (changed.findings|rejectattr('status', 'equalto', 'met')|list)[:3] %}<tr><td>{{ sentence(readable(f.detail)) }}</td><td><span class="status {{ f.status }}">{{ f.status }}</span></td></tr>{% endfor %}
+        <tr><td class="muted">{{ changed.findings|selectattr('status', 'equalto', 'met')|list|length }} other requirements met, each with its record</td><td><span class="status met">met</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+{% endif %}
+
+{% if counsel %}
+<section class="feature">
+  <div class="wrap">
+    <div>
+      <span class="marker"><i style="background:var(--lilac)"></i>Other states</span>
+      <h2>Where no rules are reviewed, the file goes to counsel.</h2>
+      <p>Florida is the one reviewed rule set. A New York file, or any other state's, is not evaluated: it goes to counsel instead of getting a confident answer nobody checked.</p>
+      <a class="open" href="/accounts/{{ counsel.case_id }}/lien">Open this file &rarr;</a>
+    </div>
+    <div class="frame">
+      <div class="frame-bar"><span><b>Lien file</b> &middot; New York</span><span class="chip wait">Counsel review required</span></div>
+      <div class="frame-body"><p class="muted">{{ counsel.summary }}</p></div>
+    </div>
+  </div>
+</section>
+{% endif %}
+
+<section class="feature band">
+  <div class="wrap">
+    <div>
+      <span class="marker"><i style="background:var(--ink)"></i>Next</span>
+      <h2>The same check, across the rest of the operator's day.</h2>
+      <p>Each part closes work only on the fact that proves it, from the system that owns that fact.</p>
+      <a class="open" href="/limits">What this is and is not &rarr;</a>
+    </div>
+    <div class="frame">
+      <table class="next-table">
+        <thead><tr><th>Part</th><th>Done when</th></tr></thead>
+        <tbody>
+          <tr><td>Access and overlocks</td><td>Gate codes and overlocks in the FMS match what each tenant has paid, in both directions</td></tr>
+          <tr><td>Leads and move-ins</td><td>A missed call counts as recovered only when a specific lease is linked to it</td></tr>
+          <tr><td>Rent changes</td><td>An approved increase is saved, noticed and charged in the FMS, with what happened after</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+{% endblock %}

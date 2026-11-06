@@ -4,6 +4,7 @@ Every page reads Gatehouse's own records and the simulator trace saved when the 
 FMS or writes anything, so a visitor can read freely without moving the world."""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -74,12 +75,19 @@ def local(when: datetime | None, zone: str = "America/New_York") -> str:
     return t.strftime("%b %-d, %-I:%M %p")
 
 
+def readable(text: str) -> str:
+    """Finding details come from the rules engine in cents and ISO dates; operators read dollars and dates."""
+    text = re.sub(r"from (\d+) to (\d+) cents", lambda m: f"from {money(int(m.group(1)))} to {money(int(m.group(2)))}", text)
+    text = re.sub(r"(\d+) cents", lambda m: money(int(m.group(1))), text)
+    return re.sub(r"\b(20\d\d-\d\d-\d\d)\b", lambda m: day(m.group(1)), text)
+
+
 def sentence(text: str) -> str:
     text = text.strip()
     return (text[0].upper() + text[1:] + ("" if text.endswith(".") else ".")) if text else ""
 
 
-templates.env.globals.update(sentence=sentence)
+templates.env.globals.update(sentence=sentence, readable=readable)
 
 
 def day(iso: str | None) -> str:
@@ -219,7 +227,7 @@ class Pages:
                 # the evaluation's own state, labelled with its date; nothing here infers what it would say today
                 found = True
                 rank, head, proof, who = LIEN_ITEMS.get(last.state, (3, last.state, "A person reviews the file.", "Collections lead"))
-                open_findings = [sentence(f["detail"]) for f in last.findings if f["status"] != "met"]
+                open_findings = [sentence(readable(f["detail"])) for f in last.findings if f["status"] != "met"]
                 sale = next((v for k, v in last.timing.items() if k.startswith("earliest sale")), None)
                 what = " ".join(open_findings) if last.state != "Counsel review required" and open_findings else sentence(last.summary)
                 items.append(Item(rank, head, lease.unit_name, case.id, last.evaluated_at,
@@ -276,6 +284,34 @@ def router(pages: Pages) -> APIRouter:
         return case, lease, facility
 
     @r.get("/", response_class=HTMLResponse)
+    def front(request: Request):
+        """What Gatehouse is, and each built feature shown live on the seeded world, with a link into it."""
+        with session() as s:
+            facilities = pages.facilities(s)
+            if not facilities:
+                raise HTTPException(503, "No facility has been read from the FMS yet")
+            home = facilities[0]
+            items = pages.today(s, home)
+            commands = s.scalars(select(PaymentCommand).order_by(PaymentCommand.id)).all()
+            held = next((c for c in commands if c.state == "NEEDS_STAFF"), None)
+            returned = next((c for c in commands if c.state in REVERSED), None)
+            evaluations = s.scalars(select(LienEvaluation).order_by(LienEvaluation.id.desc())).all()
+            changed = next((e for e in evaluations if e.state == "Account changed: re-review"), None)
+            counsel = next((e for e in evaluations if e.state == "Counsel review required"), None)
+            record_case = held.case_id if held else (items[0].case_id if items else None)
+            lanes = {}
+            if record_case is not None:
+                for e in pages.record(s, s.get(DelinquencyCase, record_case)):
+                    lanes.setdefault(e.lane, []).append(e)
+            return templates.TemplateResponse(request, "front.html", {
+                "facility": home, "facilities": facilities, "items": items[:4], "open_count": len(items),
+                "held": held, "held_unit": s.get(Lease, held.lease_id).unit_name if held else None,
+                "returned": returned, "returned_unit": s.get(Lease, returned.lease_id).unit_name if returned else None,
+                "changed": changed, "counsel": counsel, "record_case": record_case, "lanes": lanes, "lane_names": LANES,
+                "truth": pages.trace.get(s.get(Lease, held.lease_id).provider_id) if held else None,
+                "money": money, "local": local, "nav": "front"})
+
+    @r.get("/today", response_class=HTMLResponse)
     def today(request: Request, facility: str | None = None):
         with session() as s:
             facilities = pages.facilities(s)

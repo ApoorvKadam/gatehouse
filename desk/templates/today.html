@@ -1,26 +1,34 @@
 {% extends "base.html" %}
 {% block title %}Today, {{ facility.name }} | Gatehouse{% endblock %}
 {% block main %}
-<div class="title">
-  <h1>Today at {{ facility.name }}</h1>
-  <p>{{ items|length }} open {{ 'item' if items|length == 1 else 'items' }}, most consequential first</p>
+<div class="wrap">
+  <div class="head">
+    <h1>Today at {{ facility.name }}</h1>
+    <p>{{ items|length }} open {{ 'item' if items|length == 1 else 'items' }}, most consequential first</p>
+  </div>
+  <p class="lede">Every unfinished piece of work at this facility, with the fact that will prove it done. Nothing leaves this list because someone said it is done; it leaves when the system of record shows it.</p>
+  {% if items %}
+  <div class="worklist">
+    <table>
+      <thead><tr><th>What is wrong</th><th>Proved done when</th><th>Who acts</th><th class="num">Amount</th></tr></thead>
+      <tbody>
+      {% for i in items %}
+        <tr>
+          <td>
+            <span class="chip {{ 'act' if i.rank < 2 else ('wait' if i.rank < 4 else 'plain') }}">{{ i.head }}</span>
+            <div class="work-head" style="margin-top:8px"><a href="{{ i.link }}">Unit {{ i.unit }}</a> <span class="muted small">since {{ local(i.since) }}</span></div>
+            <p class="work-what">{{ i.what }}</p>
+          </td>
+          <td><p class="work-proof">{{ i.proof }}</p></td>
+          <td class="small">{{ i.who }}</td>
+          <td class="num amount">{{ i.amount }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">Nothing is open at this facility. Every account the FMS reports past due has been worked to a confirmed result.</p>
+  {% endif %}
 </div>
-<p class="lede">Every unfinished piece of work at this facility, with the fact that will prove it done. Nothing leaves this list because someone said it is done; it leaves when the system of record shows it.</p>
-{% if items %}
-<ol class="notices">
-  {% for i in items %}
-  <li class="notice{% if i.rank < 2 %} urgent{% endif %}">
-    <div>
-      <h2><a href="{{ i.link }}">{{ i.head }}</a></h2>
-      <p class="dateline">Unit {{ i.unit }} &middot; since {{ local(i.since) }}</p>
-      <p class="what">{{ i.what }}</p>
-    </div>
-    <p class="proof"><b>Proved done when</b>{{ i.proof }}</p>
-    <p class="act">{% if i.amount %}<span class="amount">{{ i.amount }}</span>{% endif %}<span class="who">{{ i.who }}</span><a href="{{ i.link }}">Open</a></p>
-  </li>
-  {% endfor %}
-</ol>
-{% else %}
-<p class="empty">Nothing is open at this facility. Every account the FMS reports past due has been worked to a confirmed result.</p>
-{% endif %}
 {% endblock %}

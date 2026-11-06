@@ -8,28 +8,29 @@
 <link rel="stylesheet" href="{{ url_for('static', path='gatehouse.css') }}">
 </head>
 <body>
-<header class="mast">
-  <div class="mast-row">
-    <a class="mast-name" href="/">Gatehouse</a>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="/"><span class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>Gatehouse</a>
     <nav aria-label="Main">
-      <a href="/" {% if nav == 'today' %}aria-current="page"{% endif %}>Today</a>
+      <a href="/" {% if nav == 'front' %}aria-current="page"{% endif %}>Overview</a>
+      <a href="/today" {% if nav == 'today' %}aria-current="page"{% endif %}>Today</a>
       <a href="/limits" {% if nav == 'limits' %}aria-current="page"{% endif %}>Limits</a>
     </nav>
-    {% if facilities %}
-    <form method="get" action="/">
+    {% if facilities and nav == 'today' %}
+    <form method="get" action="/today">
       <label for="facility">Facility</label>
       <select id="facility" name="facility">
         {% for f in facilities %}<option value="{{ f.provider_id }}" {% if facility and f.id == facility.id %}selected{% endif %}>{{ f.name }} ({{ f.jurisdiction }})</option>{% endfor %}
       </select>
-      <button type="submit">Show</button>
+      <button class="button" type="submit">Show</button>
     </form>
     {% endif %}
   </div>
 </header>
-<div class="strip"><p><strong>Synthetic technical preview</strong>Every tenant, payment and document here is made up, and the FMS is a simulator. Read-only: nothing on these pages changes anything. <a href="/limits">What this is and is not</a>.</p></div>
+<div class="preview-note"><div class="wrap"><b>Synthetic technical preview.</b>Every tenant, payment and document is made up, the FMS is a simulator, and nothing on these pages changes anything. <a href="/limits">What this is and is not</a></div></div>
 <main>
 {% block main %}{% endblock %}
 </main>
-<footer>Gatehouse. FMS shapes follow Cubby's public Operator API; not an official integration.</footer>
+<footer><div class="wrap"><span>Gatehouse</span><span>FMS shapes follow Cubby's public Operator API. Not an official integration.</span></div></footer>
 </body>
 </html>
