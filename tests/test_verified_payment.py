@@ -727,3 +727,27 @@ def test_a_reversal_older_than_the_case_does_not_reopen_it(session, adapter, sim
         new_case, _ = case_for(other, adapter, DANA)
         PaymentService(other, adapter).reconcile_all()
         assert other.get(DelinquencyCase, new_case.id).state == "open"
+
+
+def test_a_desk_payment_posting_late_cannot_vouch_for_an_outside_payment(session, fms_url, sim):
+    from desk.db import utcnow
+
+    taken = {}
+
+    class WithCounter(CubbyAdapter):
+        """The FMS also lists outside payment A, taken after the snapshot and before B posted; A never reached the ledger."""
+        def payments_for_lease(self, lease_provider_id):
+            from dataclasses import replace
+            real = super().payments_for_lease(lease_provider_id)
+            return real + [replace(real[0], provider_id="payment_outsideA", amount=10000, created_at=taken["a"])]
+
+    plain = CubbyAdapter(fms_url, "sim_org_northstar_full", timeout_seconds=2.0)
+    sim.behave(DANA, "late_application", lag=2)
+    b, case, _ = pay(session, plain, DANA, "pm_DanaVisa4242", 10000)   # B: succeeded, not on the ledger; a snapshot follows
+    assert b.state == "AWAITING_APPLICATION"
+    taken["a"] = utcnow()                                               # A is taken now
+    settle(session, plain)                                              # then B posts
+    assert b.state == "CONFIRMED" and sim.total_due(DANA) == 14000
+    with pytest.raises(PaymentRefused, match="not visibly on the ledger"):
+        PaymentService(session, WithCounter(fms_url, "sim_org_northstar_full", timeout_seconds=2.0)).take_payment(
+            case.id, "pm_DanaVisa4242", Authorization.new(True, 14000, 14000))

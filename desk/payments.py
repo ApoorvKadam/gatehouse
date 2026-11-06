@@ -583,9 +583,11 @@ class PaymentService:
         now = {e["bookEntryId"]: e.get("amountPaid", 0) for e in ledger.raw.get("bookEntries", [])}
         increase = sum(now.get(i, 0) - was for i, was in then.items()) + sum(v for i, v in now.items() if i not in then)
         increase += ledger.prepaid - before.prepaid
-        # desk payments posted since that snapshot account for part of the increase too
-        required = sum(p.amount for p in recent) + sum(p.amount for p in payments if p.provider_id in confirmed
-                                                       and p.created_at is not None and p.created_at > before.observed_at)
+        # desk payments confirmed since that snapshot (whenever they were created) account for part of the increase too
+        posted_since = self.session.scalars(select(PaymentCommand.amount).where(
+            PaymentCommand.lease_id == lease.id, PaymentCommand.state == "CONFIRMED",
+            PaymentCommand.confirmed_at > before.observed_at)).all()
+        required = sum(p.amount for p in recent) + sum(posted_since)
         if increase < required:
             return f"payment {recent[0].provider_id} taken outside the desk is not visibly on the ledger yet"
         return None
