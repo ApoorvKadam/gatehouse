@@ -16,11 +16,10 @@ _ALPHABET = string.ascii_letters + string.digits
 _ids: random.Random = secrets.SystemRandom()
 
 
-def restart_ids() -> None:
-    """With SIM_SEED set, every reset hands out the same ids in the same order, so a seeded demo, a scenario
-    and a screenshot all name the same payment. Without it, ids are random, like a real FMS."""
+def restart_ids(seed: str | None = None) -> None:
+    """With a seed, every reset hands out the same ids in the same order, so a seeded demo, a scenario and a
+    screenshot all name the same payment. Without one, ids are random, like a real FMS."""
     global _ids
-    seed = os.environ.get("SIM_SEED")
     _ids = random.Random(seed) if seed else secrets.SystemRandom()
 
 

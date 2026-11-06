@@ -224,9 +224,22 @@ def create_app(database_url: str | None = None, lose_response_seconds: float = 8
         return ok({"payment": payment_json(payment)})
 
     # ---------------- simulator controls ----------------
+    @app.get("/sim/truth")
+    def sim_truth(leaseId: str, session: Session = Depends(db)):
+        """What really happened on a lease, for a judge: every payment that touched it and the ledger balance.
+        Unlike Payments Search it settles nothing, so reading it never changes the answer."""
+        lease = control_lease(session, leaseId)
+        rows = session.scalars(select(Payment).order_by(Payment.created_at)).all()
+        return ok({"leaseId": lease.lease_id, "totalDue": lease_total_due(session, lease.lease_id),
+                   "payments": [{**payment_json(p), "applied": p.applied, "allocations": p.allocations}
+                                for p in rows if lease.lease_id in p.allocations]})
+
     @app.post("/sim/reset")
-    def sim_reset(session: Session = Depends(db)):
-        seed.reset(session)
+    def sim_reset(body: dict | None = None, session: Session = Depends(db)):
+        id_seed = (body or {}).get("idSeed")
+        if id_seed is not None and not isinstance(id_seed, str):
+            raise ApiError(400, "idSeed must be a string")
+        seed.reset(session, id_seed)
         return ok({"reset": True})
 
     # test controls answer a bad request with 400 or 404, never a 500 that looks like the simulated server_error mode

@@ -67,8 +67,8 @@ PAYMENT_METHODS = [
 ]
 
 
-def reset(session: Session) -> None:
-    restart_ids()
+def reset(session: Session, id_seed: str | None = None) -> None:
+    restart_ids(id_seed)
     for table in reversed(Base.metadata.sorted_tables):
         session.execute(delete(table))
     session.add_all(Organization(org_id=o, name=n) for o, n in [(NORTHSTAR, "Northstar Storage"), (HARBOR, "Harbor Self Storage")])

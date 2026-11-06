@@ -5,6 +5,7 @@ import hmac
 import logging
 import os
 from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
@@ -74,6 +75,9 @@ class StaffResolutionIn(BaseModel):
 def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = None, start_worker: bool = True,
                chat_client=None) -> FastAPI:
     settings = settings or Settings.from_env()
+    if settings.public_view and not (settings.demo_seed and urlsplit(settings.fms_base_url).hostname in ("127.0.0.1", "localhost")):
+        # anyone can read the preview without a token, so it may only ever hold the synthetic world
+        raise RuntimeError("the public preview runs only on the synthetic world against the local simulator")
     if chat_client is None and os.environ.get("ANTHROPIC_API_KEY"):
         import anthropic
         chat_client = anthropic.Anthropic()
@@ -86,6 +90,9 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
     ensure_append_only(factory.kw["bind"])
     with factory() as session:
         import_stitch(session)   # published lien-law reference data, stored once per file
+    if settings.demo_seed:
+        from . import demo
+        demo.build(factory, adapter, settings.fms_base_url)
     worker = Worker(factory, adapter, settings.reconcile_every_seconds)
 
     @asynccontextmanager

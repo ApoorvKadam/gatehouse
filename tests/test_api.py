@@ -46,14 +46,21 @@ def test_a_desk_with_no_token_configured_refuses_everything(fms_url, sim):
         assert ready.status_code == 200 and ready.json()["checks"] == {"database": "ok", "fms": "ok"}
 
 
+def preview_settings(fms_url, **kw) -> Settings:
+    return Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=2.0,
+                    reconcile_every_seconds=60, operator_token=TOKEN, staff_token=STAFF, public_view=True, **kw)
+
+
 def test_the_public_preview_reads_without_a_token_but_changes_nothing(fms_url, sim):
-    settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=2.0,
-                        reconcile_every_seconds=60, operator_token=TOKEN, staff_token=STAFF, public_view=True)
-    app = create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 2.0), start_worker=False)
-    with TestClient(app, headers={"X-Desk-Token": TOKEN}) as desk, TestClient(app) as visitor:
-        case_id = dana_case(desk)["case_id"]
-        assert visitor.get(f"/api/facilities/{ORLANDO}/queue").status_code == 200
-        assert visitor.get(f"/api/cases/{case_id}").json()["id"] == case_id
+    app = create_app(preview_settings(fms_url, demo_seed=True), CubbyAdapter(fms_url, FULL_KEY, 2.0), start_worker=False)
+    with TestClient(app) as visitor:
+        rows = visitor.get(f"/api/facilities/{ORLANDO}/queue").json()["rows"]
+        case_id = next(r for r in rows if r["lease"] == "lease_WhitB1042")["case_id"]
+        detail = visitor.get(f"/api/cases/{case_id}").json()
+        assert detail["payments"][0]["state"] == "NEEDS_STAFF"
+        assert visitor.get(f"/api/payments/{detail['payments'][0]['id']}").status_code == 200
+        before = sim.post("/sim/truth?leaseId=lease_WhitB1042").status_code   # a POST is not the truth route
+        assert before == 405
         # every change, and the lien route that records an evaluation, still needs the operator token
         assert visitor.post(f"/api/facilities/{ORLANDO}/sync").status_code == 401
         assert visitor.post(f"/api/cases/{case_id}/identity",
@@ -62,6 +69,16 @@ def test_the_public_preview_reads_without_a_token_but_changes_nothing(fms_url, s
         assert visitor.post("/api/reconcile").status_code == 401
         # a wrong token is refused, not treated as a visitor
         assert visitor.get(f"/api/facilities/{ORLANDO}/queue", headers={"X-Desk-Token": "wrong"}).status_code == 401
+        # reading changed nothing: same case, same payment state, one charge at the FMS
+        assert visitor.get(f"/api/cases/{case_id}").json() == detail
+        assert len(sim.payments("lease_WhitB1042")) == 1
+
+
+def test_the_public_preview_refuses_to_start_on_anything_but_the_synthetic_world(fms_url, sim):
+    with pytest.raises(RuntimeError, match="synthetic world"):
+        create_app(preview_settings(fms_url), CubbyAdapter(fms_url, FULL_KEY, 2.0), start_worker=False)
+    with pytest.raises(RuntimeError, match="synthetic world"):
+        create_app(preview_settings("https://fms.example.com", demo_seed=True), CubbyAdapter(fms_url, FULL_KEY, 2.0), start_worker=False)
 
 
 def test_queue_shows_what_is_owed_and_who_has_to_act(client):

@@ -19,6 +19,8 @@ class Settings:
     staff_token: str | None = None
     # the hosted preview: anyone may read without a token; every change still needs the operator token
     public_view: bool = False
+    # build the synthetic preview world at startup when the database is empty (desk/demo.py)
+    demo_seed: bool = False
 
     @staticmethod
     def from_env() -> "Settings":
@@ -33,4 +35,5 @@ class Settings:
             chat_model=os.environ.get("DESK_CHAT_MODEL", "claude-haiku-5-5"),
             staff_token=os.environ.get("DESK_STAFF_TOKEN") or None,
             public_view=os.environ.get("DESK_PUBLIC_VIEW") == "1",
+            demo_seed=os.environ.get("DESK_DEMO_SEED") == "1",
         )

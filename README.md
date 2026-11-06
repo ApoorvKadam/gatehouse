@@ -1,8 +1,8 @@
-# Past Due Desk
+# Gatehouse
 
-Collections reconciliation for storage FMS.
+Operations reconciliation for self-storage, checked against the FMS.
 
-Past Due Desk works the delinquent accounts of a self-storage operator against the facility management system (FMS) that holds the truth about them. It takes a payment, a promise or a lien step, checks the FMS until the outcome is known, and keeps the account in an explicit exception state whenever the two disagree. Nothing is reported as done until the FMS shows it.
+Gatehouse works the delinquent accounts of a self-storage operator against the facility management system (FMS) that holds the truth about them. It takes a payment, a promise or a lien step, checks the FMS until the outcome is known, and keeps the account in an explicit exception state whenever the two disagree. Nothing is reported as done until the FMS shows it.
 
 It exists because the expensive failures in collections are not missing features. They are a payment that timed out and got charged twice, a "paid" message sent before the money was applied to the lease, a returned payment that never reopened the account, and a lien file that moved toward auction with a notice nobody can prove was delivered.
 
@@ -26,8 +26,12 @@ It exists because the expensive failures in collections are not missing features
 
 ```bash
 cp .env.example .env            # set DESK_OPERATOR_TOKEN to a long random string
-docker compose up --build       # desk on :8000, FMS simulator on :8100, reconciliation worker
+docker compose up --build       # one container: Gatehouse and its worker on :8000, the FMS simulator on its loopback
 ```
+
+`start.sh` is what the container runs: the simulator listens on 127.0.0.1:8100 inside it and is never published, Gatehouse listens on `$PORT` (8000 by default), and if either process stops the container stops. `/health/live` says the process answers; `/health/ready` checks the database, the FMS and the worker.
+
+The hosted preview sets `DESK_DEMO_SEED=1` and `DESK_PUBLIC_VIEW=1`: on an empty database Gatehouse builds a synthetic world by running its own flows against the simulator (a payment whose answer was lost, a returned payment, a Florida lien file reopened by a payment, a New York file sent to counsel), and anyone may read it without a token. Every change still needs the operator token, and the public view refuses to start against anything but the local simulator.
 
 There are no migrations yet: after pulling schema changes, start from fresh volumes (`docker compose down -v`).
 
@@ -52,10 +56,10 @@ curl -X POST -H "$H" -H "$J" localhost:8000/api/cases/1/chat \
   -d '{"sender": "+14075550142", "text": "Hi, how much do I owe on my unit?"}'
 ```
 
-To watch the desk handle each FMS failure, run the scenarios against the simulator:
+To watch the desk handle each FMS failure, run the scenarios against the simulator (they reset it first):
 
 ```bash
-python -m desk.scenarios --fms http://localhost:8100
+docker compose exec gatehouse python -m desk.scenarios --fms http://127.0.0.1:8100
 ```
 
 ```
@@ -119,4 +123,4 @@ Not covered: checking what a kept document actually says (a person does that), s
 - All tenants, facilities and payments are synthetic.
 - The FMS simulator follows Cubby's public API documentation. It is a simulation, not an official integration, and implies no endorsement.
 - State lien-law reference data comes from the Stitch Storage self-storage lien law dataset (https://stitchstorage.com/self-storage-lien-laws/data), licensed CC BY 4.0. It is stored as published and used as reference material only.
-- Past Due Desk does not determine legal compliance, process real payments, send statutory notices or authorize property sales. Jurisdiction-specific rules require independent legal review before any operational use.
+- Gatehouse does not determine legal compliance, process real payments, send statutory notices or authorize property sales. Jurisdiction-specific rules require independent legal review before any operational use.
