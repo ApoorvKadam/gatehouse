@@ -202,7 +202,7 @@ class CaseFacts:
     jurisdiction: str
     facility_time_zone: str | None
     total_due_cents: int | None          # None: the FMS could not be read
-    payments_after: list[str]            # local dates of FMS payments on the lease, ISO format
+    payments_after: list[str] | None     # local dates of FMS payments on the lease, ISO format; None if unreadable
     today: str                           # the facility's local date when evaluated, ISO format
     evidence: list[dict]                 # {"id", "kind", "facts"} for every current (not superseded) record
 
@@ -238,6 +238,11 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
         return _finish(out, timing)
     if facts.total_due_cents is None:
         out.append(Finding("current balance", "policy", "blocked", "the FMS ledger could not be read", "retry when the FMS answers"))
+        return _finish(out, timing)
+    if facts.payments_after is None:
+        out.append(Finding("payments on the lease", "policy", "blocked",
+                           "the FMS payments could not be read or dated, so a payment after the notice cannot be ruled out",
+                           "retry when the FMS answers"))
         return _finish(out, timing)
     if facts.total_due_cents == 0:
         out.append(Finding("balance due", "statute 83.806(6)", "blocked", "the FMS shows nothing due", "take the case out of lien work"))
@@ -400,7 +405,7 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
 
 def _finish(findings: list[Finding], timing: dict[str, str]) -> Evaluation:
     statuses = {f.status for f in findings}
-    if any(f.status == "blocked" and f.requirement in ("facility time zone", "current balance") for f in findings):
+    if any(f.status == "blocked" and f.requirement in ("facility time zone", "current balance", "payments on the lease") for f in findings):
         state = "FMS data unavailable"
     elif any(f.status == "blocked" and f.requirement == "balance due" for f in findings):
         state = "FMS reports paid"

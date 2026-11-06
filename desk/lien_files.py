@@ -50,14 +50,15 @@ def case_facts(session: Session, adapter: FMSAdapter, case: DelinquencyCase) -> 
     lease = session.get(Lease, case.lease_id)
     facility = session.get(Facility, lease.facility_id)
     zone_name = total = None
-    payments_after: list[str] = []
+    payments_after: list[str] | None = None   # None: the payments could not be read or dated, which blocks the evaluation
     try:
         info = next((f for f in adapter.facilities() if f["facilityId"] == facility.provider_id), {})
         zone_name = info.get("timeZone") or None
         total = adapter.ledger(lease.provider_id).total_due
         zone = facility_zone(zone_name)
-        payments_after = sorted({local_date(p.created_at, zone).isoformat() for p in adapter.payments_for_lease(lease.provider_id)
-                                 if p.created_at is not None and p.status not in NOT_MONEY})
+        money = [p for p in adapter.payments_for_lease(lease.provider_id) if p.status not in NOT_MONEY]
+        if all(p.created_at is not None for p in money):
+            payments_after = sorted({local_date(p.created_at, zone).isoformat() for p in money})
     except (FMSError, DateProblem):
         pass   # the evaluation reports exactly what could not be read
     try:

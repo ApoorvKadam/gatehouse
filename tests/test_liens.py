@@ -93,7 +93,7 @@ def complete():
 
 
 def facts(evidence, today=date(2026, 12, 1), jurisdiction="FL", zone="America/New_York", due=24000, payments=()):
-    return CaseFacts(jurisdiction, zone, due, list(payments), today.isoformat(), evidence)
+    return CaseFacts(jurisdiction, zone, due, None if payments is None else list(payments), today.isoformat(), evidence)
 
 
 def by(evaluation, requirement):
@@ -186,6 +186,7 @@ def test_paid_unavailable_and_waiting():
     assert evaluate(facts(complete(), due=0)).state == "FMS reports paid"
     assert evaluate(facts(complete(), due=None)).state == "FMS data unavailable"
     assert evaluate(facts(complete(), zone=None)).state == "FMS data unavailable"
+    assert evaluate(facts(complete(), payments=None)).state == "FMS data unavailable"   # unreadable payments never look like none
     assert evaluate(facts(complete()[:3] + legal(), today=date(2026, 11, 15))).state == "Waiting for a timing threshold"
 
 
