@@ -6,6 +6,13 @@
   font-display: swap;
 }
 @font-face {
+  font-family: "Source Serif 4";
+  src: url("source-serif-4.woff2") format("woff2");
+  font-weight: 200 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
   font-family: "Geist Mono";
   src: url("geist-mono.woff2") format("woff2");
   font-weight: 400 600;
@@ -33,6 +40,7 @@
   --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px; --s8: 72px;
   --t-xs: 0.75rem; --t-sm: 0.8125rem; --t-body: 0.9375rem; --t-lg: 1.0625rem; --t-h3: 1.1875rem; --t-h2: 1.625rem; --t-h1: 2.75rem;
   --wrap: 1560px;
+  --display: "Source Serif 4", Georgia, serif;
   --bar: #fafaf8;
   --hover: #fbfbf9;
   --primary-hover: #2a2e2c;
@@ -118,7 +126,7 @@ p { margin: 0; }
 /* shell */
 .top { border-bottom: 1px solid var(--rule); background: var(--paper); position: sticky; top: 0; z-index: 5; }
 .top .wrap { display: flex; align-items: center; gap: var(--s7); height: 72px; }
-.brand { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); font-weight: 600; font-size: 1.5rem; letter-spacing: -0.03em; }
+.brand { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); font-family: var(--display); font-weight: 600; font-size: 1.625rem; letter-spacing: -0.02em; }
 .brand:hover { text-decoration: none; }
 .top nav { display: flex; gap: var(--s6); font-size: var(--t-body); }
 .top nav a { color: var(--ink-2); padding: 25px 0 23px; border-bottom: 2px solid transparent; }
@@ -145,7 +153,7 @@ footer .wrap { padding-top: var(--s5); padding-bottom: var(--s6); display: flex;
 .crumbs { font-size: var(--t-sm); color: var(--ink-3); margin-bottom: var(--s3); }
 .crumbs a { color: var(--ink-2); }
 .head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--s5); padding-bottom: var(--s4); border-bottom: 1px solid var(--rule); }
-.head h1 { font-size: var(--t-h2); font-weight: 600; letter-spacing: -0.025em; line-height: 1.2; }
+.head h1 { font-family: var(--display); font-size: 2rem; font-weight: 500; letter-spacing: -0.02em; line-height: 1.15; }
 .head p { color: var(--ink-3); font-size: var(--t-sm); }
 .lede { color: var(--ink-2); max-width: 70ch; margin: var(--s4) 0 var(--s5); font-size: var(--t-lg); line-height: 1.6; }
 
@@ -241,19 +249,19 @@ dl.kv dd { margin: 0; }
 .status.waiting { color: var(--amber); }
 .hash { font-size: var(--t-xs); color: var(--ink-3); font-variant-numeric: tabular-nums; }
 .prose { max-width: 70ch; }
-.prose h2 { font-size: var(--t-h3); font-weight: 600; margin: var(--s6) 0 var(--s2); }
+.prose h2 { font-family: var(--display); font-size: 1.5rem; font-weight: 500; margin: var(--s6) 0 var(--s2); }
 .prose ul { padding-left: 1.2em; color: var(--ink-2); }
 .prose li { margin: var(--s1) 0; }
 
 /* front page */
 .hero { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: var(--s8); align-items: center; padding: var(--s7) clamp(20px, 4vw, 64px) var(--s8); }
-.hero h1 { font-size: clamp(2.25rem, 3.3vw, 3.4rem); line-height: 1.08; letter-spacing: -0.035em; font-weight: 600; }
+.hero h1 { font-family: var(--display); font-size: clamp(2.5rem, 4vw, 4.25rem); line-height: 1.04; letter-spacing: -0.025em; font-weight: 500; font-optical-sizing: auto; }
 .hero p { color: var(--ink-2); font-size: var(--t-lg); line-height: 1.6; margin-top: var(--s4); max-width: 46ch; }
 .actions { display: flex; gap: var(--s3); margin-top: var(--s5); flex-wrap: wrap; }
 .feature { padding: var(--s8) 0; border-top: 1px solid var(--rule); }
 .feature.band { background: var(--band); }
 .feature .wrap { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: var(--s8); align-items: start; }
-.feature h2 { font-size: var(--t-h2); line-height: 1.2; letter-spacing: -0.025em; font-weight: 600; margin-top: var(--s4); }
+.feature h2 { font-family: var(--display); font-size: clamp(1.75rem, 2.4vw, 2.5rem); line-height: 1.1; letter-spacing: -0.02em; font-weight: 500; margin-top: var(--s4); }
 .feature p { color: var(--ink-2); margin-top: var(--s3); font-size: var(--t-lg); line-height: 1.6; }
 .feature .open { display: inline-block; margin-top: var(--s4); font-weight: 600; }
 .marker { display: inline-flex; align-items: center; gap: var(--s2); font-size: var(--t-sm); font-weight: 500; color: var(--ink-2); }
@@ -347,3 +355,27 @@ dl.kv dd { margin: 0; }
 
 /* ids and figures that are compared character by character */
 .mono, .hash { font-family: "Geist Mono", ui-monospace, monospace; font-size: 0.92em; letter-spacing: 0; }
+
+/* the overview's system map */
+.flow { margin: 0; }
+.flow svg { display: block; width: 100%; height: auto; background: var(--paper); }
+.flow .dot-grid { fill: var(--rule); }
+.flow .link { stroke: var(--frame); stroke-width: 2; transition: stroke 240ms; }
+.flow .link.broken { stroke: var(--brick); stroke-dasharray: 6 6; }
+.flow .node rect { fill: var(--paper); stroke: var(--frame); stroke-width: 1.5; transition: stroke 300ms, fill 300ms; }
+.flow .node.lit rect { stroke: var(--ink); }
+.flow .node.gh rect { stroke-width: 2; }
+.flow .n-title { font: 600 15px "Geist", sans-serif; fill: var(--ink); letter-spacing: -0.01em; }
+.flow .n-sub { font: 400 13px "Geist", sans-serif; fill: var(--ink-2); }
+.flow .chip-svg rect { fill: var(--band); transition: fill 240ms; }
+.flow .chip-svg text { font: 600 12px "Geist", sans-serif; fill: var(--ink-2); }
+.flow .chip-svg.act rect { fill: var(--brick-wash); } .flow .chip-svg.act text { fill: var(--brick); }
+.flow .chip-svg.done rect { fill: var(--teal-wash); } .flow .chip-svg.done text { fill: var(--teal); }
+.flow .packet { fill: var(--blue); opacity: 0; }
+.flow .packet.ok { fill: var(--teal); }
+.flow .packet.ghost { fill: none; stroke: var(--ink-3); stroke-width: 2; stroke-dasharray: 3 3; }
+.flow .mark-x { opacity: 0; transform-box: fill-box; transform-origin: center; transform: scale(.4); transition: opacity 160ms, transform 420ms var(--spring-snap); }
+.flow .mark-x.show { opacity: 1; transform: none; }
+.flow .mark-x circle { fill: var(--brick); }
+.flow .mark-x path { stroke: #fff; stroke-width: 2.2; stroke-linecap: round; }
+.flow figcaption { padding: var(--s3) var(--s4); border-top: 1px solid var(--rule); font-size: var(--t-body); color: var(--ink); min-height: 3.2em; }
