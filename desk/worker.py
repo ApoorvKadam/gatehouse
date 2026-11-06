@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -24,9 +25,20 @@ class Worker:
         self.factory, self.adapter, self.every = factory, adapter, every_seconds
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, name="reconcile", daemon=True)
+        # monotonic time of the last pass that finished, failed or not; readiness reads it
+        self.last_pass: float | None = None
+        self.last_error: str | None = None
 
     def start(self) -> None:
+        self.started_at = time.monotonic()
         self._thread.start()
+
+    def alive(self) -> bool:
+        """The loop is running and has finished a pass recently (a stuck FMS call shows up here)."""
+        if not self._thread.is_alive():
+            return False
+        since = time.monotonic() - (self.last_pass if self.last_pass is not None else self.started_at)
+        return since < self.every * 3 + 30
 
     def stop(self) -> None:
         self._stop.set()
@@ -36,11 +48,14 @@ class Worker:
         while not self._stop.wait(self.every):
             try:
                 checked = run_once(self.factory, self.adapter)
+                self.last_error = None
                 if checked:
                     log.info("reconciled %d payment(s)", checked)
-            except Exception:
+            except Exception as exc:
                 # a bad FMS read must not kill the loop; the next pass tries again
+                self.last_error = type(exc).__name__
                 log.exception("reconcile pass failed")
+            self.last_pass = time.monotonic()
 
 
 if __name__ == "__main__":

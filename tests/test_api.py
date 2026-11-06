@@ -41,7 +41,27 @@ def test_a_desk_with_no_token_configured_refuses_everything(fms_url, sim):
                         fms_timeout_seconds=2.0, reconcile_every_seconds=60, operator_token=None)
     with TestClient(create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 2.0), start_worker=False)) as c:
         assert c.get(f"/api/facilities/{ORLANDO}/queue").status_code == 503
-        assert c.get("/api/health").status_code == 200
+        assert c.get("/health/live").status_code == 200
+        ready = c.get("/health/ready")
+        assert ready.status_code == 200 and ready.json()["checks"] == {"database": "ok", "fms": "ok"}
+
+
+def test_the_public_preview_reads_without_a_token_but_changes_nothing(fms_url, sim):
+    settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=2.0,
+                        reconcile_every_seconds=60, operator_token=TOKEN, staff_token=STAFF, public_view=True)
+    app = create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 2.0), start_worker=False)
+    with TestClient(app, headers={"X-Desk-Token": TOKEN}) as desk, TestClient(app) as visitor:
+        case_id = dana_case(desk)["case_id"]
+        assert visitor.get(f"/api/facilities/{ORLANDO}/queue").status_code == 200
+        assert visitor.get(f"/api/cases/{case_id}").json()["id"] == case_id
+        # every change, and the lien route that records an evaluation, still needs the operator token
+        assert visitor.post(f"/api/facilities/{ORLANDO}/sync").status_code == 401
+        assert visitor.post(f"/api/cases/{case_id}/identity",
+                            json={"last_name": "Whitfield", "phone_last4": "0142", "unit_name": "B-1042"}).status_code == 401
+        assert visitor.get(f"/api/cases/{case_id}/lien").status_code == 401
+        assert visitor.post("/api/reconcile").status_code == 401
+        # a wrong token is refused, not treated as a visitor
+        assert visitor.get(f"/api/facilities/{ORLANDO}/queue", headers={"X-Desk-Token": "wrong"}).status_code == 401
 
 
 def test_queue_shows_what_is_owed_and_who_has_to_act(client):

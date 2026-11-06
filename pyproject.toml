@@ -1,7 +1,7 @@
 [project]
-name = "past-due-desk"
+name = "gatehouse"
 version = "0.1.0"
-description = "Collections reconciliation for storage FMS"
+description = "Operations reconciliation for self-storage, checked against the FMS"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",

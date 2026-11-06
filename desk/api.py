@@ -10,7 +10,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm.exc import StaleDataError
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from .adapter import FMSAdapter, FMSError
@@ -96,7 +96,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         if start_worker:
             worker.stop()
 
-    app = FastAPI(title="Past Due Desk", lifespan=lifespan)
+    app = FastAPI(title="Gatehouse", lifespan=lifespan)
     app.state.session_factory = factory
 
     @app.exception_handler(StaleDataError)
@@ -121,6 +121,12 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
             raise HTTPException(401, "operator token required")
         return "operator"
 
+    def viewer(x_desk_token: str | None = Header(default=None)) -> str:
+        """Reading. In the public preview anyone may read without a token; a token that is sent is still checked."""
+        if settings.public_view and x_desk_token is None:
+            return "visitor"
+        return operator(x_desk_token)
+
     def check_facility(session: Session, facility_id: str) -> None:
         binding = session.get(DeskBinding, 1)
         if binding is not None and facility_id not in binding.facility_ids:
@@ -143,9 +149,30 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
                 "provider_status": c.provider_status, "provider_reason": c.provider_reason, "checks": c.checks,
                 "created_at": c.created_at, "confirmed_at": c.confirmed_at, "tenant_message": tenant_message(c)}
 
-    @app.get("/api/health")
-    def health():
+    @app.get("/health/live")
+    def live():
+        """The process answers. Nothing else is checked, so a slow FMS never gets the container restarted."""
         return {"ok": True}
+
+    @app.get("/health/ready")
+    def ready():
+        """Ready to serve: the database answers, the FMS answers, and the worker has finished a pass lately."""
+        checks: dict[str, str] = {}
+        try:
+            with factory() as session:
+                session.execute(text("SELECT 1"))
+            checks["database"] = "ok"
+        except Exception as exc:
+            checks["database"] = type(exc).__name__
+        try:
+            adapter.facilities()
+            checks["fms"] = "ok"
+        except Exception as exc:
+            checks["fms"] = type(exc).__name__
+        if start_worker:
+            checks["worker"] = "ok" if worker.alive() else f"no recent pass ({worker.last_error or 'still working'})"
+        ready_now = all(v == "ok" for v in checks.values())
+        return JSONResponse({"ready": ready_now, "checks": checks}, status_code=200 if ready_now else 503)
 
     @app.post("/api/facilities/{facility_id}/sync")
     def sync(facility_id: str, session: Session = Depends(db), _: str = Depends(operator)):
@@ -157,12 +184,12 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         return {"cases": len(cases)}
 
     @app.get("/api/facilities/{facility_id}/queue")
-    def facility_queue(facility_id: str, session: Session = Depends(db), _: str = Depends(operator)):
+    def facility_queue(facility_id: str, session: Session = Depends(db), _: str = Depends(viewer)):
         check_facility(session, facility_id)
         return {"rows": [r.__dict__ for r in queue(session, facility_id)], "collected": collected(session, adapter.provider, facility_id)}
 
     @app.get("/api/cases/{case_id}")
-    def case_detail(case_id: int, session: Session = Depends(db), _: str = Depends(operator)):
+    def case_detail(case_id: int, session: Session = Depends(db), _: str = Depends(viewer)):
         case = get_case(session, case_id)
         lease = session.get(Lease, case.lease_id)
         snap = session.get(LedgerSnapshot, case.last_snapshot_id) if case.last_snapshot_id else None
@@ -260,7 +287,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         }
 
     @app.get("/api/lien/evaluations/{evaluation_id}/replay")
-    def replay_evaluation(evaluation_id: int, session: Session = Depends(db), _: str = Depends(operator)):
+    def replay_evaluation(evaluation_id: int, session: Session = Depends(db), _: str = Depends(viewer)):
         row = session.get(LienEvaluation, evaluation_id)
         if row is None:
             raise HTTPException(404, "evaluation not found")
@@ -268,7 +295,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         return {"evaluation_id": row.id, "same_result": replay(row)}
 
     @app.get("/api/payments/{command_id}")
-    def payment(command_id: int, session: Session = Depends(db), _: str = Depends(operator)):
+    def payment(command_id: int, session: Session = Depends(db), _: str = Depends(viewer)):
         command = session.get(PaymentCommand, command_id)
         if command is None:
             raise HTTPException(404, "payment not found")

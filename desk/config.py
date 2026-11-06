@@ -17,6 +17,8 @@ class Settings:
     chat_model: str = "claude-haiku-5-5"
     # resolving a payment held for staff needs this second token as well; without it the route is closed
     staff_token: str | None = None
+    # the hosted preview: anyone may read without a token; every change still needs the operator token
+    public_view: bool = False
 
     @staticmethod
     def from_env() -> "Settings":
@@ -30,4 +32,5 @@ class Settings:
             allow_without_token=os.environ.get("DESK_ALLOW_WITHOUT_TOKEN") == "1",
             chat_model=os.environ.get("DESK_CHAT_MODEL", "claude-haiku-5-5"),
             staff_token=os.environ.get("DESK_STAFF_TOKEN") or None,
+            public_view=os.environ.get("DESK_PUBLIC_VIEW") == "1",
         )
