@@ -382,3 +382,17 @@ def test_a_fee_labeled_as_rent_does_not_slip_past_the_fee_check():
     checks = [x for x in legal() if x["facts"]["check"] != "fees_authorized_by_rental_agreement"]
     e = evaluate(facts([notice(itemized_charges=charges)] + complete()[1:5] + checks))
     assert by(e, "charge category").status == "review" and by(e, "fees authorized by rental agreement").status == "missing"
+
+
+def test_an_old_notices_fee_does_not_bind_a_rent_only_notice():
+    old = dict(notice(nid=1), document_sha256="c" * 64)
+    rent_only = notice(nid=2, total=21500, ledger_snapshot_id=8,
+                       itemized_charges=[{"description": "October rent", "category": "rent", "amount_cents": 21500, "due_on": "2026-10-01"}])
+    rest = [mailed(nid=2), posted(nid=2), published(date(2026, 11, 21), 1, nid=2), published(date(2026, 11, 28), 2, nid=2)]
+    checks = [x for x in legal() if x["facts"]["check"] != "fees_authorized_by_rental_agreement"]
+    f = CaseFacts("FL", "America/New_York", 21500, [], "2026-12-01", [old, rent_only] + rest + checks,
+                  {"7": {"total_due": 24000, "observed_on": "2026-11-05", "open_charges": [
+                       {"name": "october rent", "open_cents": 21500, "category": "RENT"}, {"name": "late fee", "open_cents": 2500, "category": "FEE"}]},
+                   "8": {"total_due": 21500, "observed_on": "2026-11-05", "open_charges": [
+                       {"name": "october rent", "open_cents": 21500, "category": "RENT"}]}}, [])
+    assert evaluate(f).state == "Review packet assembled", [x for x in evaluate(f).findings if x.status != "met"]

@@ -310,8 +310,10 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
     # records for one check must agree; a later "no" never erases an earlier "yes" unless it supersedes that record.
     # fail closed: any claimed charge that is not rent, by the notice's category or the FMS ledger's, needs the rental
     # agreement's authorization; the statute speaks of late fees, so other charges are policy
-    latest_items = [c for e in ev["notice"][-1:] for c in Notice.model_validate(e["facts"]).itemized_charges]
-    ledger_categories = {c.get("category", "") for snap in facts.notice_snapshots.values() for c in snap.get("open_charges", [])}
+    latest = [Notice.model_validate(e["facts"]) for e in ev["notice"][-1:]]   # only the notice being evaluated counts
+    latest_items = [c for n in latest for c in n.itemized_charges]
+    latest_snaps = [facts.notice_snapshots.get(str(n.ledger_snapshot_id)) for n in latest if n.ledger_snapshot_id is not None]
+    ledger_categories = {c.get("category", "") for snap in latest_snaps if snap for c in snap.get("open_charges", [])}
     claims_fee = any(c.category != "rent" for c in latest_items) or any(cat not in ("RENT",) for cat in ledger_categories)
     fee_basis = "statute 83.808(3)" if any(c.category == "fee" for c in latest_items) or "FEE" in ledger_categories else "policy"
     answers: dict[str, list[LegalCheck]] = {}
