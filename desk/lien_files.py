@@ -119,7 +119,8 @@ def case_facts(session: Session, adapter: FMSAdapter, case: DelinquencyCase) -> 
         except DateProblem:
             continue
         open_charges = [{"name": ((e.get("details") or {}).get("description") or (e.get("details") or {}).get("category") or "").lower(),
-                         "open_cents": e.get("amount", 0) - e.get("amountPaid", 0), "due_on": (e.get("details") or {}).get("accruesOn")}
+                         "open_cents": e.get("amount", 0) - e.get("amountPaid", 0), "due_on": (e.get("details") or {}).get("accruesOn"),
+                         "category": ((e.get("details") or {}).get("category") or "").upper()}
                         for e in (snap.raw.get("bookEntries") or []) if isinstance(e, dict) and e.get("type") == "CHARGE"
                         and e.get("amount", 0) > e.get("amountPaid", 0)]
         snapshots[str(sid)] = {"total_due": snap.total_due, "observed_on": observed, "open_charges": open_charges}

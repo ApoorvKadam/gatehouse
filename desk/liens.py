@@ -308,8 +308,12 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
 
     # legal checks: every one recorded, and only a clean answer lets the file continue without counsel. Several current
     # records for one check must agree; a later "no" never erases an earlier "yes" unless it supersedes that record.
-    # fail closed: any claimed charge that is not rent needs the rental agreement's authorization
-    claims_fee = any(c.category != "rent" for e in ev["notice"][-1:] for c in Notice.model_validate(e["facts"]).itemized_charges)
+    # fail closed: any claimed charge that is not rent, by the notice's category or the FMS ledger's, needs the rental
+    # agreement's authorization; the statute speaks of late fees, so other charges are policy
+    latest_items = [c for e in ev["notice"][-1:] for c in Notice.model_validate(e["facts"]).itemized_charges]
+    ledger_categories = {c.get("category", "") for snap in facts.notice_snapshots.values() for c in snap.get("open_charges", [])}
+    claims_fee = any(c.category != "rent" for c in latest_items) or any(cat not in ("RENT",) for cat in ledger_categories)
+    fee_basis = "statute 83.808(3)" if any(c.category == "fee" for c in latest_items) or "FEE" in ledger_categories else "policy"
     answers: dict[str, list[LegalCheck]] = {}
     for e in ev["legal_check"]:
         c = LegalCheck.model_validate(e["facts"])
@@ -318,7 +322,7 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
                                 ("bankruptcy", "policy", "no"), ("vehicle_or_watercraft", "statute 83.806(10)", "no"),
                                 ("dispute", "policy", "no"), ("secured_party", "statute 83.805", "no"),
                                 ("document_of_title_issued", "statute 83.803(5)", "no"),
-                                ("fees_authorized_by_rental_agreement", "statute 83.808(3)", "yes"),
+                                ("fees_authorized_by_rental_agreement", fee_basis, "yes"),
                                 ("no_newspaper_in_area", "statute 83.806(4)(c)", "no")):
         if check == "fees_authorized_by_rental_agreement" and not claims_fee:
             continue   # the agreement's fee terms matter only when the notice claims a fee
@@ -381,6 +385,12 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
         for item in notice.itemized_charges:
             match = next((c for c in open_then if c["open_cents"] == item.amount_cents and c["name"]
                           and (item.description.lower() in c["name"] or c["name"] in item.description.lower())), None)
+            ledger_category = {"RENT": "rent", "FEE": "fee"}.get((match or {}).get("category", ""),
+                                                                 "tax" if (match or {}).get("category", "").startswith("TAX") else "other")
+            if match is not None and (not match.get("category") or ledger_category != item.category):
+                out.append(Finding("charge category", "policy", "review",
+                                   f"\"{item.description}\" is {item.category} in the notice and {match.get('category') or 'unclassified'} on the ledger",
+                                   "correct the notice; send to review"))
             if match is not None and match.get("due_on") and match["due_on"] != item.due_on.isoformat():
                 out.append(Finding("date the charge became due", "statute 83.806(2)(a)", "review",
                                    f"\"{item.description}\" is dated {item.due_on} in the notice and {match['due_on']} on the ledger",

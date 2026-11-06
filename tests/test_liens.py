@@ -106,7 +106,7 @@ def complete():
 
 def facts(evidence, today=date(2026, 12, 1), jurisdiction="FL", zone="America/New_York", due=24000, payments=(), changes=(),
           snapshot_total=24000):
-    charges = [{"name": "october rent", "open_cents": 21500}, {"name": "late fee", "open_cents": 2500}]
+    charges = [{"name": "october rent", "open_cents": 21500, "category": "RENT"}, {"name": "late fee", "open_cents": 2500, "category": "FEE"}]
     return CaseFacts(jurisdiction, zone, due, None if payments is None else list(payments), today.isoformat(), evidence,
                      {"7": {"total_due": snapshot_total, "observed_on": "2026-11-05", "open_charges": charges}}, list(changes))
 
@@ -331,7 +331,8 @@ def test_a_mailing_before_the_unconfirmed_email_is_not_its_fallback():
 def test_a_document_also_filed_on_another_case_goes_to_review():
     shared = CaseFacts("FL", "America/New_York", 24000, [], "2026-12-01", complete(),
                        {"7": {"total_due": 24000, "observed_on": "2026-11-05",
-                              "open_charges": [{"name": "october rent", "open_cents": 21500}, {"name": "late fee", "open_cents": 2500}]}},
+                              "open_charges": [{"name": "october rent", "open_cents": 21500, "category": "RENT"},
+                                               {"name": "late fee", "open_cents": 2500, "category": "FEE"}]}},
                        [], "", [DOC])
     assert by(evaluate(shared), "document reuse").status == "review"
 
@@ -339,7 +340,8 @@ def test_a_document_also_filed_on_another_case_goes_to_review():
 def test_a_ledger_charge_without_a_name_matches_nothing():
     f = CaseFacts("FL", "America/New_York", 24000, [], "2026-12-01", complete(),
                   {"7": {"total_due": 24000, "observed_on": "2026-11-05",
-                         "open_charges": [{"name": "", "open_cents": 21500}, {"name": "late fee", "open_cents": 2500}]}}, [])
+                         "open_charges": [{"name": "", "open_cents": 21500, "category": "RENT"},
+                                          {"name": "late fee", "open_cents": 2500, "category": "FEE"}]}}, [])
     assert by(evaluate(f), "itemized charge on the ledger").status == "review"
 
 
@@ -347,7 +349,8 @@ def test_the_fee_check_applies_only_when_a_fee_is_claimed():
     rent_only = [notice(itemized_charges=[{"description": "October rent", "category": "rent", "amount_cents": 21500, "due_on": "2026-10-01"}], total=21500)]
     checks = [x for x in legal() if x["facts"]["check"] != "fees_authorized_by_rental_agreement"]
     f = CaseFacts("FL", "America/New_York", 21500, [], "2026-12-01", rent_only + complete()[1:5] + checks,
-                  {"7": {"total_due": 21500, "observed_on": "2026-11-05", "open_charges": [{"name": "october rent", "open_cents": 21500}]}}, [])
+                  {"7": {"total_due": 21500, "observed_on": "2026-11-05",
+                         "open_charges": [{"name": "october rent", "open_cents": 21500, "category": "RENT"}]}}, [])
     assert evaluate(f).state == "Review packet assembled"
 
 
@@ -358,7 +361,8 @@ def test_any_charge_that_is_not_rent_needs_the_agreements_authorization():
     evidence = [notice(itemized_charges=charges)] + complete()[1:5] + checks
     f = CaseFacts("FL", "America/New_York", 24000, [], "2026-12-01", evidence,
                   {"7": {"total_due": 24000, "observed_on": "2026-11-05",
-                         "open_charges": [{"name": "october rent", "open_cents": 21500}, {"name": "late charge", "open_cents": 2500}]}}, [])
+                         "open_charges": [{"name": "october rent", "open_cents": 21500, "category": "RENT"},
+                                          {"name": "late charge", "open_cents": 2500, "category": "FEE"}]}}, [])
     assert by(evaluate(f), "fees authorized by rental agreement").status == "missing"
 
 
@@ -370,3 +374,11 @@ def test_a_charge_not_yet_due_at_notice_time_goes_to_review():
 
 def test_the_stated_due_date_matches_the_earliest_itemized_charge():
     assert by(evaluate(facts([notice(sum_due_since="2026-09-15")] + complete()[1:])), "date the sum became due").status == "review"
+
+
+def test_a_fee_labeled_as_rent_does_not_slip_past_the_fee_check():
+    charges = [{"description": "October rent", "category": "rent", "amount_cents": 21500, "due_on": "2026-10-01"},
+               {"description": "Late fee", "category": "rent", "amount_cents": 2500, "due_on": "2026-10-06"}]
+    checks = [x for x in legal() if x["facts"]["check"] != "fees_authorized_by_rental_agreement"]
+    e = evaluate(facts([notice(itemized_charges=charges)] + complete()[1:5] + checks))
+    assert by(e, "charge category").status == "review" and by(e, "fees authorized by rental agreement").status == "missing"
