@@ -656,3 +656,11 @@ def test_staff_cannot_swap_the_payment_id_the_fms_gave_this_attempt(session, ada
     assert command.state == "NEEDS_STAFF"
     with pytest.raises(PaymentRefused, match="already payment"):
         PaymentService(session, adapter).resolve_by_staff(command, True, "It is this other one", "J. Ortiz", "payment_other")
+
+
+def test_a_dispute_resolved_at_the_fms_is_rechecked_by_staff_not_reconfirmed(session, adapter, sim):
+    command, case, _ = pay(session, adapter, DANA, "pm_DanaVisa4242", 24000)
+    command.state, command.provider_status = "DISPUTED", "DISPUTED"   # as the desk recorded it during the dispute
+    session.commit()
+    PaymentService(session, adapter).reconcile(command)   # the FMS shows SUCCEEDED again
+    assert command.state == "NEEDS_STAFF" and "SUCCEEDED again" in command.provider_reason

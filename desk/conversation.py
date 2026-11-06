@@ -76,12 +76,16 @@ OUTCOME = re.compile(r"\b(went through|gone through|went thru|gone thru|cleared|
                      r"received|confirmed|approved|accepted|authori[sz]ed|done|finished|good to go|"
                      r"complete[d]?|settled|paid|charged|covered|taken care of|caught up|current|all set|nothing (is )?(owed|due)|"
                      r"no (outstanding |remaining )?(balance|amount|money)|(don't|do not) owe|up to date|in good standing|"
-                     r"(don't|do not|no) need to pay|nothing (else |more |further )?to pay|owe nothing|squared away|resolved)\b", re.I)
+                     r"(don't|do not|no) need to pay|nothing (else |more |further )?to pay|owe nothing|squared away|resolved|"
+                     r"erased|wiped|forgiven|written off|zeroed|gone|credited|refunded)\b", re.I)
 SUBJECT = re.compile(r"\b(payment|balance|account|card|charge|rent|bill|you|your|it|that|everything)\b", re.I)
 # the model may ask about money ("Would you like to pay all of it?") but every statement about it is the desk's
 FINANCIAL = re.compile(r"\b(owe[sd]?|owing|debt|balance|account|payments?|paid|pay(ing)?|charge[sd]?|fees?|rent|bill|money|"
-                       r"credit(ed)?|due|card|refund(ed)?|amount|erased|wiped|forgiven|written off|zeroed)\b", re.I)
-SENTENCES = re.compile(r"[^.!?]+[.!?]*")
+                       r"credit(ed)?|due|card|refund(ed)?|amount|erased|wiped|forgiven|written off|zeroed|outstanding|owed|"
+                       r"free and clear|in the clear|square[d]?)\b", re.I)
+SENTENCES = re.compile(r"[^.!?\n]+[.!?]*")
+# a sentence counts as a question only if it reads as one from its first word, ends with "?" and claims no outcome
+QUESTION = re.compile(r"^\s*(would|do|does|did|can|could|shall|should|may|is|are|will|how|what|when|which|who|have|has)\b", re.I)
 MONEY_SPAN = re.compile(r"\$\s?[\d,]+(\.\d+)?")
 
 
@@ -208,7 +212,8 @@ class Conversation:
         figure = bool(NUMBER_WORDS.search(text))
         sentences = SENTENCES.findall(masked)
         outcome = any(OUTCOME.search(x) and SUBJECT.search(x) for x in sentences)
-        outcome = outcome or any(FINANCIAL.search(x) and not x.strip().endswith("?") for x in sentences)
+        asks = lambda x: bool(QUESTION.match(x)) and x.strip().endswith("?") and not OUTCOME.search(x)  # noqa: E731
+        outcome = outcome or any(FINANCIAL.search(x) and not asks(x) for x in sentences)
         if not (figure or outcome):
             return text
         if outcome and self.command_id:

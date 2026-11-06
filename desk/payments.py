@@ -346,7 +346,13 @@ class PaymentService:
         command.provider_status = match.status
         if command.state != "NEEDS_STAFF":
             command.provider_reason = match.reason   # a person's open question stays on the command until it is answered
-        if command.state in WATCHED_AFTER_SUCCESS:
+        if command.state in WATCHED_AFTER_SUCCESS and command.state != "CONFIRMED" and match.status == "SUCCEEDED":
+            # a dispute or refund the FMS now reports as succeeded again: the ledger has to show it again, and a person checks
+            command.state = "NEEDS_STAFF"
+            command.provider_reason = (f"the FMS reports payment {match.provider_id} as SUCCEEDED again after {command.provider_status or 'a reversal'}; "
+                                       "confirm the ledger shows it before calling it applied")
+            record(self.session, case, "payment needs staff", {"command": command.id, "reason": command.provider_reason})
+        elif command.state in WATCHED_AFTER_SUCCESS:
             after = REVERSALS.get(match.status) or ("CONFIRMED" if match.status == "SUCCEEDED" else command.state)
             if after != command.state:
                 record(self.session, case, "payment status changed after success",
