@@ -71,8 +71,8 @@ def legal(**overrides):
 
 def notice(deadline=date(2026, 11, 20), sale=date(2026, 12, 6), nid=1, total=24000, **extra):
     return {"id": nid, "kind": "notice", "document_sha256": DOC, "facts": {
-        "itemized_charges": [{"description": "October rent", "amount_cents": 21500, "due_on": "2026-10-01"},
-                             {"description": "Late fee", "amount_cents": 2500, "due_on": "2026-10-06"}],
+        "itemized_charges": [{"description": "October rent", "category": "rent", "amount_cents": 21500, "due_on": "2026-10-01"},
+                             {"description": "Late fee", "category": "fee", "amount_cents": 2500, "due_on": "2026-10-06"}],
         "itemized_total_cents": total, "sum_due_since": "2026-10-01", "ledger_snapshot_id": 7,
         "property_description": "household goods and boxes", "description_matches_rental_agreement": "yes",
         "demand_deadline": deadline.isoformat(), "sale_statement": True, "sale_date": sale.isoformat(), "sale_time": "10:00 AM",
@@ -132,7 +132,7 @@ def test_mail_needs_a_certificate_but_never_proof_of_receipt():
 
 def test_an_unconfirmed_email_needs_the_fallback_mailing_and_counts_from_it():
     email = {"id": 4, "kind": "email_delivery", "document_sha256": DOC,
-             "facts": {"notice_id": 1, "sent_on": "2026-11-02", "sent_to": "dana@example.com"}}
+             "facts": {"notice_id": 1, "sent_on": "2026-11-02", "sent_to": "dana@example.com", "address_basis": "rental agreement"}}
     only_email = [x for x in complete() if x["kind"] != "mail_deposit"] + [email]
     assert by(evaluate(facts(only_email)), "e-mail fallback mailing").status == "missing"
     with_fallback = only_email + [mailed(on=DELIVERED)]
@@ -140,7 +140,7 @@ def test_an_unconfirmed_email_needs_the_fallback_mailing_and_counts_from_it():
 
 
 def test_an_email_reply_dates_delivery_by_the_reply():
-    email = {"id": 4, "kind": "email_delivery", "document_sha256": DOC, "facts": {"notice_id": 1, "sent_on": "2026-11-02", "sent_to": "dana@example.com",
+    email = {"id": 4, "kind": "email_delivery", "document_sha256": DOC, "facts": {"notice_id": 1, "sent_on": "2026-11-02", "sent_to": "dana@example.com", "address_basis": "rental agreement",
                                                            "confirmation": "response", "confirmation_from": "Dana@example.com",
                                                            "confirmed_on": "2026-11-06"}}
     evidence = [x for x in complete() if x["kind"] != "mail_deposit"] + [email]
@@ -245,7 +245,7 @@ def test_impossible_email_dates_are_refused():
     import pytest as _pytest
     from desk.liens import ValidationError, parse_evidence
     with _pytest.raises(ValidationError):
-        parse_evidence("email_delivery", {"notice_id": 1, "sent_on": "2026-11-19", "sent_to": "d@example.com", "confirmation": "response",
+        parse_evidence("email_delivery", {"notice_id": 1, "sent_on": "2026-11-19", "sent_to": "d@example.com", "address_basis": "rental agreement", "confirmation": "response",
                                           "confirmation_from": "d@example.com", "confirmed_on": "2026-11-19", "delivered_on": "2026-11-06"})
 
 
@@ -285,7 +285,7 @@ def test_a_document_of_title_or_unauthorized_fees_go_to_counsel():
 
 def test_each_itemized_charge_must_be_open_on_the_snapshot():
     # the same $240 total, but claimed as one late fee: the snapshot has no such charge
-    wrong = [notice(itemized_charges=[{"description": "Late fee", "amount_cents": 24000, "due_on": "2026-10-06"}])] + complete()[1:]
+    wrong = [notice(itemized_charges=[{"description": "Late fee", "category": "fee", "amount_cents": 24000, "due_on": "2026-10-06"}])] + complete()[1:]
     assert by(evaluate(facts(wrong)), "itemized charge on the ledger").status == "review"
 
 
@@ -324,7 +324,7 @@ def test_a_third_advertisement_with_other_terms_is_not_ignored():
 
 def test_a_mailing_before_the_unconfirmed_email_is_not_its_fallback():
     email = {"id": 4, "kind": "email_delivery", "document_sha256": "e" * 64,
-             "facts": {"notice_id": 1, "sent_on": "2026-11-07", "sent_to": "dana@example.com"}}
+             "facts": {"notice_id": 1, "sent_on": "2026-11-07", "sent_to": "dana@example.com", "address_basis": "rental agreement"}}
     assert by(evaluate(facts(complete() + [email])), "e-mail fallback mailing").status == "missing"
 
 
@@ -344,8 +344,29 @@ def test_a_ledger_charge_without_a_name_matches_nothing():
 
 
 def test_the_fee_check_applies_only_when_a_fee_is_claimed():
-    rent_only = [notice(itemized_charges=[{"description": "October rent", "amount_cents": 21500, "due_on": "2026-10-01"}], total=21500)]
+    rent_only = [notice(itemized_charges=[{"description": "October rent", "category": "rent", "amount_cents": 21500, "due_on": "2026-10-01"}], total=21500)]
     checks = [x for x in legal() if x["facts"]["check"] != "fees_authorized_by_rental_agreement"]
     f = CaseFacts("FL", "America/New_York", 21500, [], "2026-12-01", rent_only + complete()[1:5] + checks,
                   {"7": {"total_due": 21500, "observed_on": "2026-11-05", "open_charges": [{"name": "october rent", "open_cents": 21500}]}}, [])
     assert evaluate(f).state == "Review packet assembled"
+
+
+def test_any_charge_that_is_not_rent_needs_the_agreements_authorization():
+    charges = [{"description": "October rent", "category": "rent", "amount_cents": 21500, "due_on": "2026-10-01"},
+               {"description": "Late charge", "category": "other", "amount_cents": 2500, "due_on": "2026-10-06"}]
+    checks = [x for x in legal() if x["facts"]["check"] != "fees_authorized_by_rental_agreement"]
+    evidence = [notice(itemized_charges=charges)] + complete()[1:5] + checks
+    f = CaseFacts("FL", "America/New_York", 24000, [], "2026-12-01", evidence,
+                  {"7": {"total_due": 24000, "observed_on": "2026-11-05",
+                         "open_charges": [{"name": "october rent", "open_cents": 21500}, {"name": "late charge", "open_cents": 2500}]}}, [])
+    assert by(evaluate(f), "fees authorized by rental agreement").status == "missing"
+
+
+def test_a_charge_not_yet_due_at_notice_time_goes_to_review():
+    charges = [{"description": "October rent", "category": "rent", "amount_cents": 21500, "due_on": "2026-11-10"},
+               {"description": "Late fee", "category": "fee", "amount_cents": 2500, "due_on": "2026-10-06"}]
+    assert by(evaluate(facts([notice(itemized_charges=charges)] + complete()[1:])), "charges due at notice time").status == "review"
+
+
+def test_the_stated_due_date_matches_the_earliest_itemized_charge():
+    assert by(evaluate(facts([notice(sum_due_since="2026-09-15")] + complete()[1:])), "date the sum became due").status == "review"

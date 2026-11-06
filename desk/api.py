@@ -251,8 +251,8 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         return {
             "evaluation_id": ev.id, "evaluated_at": ev.evaluated_at, "state": ev.state, "summary": ev.summary,
             "findings": ev.findings, "timing": ev.timing,
-            "rule_version": ({"label": FL_R1.label, "citations": FL_R1.citations, "review_note": FL_R1.review_note, "policies": FL_R1.policies}
-                             if ev.rule_version == FL_R1.label else None),
+            "rule_version": ({"label": FL_R1.label, "code": ev.rule_version, "citations": FL_R1.citations, "review_note": FL_R1.review_note, "policies": FL_R1.policies}
+                             if (ev.rule_version or "").startswith(FL_R1.label + "+") else None),
             "facts_digest": ev.facts_digest,
             "reference": ({"published_summary": ref.row, "attribution": ref.attribution,
                            "note": "Published reference data, not a rule: statute_read_on is when its authors read the statute, "

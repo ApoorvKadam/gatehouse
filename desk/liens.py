@@ -110,6 +110,7 @@ YesNoUnknown = Literal["yes", "no", "unknown"]
 
 class ItemizedCharge(BaseModel):
     description: str = Field(min_length=2)
+    category: Literal["rent", "fee", "tax", "other"] = Field(description="anything but rent needs the agreement's authorization")
     amount_cents: int = Field(gt=0)
     due_on: date
 
@@ -152,6 +153,8 @@ class EmailDelivery(BaseModel):
     notice_id: int
     sent_on: date
     sent_to: str = Field(min_length=3)
+    address_basis: Literal["rental agreement", "written change of address"] = Field(
+        description="why this is the tenant's last known e-mail address")
     confirmation: Literal["response", "return receipt", "delivery confirmation"] | None = None
     confirmation_from: str | None = None
     confirmed_on: date | None = None
@@ -305,7 +308,8 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
 
     # legal checks: every one recorded, and only a clean answer lets the file continue without counsel. Several current
     # records for one check must agree; a later "no" never erases an earlier "yes" unless it supersedes that record.
-    claims_fee = any("fee" in c.description.lower() for e in ev["notice"][-1:] for c in Notice.model_validate(e["facts"]).itemized_charges)
+    # fail closed: any claimed charge that is not rent needs the rental agreement's authorization
+    claims_fee = any(c.category != "rent" for e in ev["notice"][-1:] for c in Notice.model_validate(e["facts"]).itemized_charges)
     answers: dict[str, list[LegalCheck]] = {}
     for e in ev["legal_check"]:
         c = LegalCheck.model_validate(e["facts"])
@@ -446,6 +450,16 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
     if notice.sum_due_since > delivered_on:
         out.append(Finding("date the sum became due", "statute 83.806(2)(a)", "review",
                            f"the notice says the sum became due {notice.sum_due_since}, after it was delivered", "correct the notice"))
+    not_yet_due = [c for c in notice.itemized_charges if c.due_on > delivered_on]
+    if not_yet_due:
+        out.append(Finding("charges due at notice time", "statute 83.806(2)(a)", "review",
+                           f"\"{not_yet_due[0].description}\" fell due {not_yet_due[0].due_on}, after the notice was delivered on {delivered_on}",
+                           "claim only what was due when the notice was delivered"))
+    earliest_due = min(c.due_on for c in notice.itemized_charges)
+    if notice.sum_due_since != earliest_due:
+        out.append(Finding("date the sum became due", "statute 83.806(2)(a)", "review",
+                           f"the notice says the sum became due {notice.sum_due_since}; its earliest itemized charge fell due {earliest_due}",
+                           "correct the notice"))
     if snap is not None and date.fromisoformat(snap["observed_on"]) >= delivered_on:
         out.append(Finding("claim at notice time", "policy", "review",
                            f"the ledger snapshot is from {snap['observed_on']}, not before the notice was delivered on {delivered_on}",
@@ -557,7 +571,7 @@ def _finish(findings: list[Finding], timing: dict[str, str]) -> Evaluation:
         state = "Review packet assembled"
     open_items = sum(f.status != "met" for f in findings)
     summary = SUMMARIES.get(state, f"{open_items} open item{'s' if open_items != 1 else ''}.")
-    return Evaluation(FL_R1.label, state, summary, findings, timing)
+    return Evaluation(RULES, state, summary, findings, timing)
 
 
 __all__ = ["FL_R1", "CaseFacts", "DateProblem", "EVIDENCE_KINDS", "Evaluation", "Finding", "STATES", "ValidationError",

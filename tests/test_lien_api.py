@@ -12,7 +12,7 @@ from desk.models import DelinquencyCase, LedgerSnapshot, LienEvidence
 from .test_api import client, dana_case  # noqa: F401  (the fixture and helper are shared)
 
 ALBANY = "fac_NSalbany001"
-DELIVERED = date(2026, 10, 5)   # after the simulator's rent fell due; every later step is in the past
+DELIVERED = date(2026, 10, 7)   # after the simulator's rent and late fee fell due; every later step is in the past
 
 
 def today_in_orlando() -> date:
@@ -43,8 +43,8 @@ def file_for(client, cid, delivered: date, newspaper_ok="yes"):  # noqa: F811
         return r.json()
 
     # the simulator's rent fell due on October 1; its late fee carries no date
-    n = add("notice", {"itemized_charges": [{"description": "Rent", "amount_cents": 21500, "due_on": "2026-10-01"},
-                                            {"description": "Late fee", "amount_cents": 2500, "due_on": "2026-10-06"}],
+    n = add("notice", {"itemized_charges": [{"description": "Rent", "category": "rent", "amount_cents": 21500, "due_on": "2026-10-01"},
+                                            {"description": "Late fee", "category": "fee", "amount_cents": 2500, "due_on": "2026-10-06"}],
                        "itemized_total_cents": 24000, "sum_due_since": "2026-10-01", "ledger_snapshot_id": snapshot_before(client, cid, delivered),
                        "property_description": "household goods and boxes", "description_matches_rental_agreement": "yes",
                        "demand_deadline": deadline.isoformat(), "sale_statement": True, "sale_date": sale.isoformat(), "sale_time": "10:00 AM",
