@@ -18,7 +18,7 @@ from .store import (
 
 PII_FIELDS = ("name", "firstName", "lastName", "phone", "email")
 PAYMENT_MODES = {"approve", "decline", "fail", "pending_then_succeed", "pending_then_decline",
-                 "late_application", "lose_response", "server_error", "gateway_error"}
+                 "late_application", "lose_response", "server_error", "gateway_error", "reject"}
 
 
 class ApiError(Exception):
@@ -195,6 +195,8 @@ def create_app(database_url: str | None = None, lose_response_seconds: float = 8
         lag = behavior.lag if behavior else 2
         if mode == "server_error":
             raise ApiError(500, "Internal error")
+        if mode == "reject":
+            raise ApiError(422, "Payment method has expired")
         if mode == "gateway_error":
             # a load balancer's page in front of the FMS, not an FMS answer
             return HTMLResponse("<html><body><h1>502 Bad Gateway</h1></body></html>", status_code=502)

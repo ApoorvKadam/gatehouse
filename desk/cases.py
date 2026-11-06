@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from .adapter import FMSAdapter, ProviderLedger
 from .db import utcnow
-from .models import CaseEvent, DelinquencyCase, Facility, Lease, LedgerSnapshot, PaymentCommand
+from .models import FMS_REVERSAL_STATUSES, CaseEvent, DelinquencyCase, Facility, Lease, LedgerSnapshot, ObservedPayment, PaymentCommand
 
 IN_FLIGHT = ("SUBMITTING", "AWAITING_APPLICATION", "PENDING_AT_FMS", "OUTCOME_UNKNOWN")
 
@@ -60,6 +60,13 @@ def current_case(session: Session, lease: Lease) -> DelinquencyCase | None:
                           .order_by(DelinquencyCase.id.desc()))
 
 
+def reversed_at_fms(session: Session, lease: Lease, case: DelinquencyCase) -> bool:
+    """A payment on this lease, taken by anyone, came back after this case was settled."""
+    since = case.resolved_at
+    rows = session.scalars(select(ObservedPayment).where(ObservedPayment.status.in_(FMS_REVERSAL_STATUSES))).all()
+    return any(lease.provider_id in r.lease_provider_ids and (since is None or r.status_changed_at >= since) for r in rows)
+
+
 def refresh_case(session: Session, adapter: FMSAdapter, case: DelinquencyCase) -> DelinquencyCase:
     """Re-read the ledger and derive the case state. Nothing here writes to the FMS."""
     lease = session.get(Lease, case.lease_id)
@@ -82,7 +89,11 @@ def refresh_case(session: Session, adapter: FMSAdapter, case: DelinquencyCase) -
         case.state, case.owner = "paid", "front desk"
         case.resolved_at = case.resolved_at or utcnow()
     else:
-        case.state, case.owner = ("reopened" if returned or before == "paid" else "open"), "front desk"
+        if before == "paid" and not (returned or reversed_at_fms(session, lease, case)):
+            # new charges on a settled account are the next delinquency, which gets its own case
+            case.state = "paid"
+        else:
+            case.state, case.owner = ("reopened" if returned or before == "paid" else "open"), "front desk"
         case.resolved_at = None
     case.hold_reasons = holds
     if case.state != before:

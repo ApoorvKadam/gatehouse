@@ -132,13 +132,21 @@ def test_a_lost_response_is_found_at_the_fms_instead_of_resent(session, adapter,
     assert session.get(PaymentCommand, command.id).state == "CONFIRMED"
 
 
-def test_an_fms_error_answer_means_nothing_was_charged(session, adapter, sim):
-    sim.behave(MARCUS, "server_error")
+def test_a_request_the_fms_refuses_charged_nothing_and_holds_nothing(session, adapter, sim):
+    sim.behave(MARCUS, "reject")
     command, case, _ = pay(session, adapter, MARCUS, "pm_MarcVisa1881", 18500)
-    assert command.state == "REJECTED" and sim.payments(MARCUS) == []
+    assert command.state == "REJECTED" and "expired" in command.provider_reason and sim.payments(MARCUS) == []
     sim.behave(MARCUS, "approve")
     again = PaymentService(session, adapter).take_payment(case.id, "pm_MarcVisa1881", Authorization.new(True, 18500, 18500))
-    assert again.state == "CONFIRMED"   # Cubby documents a non-2xx as not attempted, so the account is not held
+    assert again.state == "CONFIRMED"
+
+
+def test_an_fms_failure_is_looked_up_rather_than_called_not_charged(session, adapter, sim):
+    sim.behave(MARCUS, "server_error")
+    command, _, _ = pay(session, adapter, MARCUS, "pm_MarcVisa1881", 18500)
+    assert command.state == "OUTCOME_UNKNOWN"
+    settle(session, adapter)
+    assert command.state == "NEEDS_STAFF"
 
 
 def test_a_gateway_error_page_is_looked_up_and_then_held_for_staff(session, adapter, sim):
@@ -424,3 +432,11 @@ def test_an_older_reconciliation_never_overwrites_a_newer_one(adapter, sim, tmp_
         PaymentService(a, adapter)._save()
         b.expire_all()
         assert b.get(PaymentCommand, command.id).state == "CONFIRMED"
+
+
+def test_next_months_rent_does_not_reopen_a_settled_case(session, adapter, sim):
+    _, case, _ = pay(session, adapter, DANA, "pm_DanaVisa4242", 24000)
+    assert session.get(DelinquencyCase, case.id).state == "paid"
+    sim.post("/sim/charges", {"leaseId": DANA, "amount": 21500, "category": "RENT", "description": "December rent"})
+    PaymentService(session, adapter).reconcile_all()
+    assert session.get(DelinquencyCase, case.id).state == "paid"

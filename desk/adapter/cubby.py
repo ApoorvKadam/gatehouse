@@ -119,11 +119,14 @@ class CubbyAdapter:
             return SubmitOutcome(kind="lost", detail=f"connection failed: {exc.__class__.__name__}")
         payload = _json(response)
         errors = payload.get("errors") if isinstance(payload.get("errors"), list) else []
-        if response.status_code != 200 and "errors" in payload and "code" in payload:
-            # Cubby's own error envelope: its documentation says a non-2xx means nothing was attempted
+        if 400 <= response.status_code < 500 and "errors" in payload and "code" in payload:
+            # Cubby refused the request itself (unknown lease or card, another customer's card, bad amount): its
+            # documentation says nothing was attempted
             return SubmitOutcome(kind="rejected", detail=f"HTTP {response.status_code}", errors=errors)
         if response.status_code != 200:
-            # an error page from a gateway or load balancer is not Cubby speaking: the request may have reached it
+            # A 5xx says the FMS failed while handling the request, possibly after the charge, and a gateway's error
+            # page is not the FMS speaking at all. Wrongly calling it "nothing charged" invites a second charge;
+            # wrongly holding it costs a staff check. So it is looked up, and staff can release it.
             return SubmitOutcome(kind="lost", detail=f"HTTP {response.status_code}", errors=errors)
         payment = _payment((payload.get("data") or {}).get("payment") or {}, amount)
         kind = {"SUCCEEDED": "accepted", "DECLINED": "declined", "FAILED": "declined", "PENDING": "pending"}.get(payment.status)

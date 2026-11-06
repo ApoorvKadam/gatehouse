@@ -37,6 +37,8 @@ MAX_UNKNOWN_CHECKS = 3
 # a payment found at the FMS can be this lost submission only if it was created in this window around it
 CLOCK_SKEW = timedelta(minutes=2)
 LOST_MATCH_WINDOW = timedelta(minutes=10)
+# an outside payment this recent when ours was sent may still be on its way to the ledger
+RECENT_OUTSIDE_PAYMENT = timedelta(minutes=10)
 
 # how long the desk waits on the FMS before a person has to look: a payment the FMS calls SUCCEEDED that the
 # ledger does not show, or a payment still PENDING at the gateway
@@ -190,9 +192,9 @@ class PaymentService:
         if auth.amount <= 0:
             raise PaymentRefused("amount must be positive")
         in_flight = self.session.scalar(select(PaymentCommand).where(
-            PaymentCommand.case_id == case_id, PaymentCommand.state.in_(HOLDING_STATES)))
+            PaymentCommand.lease_id == lease.id, PaymentCommand.state.in_(HOLDING_STATES)))
         if in_flight is not None:
-            raise PaymentRefused(f"payment {in_flight.id} on this account is not settled yet ({in_flight.state})")
+            raise PaymentRefused(f"payment {in_flight.id} on this unit is not settled yet ({in_flight.state})")
         method = next((m for m in self.adapter.payment_methods(lease.provider_customer_id)
                        if m["paymentMethodId"] == payment_method_id), None)
         if method is None:
@@ -451,15 +453,26 @@ class PaymentService:
         fee posted afterwards cannot hide the payment and a waiver cannot look like one. Any other payment that could
         have put money there since is taken out first: every payment the FMS did not show before this one was sent,
         and any that was still PENDING then. A counter payment at the same time therefore leaves this one unconfirmed,
-        never wrongly confirmed. A payment that had already succeeded before this one was sent is taken to be on the
-        ledger already."""
+        never wrongly confirmed. So is an outside payment that succeeded in the ten minutes before; one older than
+        that, or one the desk itself confirmed, is taken to be on the ledger already."""
         ledger = self.adapter.ledger(lease.provider_id)
         now = {e["bookEntryId"]: e.get("amountPaid", 0) for e in ledger.raw.get("bookEntries", [])}
         paid = sum(now[i] - was for i, was in (command.entries_paid_before or {}).items() if i in now)
         paid += ledger.prepaid - command.prepaid_before
         before = command.fms_payments_before or {}
-        others = sum(p.amount for p in payments if p.provider_id != command.provider_payment_id
-                     and p.status in ("SUCCEEDED", "PENDING") and before.get(p.provider_id, "PENDING") == "PENDING")
+        sent = command.submitted_at or command.created_at
+        ours = set(self.session.scalars(select(PaymentCommand.provider_payment_id).where(
+            PaymentCommand.provider_payment_id.is_not(None), PaymentCommand.state == "CONFIRMED")).all())
+
+        def could_be_this_money(p: ProviderPayment) -> bool:
+            if p.provider_id == command.provider_payment_id or p.status not in ("SUCCEEDED", "PENDING"):
+                return False
+            if p.provider_id not in before or before[p.provider_id] == "PENDING":
+                return True
+            # succeeded just before ours, outside the desk: it may not have reached the ledger yet
+            return p.provider_id not in ours and p.created_at is not None and p.created_at >= sent - RECENT_OUTSIDE_PAYMENT
+
+        others = sum(p.amount for p in payments if could_be_this_money(p))
         return paid - others >= command.amount
 
     def _find_lost(self, command: PaymentCommand, lease: Lease, payments: list[ProviderPayment]) -> ProviderPayment | None:
@@ -486,6 +499,8 @@ class PaymentService:
             self.session.add(row)
             self.session.flush()
             return True
+        if row.status != p.status:
+            row.status_changed_at = utcnow()
         row.status, row.last_seen_at = p.status, utcnow()
         if lease.provider_id not in row.lease_provider_ids:
             row.lease_provider_ids = row.lease_provider_ids + [lease.provider_id]

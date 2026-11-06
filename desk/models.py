@@ -66,6 +66,8 @@ class DelinquencyCase(Base):
 
 # a payment in one of these states still holds the account: no second payment may start until it settles
 HOLDING_STATES = ("SUBMITTING", "AWAITING_APPLICATION", "PENDING_AT_FMS", "OUTCOME_UNKNOWN", "NEEDS_STAFF")
+# what the FMS can later report about a payment that had succeeded
+FMS_REVERSAL_STATUSES = ("DIRECT_DEBIT_RETURN", "REFUNDED", "REFUND_INITIATED", "DISPUTED")
 _HOLDING_SQL = text("state IN (" + ", ".join(f"'{s}'" for s in HOLDING_STATES) + ")")
 
 
@@ -76,8 +78,9 @@ class PaymentCommand(Base):
     was attempted instead of nothing."""
 
     __tablename__ = "payment_commands"
-    # the database, not a read before the insert, keeps two requests from charging the same account at once
-    __table_args__ = (Index("one_holding_payment_per_case", "case_id", unique=True,
+    # the database, not a read before the insert, keeps two requests from charging the same lease at once, even
+    # through two cases of that lease
+    __table_args__ = (Index("one_holding_payment_per_lease", "lease_id", unique=True,
                             sqlite_where=_HOLDING_SQL, postgresql_where=_HOLDING_SQL),)
     id: Mapped[int] = mapped_column(primary_key=True)
     # every update checks the version it read, so two passes that read the same state cannot both write
@@ -119,6 +122,7 @@ class ObservedPayment(Base):
     lease_provider_ids: Mapped[list] = mapped_column(JSON, default=list)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    status_changed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     __table_args__ = (UniqueConstraint("provider", "provider_payment_id"),)
 
 
