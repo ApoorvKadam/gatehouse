@@ -13,7 +13,7 @@ It exists because the expensive failures in collections are not missing features
 - **One charge, confirmed by the ledger.** One open payment per unit, enforced by the database, and no new charge while any payment on the lease is still pending at the FMS, whoever took it. The intent is written before the FMS is called. A payment counts as applied only when money lands on the charges that were open when the tenant agreed and no other payment on the lease could have put it there. Cubby's ledger does not say which payment paid which charge, so when another payment is in motion the desk does not guess: a person decides.
 - **Every outcome has a state.** Declines (an HTTP 200 at Cubby), pending gateway answers, lost responses, FMS failures, late application, refunds, disputes and returns each land in a defined state. A pending payment is never retried. A lost response gets a suggested FMS payment, never an automatic match. What the desk cannot establish goes to staff, who need their own token and record what they found (naming a payment says which one an attempt was; confirming it posted takes their statement that they checked the ledger); "not charged" is refused while the FMS shows the payment pending or succeeded, or while a possible match is unaccounted for. The unit stays held until then.
 - **Tenant conversation.** A tenant can check and pay a past-due balance by message. Claude Haiku handles the conversation but has no tool that charges a card: it can propose an amount, and the card is charged only when the tenant's very next message is a plain yes to that proposal. The model never writes anything the tenant reads: it chooses an action (verify, read the balance, propose a payment, check its status, explain a charge, ask to clarify, hand off) and the desk sends its own sentence, built from the FMS ledger and the payment record. Text the model writes anyway is logged and not sent. Identity comes from what the caller types, lasts 15 minutes and is never renewed by the model; a conversation answers only the sender who started it. Three wrong identity answers, hardship, military service, liens and anything legal go to a person.
-- **Lien evidence, not legal answers** (next). Notice and advertising steps tracked against reviewed, versioned jurisdiction rules. Missing proof holds the account. Rules that have not been reviewed fail closed.
+- **Lien evidence, not legal answers.** For a Florida account, operators record the notice, how it was delivered, the posting, each newspaper publication and the legal checks (military disclosure and service, bankruptcy, vehicle or watercraft, dispute, secured party), each with its document. The desk evaluates the file against rule version FL-r1 and lists every open item with its basis: a section of Fla. Stat. 83.801-83.809, or an operator policy the desk applies on top of the statute. The best a file can reach is "Review packet assembled": listed evidence checks completed; sale authorization is outside this desk. New York is reference only and every New York case goes to counsel; other states have no reviewed rule version.
 
 ## How it is built
 
@@ -73,6 +73,33 @@ PASS  Counter payment at the same time  FMS: ours applies late; a cash payment l
 ```
 
 Tests run against the simulator over real HTTP: `pip install -e ".[dev,chat]" && pytest`. One test calls the real model and is skipped unless `DESK_LIVE_MODEL=1` is set.
+
+## Lien files (Florida, rule version FL-r1)
+
+```bash
+curl -X POST -H "$H" -H "$J" localhost:8000/api/cases/1/lien/evidence -d '{"kind": "mail_deposit", "entered_by": "J. Ortiz",
+  "facts": {"notice_version": "N1", "deposited_on": "2026-10-02", "certificate_of_mailing": true, "postage_prepaid": true,
+            "address": "88 Pine St, Orlando FL", "address_basis": "rental agreement"}}'
+curl -H "$H" localhost:8000/api/cases/1/lien
+```
+
+How dates work: every date is a calendar date at the facility, in the time zone the FMS reports for it (no default). A stated payment deadline stays open through its whole local day, and the next step can start the day after. With delivery on November 6, the earliest deadline is November 20, the first publication can run November 21, the second on November 28, and the sale threshold under this policy is December 6.
+
+What the statute says and what is policy:
+
+| Check | Basis |
+|---|---|
+| Delivery in person, by e-mail, or by first-class mail with a certificate of mailing; mail is presumed delivered on deposit | 83.806(1), (3) |
+| Unconfirmed e-mail needs the first-class fallback before any sale | 83.806(1) |
+| Notice content: itemized claim, property description, demand of at least 14 days after delivery, sale statement, owner contact | 83.806(2) |
+| Conspicuous posting at the facility or on the unit | 83.806(1) |
+| Advertisement once a week for two consecutive weeks after the demand period, with its required content; sale at least 15 days after the first publication | 83.806(4) |
+| Rental agreement discloses uniformed-services membership; vehicles and watercraft; secured parties | 83.808(2), 83.806(10), 83.805 |
+| Posting dated the day of delivery; publications exactly seven days apart; an e-mail confirmed only by a later reply is dated by the reply; unconfirmed e-mail counts from the fallback mailing; every legal check recorded as yes, no or unknown, and anything but a clean no goes to counsel; any payment after delivery reopens review | policy |
+
+Each evaluation keeps the exact facts it read and can be replayed to the same result (`GET /api/lien/evaluations/{id}/replay`). Evidence is never edited; a correction supersedes the record it fixes.
+
+Not covered: sending notices, scheduling or conducting sales, commercial reasonableness, lien priority, proceeds and surplus notices, the no-newspaper posting route, vehicle towing, and any reading of Cubby's delinquency exemptions as legal clearance.
 
 ## Limits
 
