@@ -396,3 +396,32 @@ def test_an_old_notices_fee_does_not_bind_a_rent_only_notice():
                    "8": {"total_due": 21500, "observed_on": "2026-11-05", "open_charges": [
                        {"name": "october rent", "open_cents": 21500, "category": "RENT"}]}}, [])
     assert evaluate(f).state == "Review packet assembled", [x for x in evaluate(f).findings if x.status != "met"]
+
+
+def test_a_fee_above_the_statutory_safe_harbor_needs_a_reasonableness_check():
+    charges = [{"description": "October rent", "category": "rent", "amount_cents": 21500, "due_on": "2026-10-01"},
+               {"description": "Late fee", "category": "fee", "amount_cents": 100000, "due_on": "2026-10-06"}]
+    f = CaseFacts("FL", "America/New_York", 121500, [], "2026-12-01", [notice(itemized_charges=charges, total=121500)] + complete()[1:],
+                  {"7": {"total_due": 121500, "observed_on": "2026-11-05", "open_charges": [
+                      {"name": "october rent", "open_cents": 21500, "category": "RENT"}, {"name": "late fee", "open_cents": 100000, "category": "FEE"}]}}, [])
+    assert by(evaluate(f), "fee reasonable").status == "missing"
+    assert all(x.requirement != "fee reasonable" for x in evaluate(facts(complete())).findings)   # $25 is within the safe harbor
+
+
+@pytest.mark.parametrize("sale_time", ["10:00 AM", "10 AM", "10:00"])
+def test_clear_sale_times_in_common_forms_are_accepted(sale_time):
+    evidence = [notice(sale_time=sale_time)] + complete()[1:]
+    for p in evidence:
+        if p["kind"] == "publication":
+            p["facts"]["sale_time"] = sale_time
+    assert all(x.requirement != "sale time" for x in evaluate(facts(evidence)).findings)
+
+
+def test_a_corrected_due_date_or_category_on_the_ledger_is_a_change():
+    from desk.lien_files import ledger_changes
+    then = {"bookEntries": [{"bookEntryId": "be1", "type": "CHARGE", "amount": 21500, "amountPaid": 0,
+                             "details": {"category": "RENT", "accruesOn": "2026-10-01"}}]}
+    now = {"bookEntries": [{"bookEntryId": "be1", "type": "CHARGE", "amount": 21500, "amountPaid": 0,
+                            "details": {"category": "FEE", "accruesOn": "2026-11-10"}}]}
+    changes = ledger_changes(then, now)
+    assert any("due date" in c for c in changes) and any("category" in c for c in changes)

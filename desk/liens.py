@@ -99,6 +99,16 @@ def local_instant(wall_clock: datetime, zone: ZoneInfo) -> datetime:
     return early
 
 
+def clock_time(text: str):
+    """A stated time of day in any common clear form: 10:00 AM, 10 AM, 14:00."""
+    for fmt in ("%I:%M %p", "%I %p", "%H:%M", "%I:%M%p", "%I%p"):
+        try:
+            return datetime.strptime(text.strip().upper(), fmt).time()
+        except ValueError:
+            continue
+    raise ValueError(f"{text!r} is not a clear time of day")
+
+
 def plus_days(d: date, days: int) -> date:
     """Calendar days, never hours: 14 days after March 1 is March 15 whatever the clocks do in between."""
     return d + timedelta(days=days)
@@ -196,7 +206,7 @@ class Publication(BaseModel):
 
 class LegalCheck(BaseModel):
     check: Literal["military_disclosure_provision", "military_service", "bankruptcy", "vehicle_or_watercraft", "dispute", "secured_party",
-                   "document_of_title_issued", "fees_authorized_by_rental_agreement", "no_newspaper_in_area"]
+                   "document_of_title_issued", "fees_authorized_by_rental_agreement", "no_newspaper_in_area", "fee_reasonable"]
     answer: YesNoUnknown
     source: str = Field(min_length=3)
     observed_on: date
@@ -268,6 +278,19 @@ SUMMARIES = {
 }
 
 
+def match_charges(items, open_charges) -> list[tuple]:
+    """Pair each itemized charge with an open ledger charge of the same amount and a matching, non-empty name."""
+    left = [dict(c) for c in open_charges]
+    pairs = []
+    for item in items:
+        m = next((c for c in left if c["open_cents"] == item.amount_cents and c["name"]
+                  and (item.description.lower() in c["name"] or c["name"] in item.description.lower())), None)
+        if m is not None:
+            left.remove(m)
+        pairs.append((item, m))
+    return pairs
+
+
 def evaluate(facts: CaseFacts) -> Evaluation:
     if facts.jurisdiction in REFERENCE_ONLY:
         return Evaluation(None, "Counsel review required", REFERENCE_ONLY[facts.jurisdiction],
@@ -313,9 +336,16 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
     latest = [Notice.model_validate(e["facts"]) for e in ev["notice"][-1:]]   # only the notice being evaluated counts
     latest_items = [c for n in latest for c in n.itemized_charges]
     latest_snaps = [facts.notice_snapshots.get(str(n.ledger_snapshot_id)) for n in latest if n.ledger_snapshot_id is not None]
-    ledger_categories = {c.get("category", "") for snap in latest_snaps if snap for c in snap.get("open_charges", [])}
-    claims_fee = any(c.category != "rent" for c in latest_items) or any(cat not in ("RENT",) for cat in ledger_categories)
+    matched = [m for _, m in match_charges(latest_items, latest_snaps[0].get("open_charges", []) if latest_snaps and latest_snaps[0] else [])
+               if m is not None]
+    ledger_categories = {m.get("category", "") for m in matched}
+    claims_fee = any(c.category != "rent" for c in latest_items) or any(cat != "RENT" for cat in ledger_categories)
     fee_basis = "statute 83.808(3)" if any(c.category == "fee" for c in latest_items) or "FEE" in ledger_categories else "policy"
+    # 83.808(3): a late fee of $20 or 20 percent of the monthly rent, whichever is greater, is reasonable; above that,
+    # reasonableness needs its own sourced check
+    rent = sum(c.amount_cents for c in latest_items if c.category == "rent")
+    fees = [c for c in latest_items if c.category == "fee"]
+    above_safe_harbor = [c for c in fees if c.amount_cents > max(2000, rent // 5)]
     answers: dict[str, list[LegalCheck]] = {}
     for e in ev["legal_check"]:
         c = LegalCheck.model_validate(e["facts"])
@@ -325,9 +355,12 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
                                 ("dispute", "policy", "no"), ("secured_party", "statute 83.805", "no"),
                                 ("document_of_title_issued", "statute 83.803(5)", "no"),
                                 ("fees_authorized_by_rental_agreement", fee_basis, "yes"),
-                                ("no_newspaper_in_area", "statute 83.806(4)(c)", "no")):
+                                ("no_newspaper_in_area", "statute 83.806(4)(c)", "no"),
+                                ("fee_reasonable", "statute 83.808(3)", "yes")):
         if check == "fees_authorized_by_rental_agreement" and not claims_fee:
             continue   # the agreement's fee terms matter only when the notice claims a fee
+        if check == "fee_reasonable" and not above_safe_harbor:
+            continue   # within the statute's safe harbor, or no fee claimed
         records = answers.get(check, [])
         label = check.replace("_", " ")
         said = "; ".join(f"{c.answer} ({c.source}, {c.observed_on})" for c in records)
@@ -383,10 +416,7 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
         if snap["total_due"] != notice.itemized_total_cents:
             out.append(Finding("claim at notice time", "statute 83.806(2)(a)", "review",
                                f"the notice claims {notice.itemized_total_cents} cents; the FMS ledger then showed {snap['total_due']}", "send to review"))
-        open_then = [dict(c) for c in snap.get("open_charges", [])]
-        for item in notice.itemized_charges:
-            match = next((c for c in open_then if c["open_cents"] == item.amount_cents and c["name"]
-                          and (item.description.lower() in c["name"] or c["name"] in item.description.lower())), None)
+        for item, match in match_charges(notice.itemized_charges, snap.get("open_charges", [])):
             ledger_category = {"RENT": "rent", "FEE": "fee"}.get((match or {}).get("category", ""),
                                                                  "tax" if (match or {}).get("category", "").startswith("TAX") else "other")
             if match is not None and (not match.get("category") or ledger_category != item.category):
@@ -401,12 +431,9 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
                 out.append(Finding("itemized charge on the ledger", "statute 83.806(2)(a)", "review",
                                    f"\"{item.description}\" for {item.amount_cents} cents is not an open charge on the FMS ledger snapshot",
                                    "correct the notice; send to review"))
-            else:
-                open_then.remove(match)
     try:
         zone = facility_zone(facts.facility_time_zone)
-        hour = datetime.strptime(notice.sale_time.strip().upper(), "%I:%M %p")
-        local_instant(datetime.combine(notice.sale_date, hour.time()), zone)
+        local_instant(datetime.combine(notice.sale_date, clock_time(notice.sale_time)), zone)
     except ValueError as exc:
         out.append(Finding("sale time", "statute 83.806(2)(d)", "review",
                            f"the stated sale time {notice.sale_time!r} on {notice.sale_date} is not a clear local time: {exc}",

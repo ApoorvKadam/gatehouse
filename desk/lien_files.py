@@ -6,7 +6,7 @@ import hashlib
 from dataclasses import asdict
 
 from sqlalchemy import DDL, event, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from .adapter import FMSAdapter, FMSError
@@ -29,11 +29,22 @@ def _evidence_is_never_deleted(mapper, connection, target):
 
 
 # the same rule in the database itself, so a bulk statement or another client cannot rewrite the record either
+def _append_only_sql(table: str) -> list[str]:
+    """Triggers that make a table append-only on SQLite: no update, no delete, and no insert that would replace an
+    existing row (INSERT OR REPLACE deletes without firing delete triggers)."""
+    clash = {"lien_evidence": "id = NEW.id OR (NEW.supersedes_id IS NOT NULL AND supersedes_id = NEW.supersedes_id)",
+             "rule_source_rows": "id = NEW.id OR (file_sha256 = NEW.file_sha256 AND jurisdiction = NEW.jurisdiction)",
+             "lien_evaluations": "id = NEW.id"}[table]
+    out = [f"CREATE TRIGGER IF NOT EXISTS {table}_no_{op.lower()} BEFORE {op} ON {table} "
+           f"BEGIN SELECT RAISE(ABORT, '{table} is append-only'); END" for op in ("UPDATE", "DELETE")]
+    out.append(f"CREATE TRIGGER IF NOT EXISTS {table}_no_replace BEFORE INSERT ON {table} "
+               f"WHEN EXISTS (SELECT 1 FROM {table} WHERE {clash}) BEGIN SELECT RAISE(ABORT, '{table} is append-only'); END")
+    return out
+
+
 for _table in ("lien_evidence", "rule_source_rows", "lien_evaluations"):
-    for _op in ("UPDATE", "DELETE"):
-        event.listen(LienEvidence.metadata.tables[_table], "after_create", DDL(
-            f"CREATE TRIGGER IF NOT EXISTS {_table}_no_{_op.lower()} BEFORE {_op} ON {_table} "
-            f"BEGIN SELECT RAISE(ABORT, '{_table} is append-only'); END").execute_if(dialect="sqlite"))
+    for _sql in _append_only_sql(_table):
+        event.listen(LienEvidence.metadata.tables[_table], "after_create", DDL(_sql).execute_if(dialect="sqlite"))
 
 def ensure_append_only(engine) -> None:
     """Install the append-only triggers on a database whose tables already existed (create_all does not)."""
@@ -41,9 +52,8 @@ def ensure_append_only(engine) -> None:
         return
     with engine.begin() as conn:
         for table in ("lien_evidence", "rule_source_rows", "lien_evaluations"):
-            for op in ("UPDATE", "DELETE"):
-                conn.exec_driver_sql(f"CREATE TRIGGER IF NOT EXISTS {table}_no_{op.lower()} BEFORE {op} ON {table} "
-                                     f"BEGIN SELECT RAISE(ABORT, '{table} is append-only'); END")
+            for sql in _append_only_sql(table):
+                conn.exec_driver_sql(sql)
 
 
 EVALUATORS = {RULES: evaluate}   # only the code that is running can replay; an evaluation from other code says so   # rule version -> the evaluator that implements it; replay refuses anything else
@@ -74,7 +84,7 @@ def record_evidence(session: Session, case: DelinquencyCase, kind: str, facts: d
     session.add(row)
     try:
         session.flush()
-    except IntegrityError as exc:
+    except (IntegrityError, OperationalError) as exc:   # the unique index, or the append-only trigger
         session.rollback()
         raise ValueError(f"record {supersedes} was already corrected; correct the latest one") from exc
     record(session, case, "lien evidence recorded", {"evidence": row.id, "kind": kind, "supersedes": supersedes}, actor=entered_by)
@@ -122,7 +132,7 @@ def case_facts(session: Session, adapter: FMSAdapter, case: DelinquencyCase) -> 
                          "open_cents": e.get("amount", 0) - e.get("amountPaid", 0), "due_on": (e.get("details") or {}).get("accruesOn"),
                          "category": ((e.get("details") or {}).get("category") or "").upper()}
                         for e in (snap.raw.get("bookEntries") or []) if isinstance(e, dict) and e.get("type") == "CHARGE"
-                        and e.get("amount", 0) > e.get("amountPaid", 0)]
+                        and e.get("amount", 0) > e.get("amountPaid", 0) and not (e.get("details") or {}).get("waive")]
         snapshots[str(sid)] = {"total_due": snap.total_due, "observed_on": observed, "open_charges": open_charges}
         if ledger is not None and r is latest_notice:   # only the notice the evaluation uses
             changes = ledger_changes(snap.raw, ledger.raw)
@@ -157,6 +167,10 @@ def ledger_changes(then: dict, now: dict) -> list[str]:
         for key, label in (("amount", "amount"), ("amountPaid", "amount paid")):
             if later.get(key, 0) != e.get(key, 0):
                 out.append(f"the {name} charge's {label} changed from {e.get(key, 0)} to {later.get(key, 0)} cents")
+        for key, label in (("accruesOn", "due date"), ("category", "category"), ("description", "description")):
+            was, now = (e.get("details") or {}).get(key), (later.get("details") or {}).get(key)
+            if was != now:
+                out.append(f"the {name} charge's {label} changed from {was} to {now}")
         if bool((later.get("details") or {}).get("waive")) != bool((e.get("details") or {}).get("waive")):
             out.append(f"the {name} charge was waived" if (later.get("details") or {}).get("waive") else f"the waiver on the {name} charge was removed")
     known = {e.get("bookEntryId") for e in then_entries if isinstance(e, dict)}

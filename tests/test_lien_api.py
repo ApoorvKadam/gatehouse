@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy import text
 
+from desk.lien_files import current_evidence
 from desk.models import DelinquencyCase, LedgerSnapshot, LienEvidence
 
 from .test_api import client, dana_case  # noqa: F401  (the fixture and helper are shared)
@@ -114,6 +115,12 @@ def test_a_correction_supersedes_once_and_nothing_is_edited_or_deleted(client): 
     assert post(facts=mail, supersedes=bad["id"]).status_code == 422          # it was already corrected
     with client.app.state.session_factory() as s:
         assert s.get(LienEvidence, bad["id"]).facts["certificate_of_mailing"] is False   # the original is unchanged
+        current = {r.id for r in current_evidence(s, s.get(DelinquencyCase, cid))}
+        assert bad["id"] not in current and fixed.json()["id"] in current               # only the correction counts
+        with pytest.raises(Exception, match="append-only"):
+            s.execute(text("INSERT OR REPLACE INTO lien_evidence (id, case_id, kind, facts, entered_by, entered_at) "
+                           "VALUES (:i, :c, 'mail_deposit', '{}', 'x', '2026-11-06')"), {"i": bad["id"], "c": cid})
+        s.rollback()
         with pytest.raises(Exception, match="append-only"):
             s.execute(text("UPDATE lien_evidence SET document_text = 'rewritten' WHERE id = :i"), {"i": bad["id"]})
         s.rollback()
