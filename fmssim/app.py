@@ -6,7 +6,7 @@ import time
 from datetime import date, datetime
 
 from fastapi import Depends, FastAPI, Header, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -18,7 +18,7 @@ from .store import (
 
 PII_FIELDS = ("name", "firstName", "lastName", "phone", "email")
 PAYMENT_MODES = {"approve", "decline", "fail", "pending_then_succeed", "pending_then_decline",
-                 "late_application", "lose_response", "server_error"}
+                 "late_application", "lose_response", "server_error", "gateway_error"}
 
 
 class ApiError(Exception):
@@ -195,6 +195,9 @@ def create_app(database_url: str | None = None, lose_response_seconds: float = 8
         lag = behavior.lag if behavior else 2
         if mode == "server_error":
             raise ApiError(500, "Internal error")
+        if mode == "gateway_error":
+            # a load balancer's page in front of the FMS, not an FMS answer
+            return HTMLResponse("<html><body><h1>502 Bad Gateway</h1></body></html>", status_code=502)
         payment = Payment(payment_id=new_id("payment"), customer_id=lease.customer_id, facility_id=lease.facility_id,
                           amount=amount, method_type=method.method_type, status="SUCCEEDED", reason="Approved",
                           allocations={lease.lease_id: amount}, applied=False, apply_after=0)

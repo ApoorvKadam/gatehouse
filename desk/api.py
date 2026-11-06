@@ -64,6 +64,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
             worker.stop()
 
     app = FastAPI(title="Past Due Desk", lifespan=lifespan)
+    app.state.session_factory = factory
 
     def db():
         with factory() as session:

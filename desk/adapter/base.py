@@ -52,6 +52,8 @@ class ProviderPayment:
     status: str
     reason: str | None
     created_at: datetime | None
+    method_type: str | None = None
+    customer_provider_id: str | None = None
 
 
 @dataclass(frozen=True)

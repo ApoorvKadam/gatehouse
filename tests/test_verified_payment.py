@@ -132,8 +132,17 @@ def test_a_lost_response_is_found_at_the_fms_instead_of_resent(session, adapter,
     assert session.get(PaymentCommand, command.id).state == "CONFIRMED"
 
 
-def test_a_payment_the_fms_never_shows_goes_to_staff_and_blocks_new_attempts(session, adapter, sim):
+def test_an_fms_error_answer_means_nothing_was_charged(session, adapter, sim):
     sim.behave(MARCUS, "server_error")
+    command, case, _ = pay(session, adapter, MARCUS, "pm_MarcVisa1881", 18500)
+    assert command.state == "REJECTED" and sim.payments(MARCUS) == []
+    sim.behave(MARCUS, "approve")
+    again = PaymentService(session, adapter).take_payment(case.id, "pm_MarcVisa1881", Authorization.new(True, 18500, 18500))
+    assert again.state == "CONFIRMED"   # Cubby documents a non-2xx as not attempted, so the account is not held
+
+
+def test_a_gateway_error_page_is_looked_up_and_then_held_for_staff(session, adapter, sim):
+    sim.behave(MARCUS, "gateway_error")
     command, case, _ = pay(session, adapter, MARCUS, "pm_MarcVisa1881", 18500)
     assert command.state == "OUTCOME_UNKNOWN"
     settle(session, adapter)
@@ -217,11 +226,24 @@ def test_a_submission_interrupted_by_a_crash_is_looked_up_not_resent(session, ad
     session.add(command)
     session.commit()
     adapter.make_payment(DANA, "pm_DanaVisa4242", 24000)   # the call went out just before the crash
-    command.created_at = command.created_at - timedelta(minutes=5)
+    command.created_at = command.submitted_at = command.created_at - timedelta(minutes=5)
     session.commit()
     settle(session, adapter)
     assert session.get(PaymentCommand, command.id).state == "CONFIRMED"
     assert len(sim.payments(DANA)) == 1
+
+
+def test_a_crash_before_the_fms_was_called_releases_the_account(session, adapter, sim):
+    case, lease = case_for(session, adapter, DANA)
+    command = PaymentCommand(case_id=case.id, lease_id=lease.id, idempotency_key="case-crash:auth-2", amount=24000,
+                             payment_method_id="pm_DanaVisa4242", authorization={}, state="SUBMITTING", balance_before=0, prepaid_before=0)
+    session.add(command)
+    session.commit()
+    command.created_at -= timedelta(minutes=5)
+    session.commit()
+    settle(session, adapter, times=1)
+    assert command.state == "NOT_SUBMITTED" and sim.payments(DANA) == []
+    assert pay(session, adapter, DANA, "pm_DanaVisa4242", 24000)[0].state == "CONFIRMED"
 
 
 def test_parallel_identity_guesses_are_counted_before_the_next_one_runs(adapter, sim, tmp_path):
@@ -353,3 +375,35 @@ def test_a_success_with_no_payment_id_is_treated_as_lost():
     body = {"status": "success", "data": {"payment": {"status": "SUCCEEDED", "amount": 24000}}}
     odd = CubbyAdapter("http://fms", "key", transport=httpx.MockTransport(lambda r: httpx.Response(200, json=body)))
     assert odd.make_payment(DANA, "pm_DanaVisa4242", 24000).kind == "lost"
+
+
+def test_a_second_authorization_after_the_first_payment_settled_charges_nothing(session, adapter, sim):
+    first, case, _ = pay(session, adapter, DANA, "pm_DanaVisa4242", 24000)
+    assert first.state == "CONFIRMED"
+    late = PaymentService(session, adapter).take_payment(case.id, "pm_DanaVisa4242", Authorization.new(True, 24000, 24000))
+    assert late.state == "NEEDS_REAUTHORIZATION" and len(sim.payments(DANA)) == 1
+
+
+def test_two_partial_payments_both_confirm(session, adapter, sim):
+    first, case, _ = pay(session, adapter, DANA, "pm_DanaVisa4242", 10000)
+    second = PaymentService(session, adapter).take_payment(case.id, "pm_DanaVisa4242", Authorization.new(True, 14000, 14000))
+    assert (first.state, second.state) == ("CONFIRMED", "CONFIRMED")
+
+
+def test_a_lost_payment_is_never_matched_to_one_that_existed_before_it(session, adapter, sim):
+    sim.behave(DANA, "decline")
+    earlier = adapter.make_payment(DANA, "pm_DanaVisa4242", 24000)   # a decline taken outside the desk minutes ago
+    sim.behave(DANA, "lose_response")
+    command, _, _ = pay(session, adapter, DANA, "pm_DanaVisa4242", 24000)
+    settle(session, adapter)
+    assert command.state == "CONFIRMED" and command.provider_payment_id != earlier.payment.provider_id
+
+
+def test_a_returned_counter_payment_reopens_a_paid_account(session, adapter, sim):
+    case, _ = case_for(session, adapter, DANA)
+    counter = sim.post("/sim/payments/offline", {"allocations": {DANA: 24000}}).json()["data"]["payment"]
+    PaymentService(session, adapter).reconcile_all()
+    assert session.get(DelinquencyCase, case.id).state == "paid"
+    assert sim.post("/sim/payments/return", {"paymentId": counter["paymentId"]}).status_code == 200
+    PaymentService(session, adapter).reconcile_all()
+    assert session.get(DelinquencyCase, case.id).state == "reopened"

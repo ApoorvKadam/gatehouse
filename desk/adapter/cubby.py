@@ -2,7 +2,7 @@
 {"code", "errors"} on failure, integer cents, and payment statuses where a decline is still an HTTP 200."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 import httpx
 
@@ -12,7 +12,17 @@ from .base import (
 
 
 def _parse_time(value: str | None) -> datetime | None:
-    return datetime.fromisoformat(value) if value else None
+    """Times are compared as naive UTC across the desk; an offset or a trailing Z is converted, not dropped."""
+    if not value:
+        return None
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return parsed.astimezone(timezone.utc).replace(tzinfo=None) if parsed.tzinfo else parsed
+
+
+def _payment(p: dict, amount: int = 0) -> ProviderPayment:
+    return ProviderPayment(provider_id=p.get("paymentId", ""), amount=int(p.get("amount", amount)), status=p.get("status", ""),
+                           reason=p.get("reason"), created_at=_parse_time(p.get("createdAt")),
+                           method_type=p.get("methodType"), customer_provider_id=p.get("customerId"))
 
 
 def _json(response: httpx.Response) -> dict:
@@ -92,9 +102,7 @@ class CubbyAdapter:
 
     def payments_for_lease(self, lease_provider_id: str) -> list[ProviderPayment]:
         data = self._read("/v1/payments/search", {"leaseId": lease_provider_id})
-        return [ProviderPayment(provider_id=p["paymentId"], amount=int(p["amount"]), status=p["status"],
-                                reason=p.get("reason"), created_at=_parse_time(p.get("createdAt")))
-                for p in data.get("payments", [])]
+        return [_payment(p) for p in data.get("payments", [])]
 
     def payment_methods(self, customer_provider_id: str) -> list[dict]:
         return self._read("/v1/payment-methods/search", {"customerId": customer_provider_id}).get("paymentMethods", [])
@@ -110,14 +118,14 @@ class CubbyAdapter:
             # the connection broke after the request may have reached the FMS
             return SubmitOutcome(kind="lost", detail=f"connection failed: {exc.__class__.__name__}")
         payload = _json(response)
-        if response.status_code >= 500:
-            return SubmitOutcome(kind="lost", detail=f"HTTP {response.status_code}", errors=payload.get("errors", []))
+        errors = payload.get("errors") if isinstance(payload.get("errors"), list) else []
+        if response.status_code != 200 and "errors" in payload and "code" in payload:
+            # Cubby's own error envelope: its documentation says a non-2xx means nothing was attempted
+            return SubmitOutcome(kind="rejected", detail=f"HTTP {response.status_code}", errors=errors)
         if response.status_code != 200:
-            # Cubby: a non-2xx means the request was rejected and no payment was attempted
-            return SubmitOutcome(kind="rejected", detail=f"HTTP {response.status_code}", errors=payload.get("errors", []))
-        p = (payload.get("data") or {}).get("payment") or {}
-        payment = ProviderPayment(provider_id=p.get("paymentId", ""), amount=int(p.get("amount", amount)),
-                                  status=p.get("status", ""), reason=p.get("reason"), created_at=_parse_time(p.get("createdAt")))
+            # an error page from a gateway or load balancer is not Cubby speaking: the request may have reached it
+            return SubmitOutcome(kind="lost", detail=f"HTTP {response.status_code}", errors=errors)
+        payment = _payment((payload.get("data") or {}).get("payment") or {}, amount)
         kind = {"SUCCEEDED": "accepted", "DECLINED": "declined", "FAILED": "declined", "PENDING": "pending"}.get(payment.status)
         if kind is None:
             return SubmitOutcome(kind="lost", payment=payment, detail=f"unrecognized status {payment.status!r}")

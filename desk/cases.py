@@ -72,7 +72,7 @@ def refresh_case(session: Session, adapter: FMSAdapter, case: DelinquencyCase) -
     staff = [c for c in commands if c.state == "NEEDS_STAFF"]
     if staff:
         holds.append("a payment outcome could not be confirmed with the FMS; check the FMS before any new attempt")
-    returned = [c for c in commands if c.state == "RETURNED"]
+    returned = [c for c in commands if c.state in ("RETURNED", "REFUNDED", "REFUND_PENDING", "DISPUTED")]
     before = case.state
     if staff:
         case.state, case.owner = "needs staff", "collections lead"
@@ -82,7 +82,7 @@ def refresh_case(session: Session, adapter: FMSAdapter, case: DelinquencyCase) -
         case.state, case.owner = "paid", "front desk"
         case.resolved_at = case.resolved_at or utcnow()
     else:
-        case.state, case.owner = ("reopened" if returned else "open"), "front desk"
+        case.state, case.owner = ("reopened" if returned or before == "paid" else "open"), "front desk"
         case.resolved_at = None
     case.hold_reasons = holds
     if case.state != before:

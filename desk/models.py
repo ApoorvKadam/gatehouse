@@ -92,6 +92,8 @@ class PaymentCommand(Base):
     method_type: Mapped[str | None] = mapped_column(String, nullable=True)
     # amountPaid of each ledger entry when the tenant agreed; only money landing on these counts as this payment
     entries_paid_before: Mapped[dict] = mapped_column(JSON, default=dict)
+    # every payment the FMS already showed on the lease, with its status, just before this one was sent
+    fms_payments_before: Mapped[dict] = mapped_column(JSON, default=dict)
     provider_payment_id: Mapped[str | None] = mapped_column(String, nullable=True)
     provider_status: Mapped[str | None] = mapped_column(String, nullable=True)
     provider_reason: Mapped[str | None] = mapped_column(String, nullable=True)

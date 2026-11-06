@@ -160,7 +160,7 @@ class Conversation:
                 p = session.get(PaymentProposal, self.proposal_id)
                 return f"To confirm: we will charge ${p.amount / 100:,.2f} to the card ending in {p.card_last4}. Reply yes to go ahead."
             if any(c.name == "payment_status" for c in calls):
-                return self._status_line(session)
+                return self._status_line(session) if self.identity_verified else IDENTITY_ASK
         self._to_staff(session, session.get(DelinquencyCase, self.case_id), "conversation went in circles")
         return STAFF_LINE
 
@@ -222,6 +222,8 @@ class Conversation:
                 return {"proposed_cents": p.amount, "card_last4": p.card_last4,
                         "status": "the desk is asking the caller to confirm; only a plain yes as their next message charges the card"}
             if name == "payment_status":
+                if not self.identity_verified:
+                    return {"error": "identity not verified, or the check expired"}
                 command = session.get(PaymentCommand, self.command_id) if self.command_id else None
                 return {"state": command.state if command else "no payment yet", "status": "the desk tells the caller the status itself"}
             if name == "hand_to_staff":
@@ -246,7 +248,8 @@ class Conversation:
                  u.input_tokens, u.output_tokens, cost, self.cost_usd)
 
     def _reply(self, session: Session, text: str) -> Reply:
-        command = session.get(PaymentCommand, self.command_id) if self.command_id else None
+        # what the channel may show next to the reply: nothing about the account once the verification lapses
+        command = session.get(PaymentCommand, self.command_id) if self.command_id and self.identity_verified else None
         p = session.get(PaymentProposal, self.proposal_id) if self.proposal_id else None
         return Reply(text, self.identity_verified, p.amount if p else None, p.card_last4 if p else None,
                      command.id if command else None, command.state if command else None, self.handed_to_staff)
