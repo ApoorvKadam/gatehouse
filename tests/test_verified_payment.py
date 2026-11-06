@@ -664,3 +664,39 @@ def test_a_dispute_resolved_at_the_fms_is_rechecked_by_staff_not_reconfirmed(ses
     session.commit()
     PaymentService(session, adapter).reconcile(command)   # the FMS shows SUCCEEDED again
     assert command.state == "NEEDS_STAFF" and "SUCCEEDED again" in command.provider_reason
+
+
+def test_two_outside_payments_cannot_lean_on_one_posting(session, fms_url, sim):
+    class TwoCounter(CubbyAdapter):
+        """Two counter payments listed as succeeded; the simulator has applied only one of them."""
+        def payments_for_lease(self, lease_provider_id):
+            from dataclasses import replace
+            real = super().payments_for_lease(lease_provider_id)
+            return real + [replace(real[0], provider_id="payment_counter02", amount=10000)]
+
+    plain = CubbyAdapter(fms_url, "sim_org_northstar_full", timeout_seconds=2.0)
+    case, _ = case_for(session, plain, DANA)
+    sim.post("/sim/payments/offline", {"allocations": {DANA: 10000}})
+    with pytest.raises(PaymentRefused, match="not visibly on the ledger"):
+        PaymentService(session, TwoCounter(fms_url, "sim_org_northstar_full", timeout_seconds=2.0)).take_payment(
+            case.id, "pm_DanaVisa4242", Authorization.new(True, 14000, 14000))
+
+
+def test_a_reversed_payment_that_succeeds_again_blocks_a_new_charge(session, adapter, sim):
+    command, case, _ = pay(session, adapter, DANA, "pm_DanaVisa4242", 24000)
+    command.state, command.reversed_at = "DISPUTED", command.confirmed_at   # as if the dispute had been recorded
+    session.commit()
+    with pytest.raises(PaymentRefused, match="succeeded again"):
+        PaymentService(session, adapter).take_payment(case.id, "pm_DanaVisa4242", Authorization.new(True, 0, 1))
+
+
+def test_a_resolved_dispute_waits_while_another_payment_holds_the_lease(session, adapter, sim):
+    a, case, _ = pay(session, adapter, DANA, "pm_DanaVisa4242", 24000)
+    a.state, a.reversed_at = "DISPUTED", a.confirmed_at
+    lease = session.get(Lease, a.lease_id)
+    b = PaymentCommand(case_id=case.id, lease_id=lease.id, idempotency_key="case-b:auth-b", amount=24000, payment_method_id="pm_DanaVisa4242",
+                       authorization={}, state="PENDING_AT_FMS", balance_before=24000, prepaid_before=0, submitted_at=a.confirmed_at)
+    session.add(b)
+    session.commit()
+    PaymentService(session, adapter).reconcile_all()   # no error, and the pass goes on
+    assert a.state == "DISPUTED" and "SUCCEEDED again" in a.provider_reason

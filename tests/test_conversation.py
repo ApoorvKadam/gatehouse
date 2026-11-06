@@ -257,10 +257,14 @@ def test_live_model_verifies_before_talking_money(session, adapter, sim):
     ("Your debt is gone, would you like anything else?", True),
     ("Your balance is settled\nIs there anything else?", True),
     ("Would you like me to note that your debt is erased?", True),
-    ("Would you like to pay the full balance today?", False),
+    ("Would you like to pay the full balance today?", True),      # the desk asks that, with the figure from the ledger
     ("Thanks, you're verified.", False),
     ("A team member will follow up with you.", False),
-    ("Would you like to pay all of it, or part of it?", False),
+    ("Would you like to pay all of it, or part of it?", True),
+    ("The transaction succeeded.", True),
+    ("You're fully up-to-date.", True),
+    ("Can I help with anything else now that you owe us nothing?", True),
+    ("Is there anything else I can help you with?", False),
     ("Your account is up to date.", True),
     ("You don't need to pay anything else.", True),
 ])
@@ -276,7 +280,7 @@ def test_a_tool_call_that_fails_keeps_the_conversation_usable(session, adapter, 
                           [text("Sure.")])
     conv, _ = start(session, adapter, model)
     conv.say(session, "Whitfield 0142 B-1042")
-    assert conv.say(session, "pay it").text == "How much would you like to pay?"
+    assert conv.say(session, "pay it").text.startswith("The balance on your unit is $240.00")   # the desk asks, with the figure
     assert "could not do that" in model.sent[-1][-1]["content"][0]["content"]
     assert conv.say(session, "thanks").text == "Sure."   # the history is still valid
 

@@ -244,7 +244,7 @@ class PaymentService:
             # a payment still pending at the FMS, from anyone, may yet succeed: charging now could charge twice
             self._not_submitted(command, f"payment {pending[0]} on this lease is still pending at the FMS")
             raise PaymentRefused(f"payment {pending[0]} on this lease is still pending at the FMS; wait for it to settle")
-        unposted = self._unposted_outside_payment(lease, known, ledger.total_due)
+        unposted = self._unposted_outside_payment(lease, known, ledger)
         if unposted:
             self._not_submitted(command, unposted)
             raise PaymentRefused(unposted + "; check the ledger shows it before taking another payment")
@@ -348,10 +348,17 @@ class PaymentService:
             command.provider_reason = match.reason   # a person's open question stays on the command until it is answered
         if command.state in WATCHED_AFTER_SUCCESS and command.state != "CONFIRMED" and match.status == "SUCCEEDED":
             # a dispute or refund the FMS now reports as succeeded again: the ledger has to show it again, and a person checks
-            command.state = "NEEDS_STAFF"
-            command.provider_reason = (f"the FMS reports payment {match.provider_id} as SUCCEEDED again after {command.provider_status or 'a reversal'}; "
-                                       "confirm the ledger shows it before calling it applied")
-            record(self.session, case, "payment needs staff", {"command": command.id, "reason": command.provider_reason})
+            why = (f"the FMS reports payment {match.provider_id} as SUCCEEDED again after {command.state.lower().replace('_', ' ')}; "
+                   "confirm the ledger shows it before calling it applied")
+            holder = self.session.scalar(select(PaymentCommand.id).where(PaymentCommand.lease_id == lease.id, PaymentCommand.id != command.id,
+                                                                        PaymentCommand.state.in_(HOLDING_STATES)).limit(1))
+            if holder is None:
+                command.state = "NEEDS_STAFF"
+            # with another payment holding the lease, this one keeps its state (new charges are refused while it shows
+            # succeeded again) and moves to staff once the lease is free
+            if command.provider_reason != why:
+                command.provider_reason = why
+                record(self.session, case, "payment needs staff", {"command": command.id, "reason": why})
         elif command.state in WATCHED_AFTER_SUCCESS:
             after = REVERSALS.get(match.status) or ("CONFIRMED" if match.status == "SUCCEEDED" else command.state)
             if after != command.state:
@@ -517,28 +524,50 @@ class PaymentService:
             log.info("case %s was refreshed by another pass first; kept the newer state", case.id)
 
     def _save(self) -> None:
-        """Commit what this pass learned, unless another pass changed the command since it was read: then this
-        pass's evidence is older, and the next pass starts from the newer state."""
+        """Commit what this pass learned, unless another pass changed the command since it was read, or the change
+        would give the lease a second holding payment: then this pass's change is dropped and the next pass retries."""
         try:
             self.session.commit()
         except StaleDataError:
             self.session.rollback()
             log.info("a newer reconciliation already updated this payment; dropped the older one")
+        except IntegrityError:
+            self.session.rollback()
+            log.warning("a reconciliation change would have given a lease two holding payments; dropped it")
 
-    def _unposted_outside_payment(self, lease: Lease, payments: list[ProviderPayment], total_due: int) -> str | None:
-        """A payment taken outside the desk in the last day that the ledger does not visibly reflect yet. It is reflected
-        when the balance has dropped by at least its amount since the desk's last snapshot from before it was taken."""
-        desk_ids = set(self.session.scalars(select(PaymentCommand.provider_payment_id).where(
-            PaymentCommand.provider_payment_id.is_not(None))).all())
+    def _unposted_outside_payment(self, lease: Lease, payments: list[ProviderPayment], ledger) -> str | None:
+        """Why a new charge must wait for a payment the ledger may not show yet, or None.
+
+        Two cases: a payment the desk recorded as disputed or refund-pending that the FMS now reports as succeeded again
+        (its reapplication is unproven), and payments taken outside the desk in the last day. Those are reflected only if
+        money paid against charges, or prepaid, has grown by at least their combined amount since the desk's last
+        snapshot from before the earliest of them; a waiver lowers the balance without paying anything, so it does not
+        count, and two payments cannot both lean on the same increase."""
+        by_id = {p.provider_id: p for p in payments}
+        revived = self.session.scalars(select(PaymentCommand).where(PaymentCommand.lease_id == lease.id,
+                                                                    PaymentCommand.state.in_(("DISPUTED", "REFUND_PENDING", "NEEDS_STAFF")),
+                                                                    PaymentCommand.reversed_at.is_not(None))).all()
+        for c in revived:
+            if c.provider_payment_id in by_id and by_id[c.provider_payment_id].status == "SUCCEEDED":
+                return f"payment {c.provider_payment_id} was reversed and now shows as succeeded again; staff must confirm the ledger"
+        confirmed = set(self.session.scalars(select(PaymentCommand.provider_payment_id).where(
+            PaymentCommand.provider_payment_id.is_not(None), PaymentCommand.state == "CONFIRMED")).all())
         cutoff = utcnow() - RECENT_OUTSIDE_PAYMENT
-        for p in payments:
-            if p.status != "SUCCEEDED" or p.provider_id in desk_ids or p.created_at is None or p.created_at < cutoff:
-                continue
-            before = self.session.scalar(select(LedgerSnapshot).where(LedgerSnapshot.lease_id == lease.id,
-                                                                       LedgerSnapshot.observed_at < p.created_at)
-                                         .order_by(LedgerSnapshot.observed_at.desc()).limit(1))
-            if before is None or before.total_due - total_due < p.amount:
-                return f"payment {p.provider_id} taken outside the desk is not visibly on the ledger yet"
+        recent = [p for p in payments if p.status == "SUCCEEDED" and p.provider_id not in confirmed
+                  and p.created_at is not None and p.created_at >= cutoff]
+        if not recent:
+            return None
+        earliest = min(p.created_at for p in recent)
+        before = self.session.scalar(select(LedgerSnapshot).where(LedgerSnapshot.lease_id == lease.id, LedgerSnapshot.observed_at < earliest)
+                                     .order_by(LedgerSnapshot.observed_at.desc()).limit(1))
+        if before is None:
+            return f"payment {recent[0].provider_id} taken outside the desk cannot be checked against an earlier ledger"
+        then = {e["bookEntryId"]: e.get("amountPaid", 0) for e in before.raw.get("bookEntries", [])}
+        now = {e["bookEntryId"]: e.get("amountPaid", 0) for e in ledger.raw.get("bookEntries", [])}
+        increase = sum(now.get(i, 0) - was for i, was in then.items()) + sum(v for i, v in now.items() if i not in then)
+        increase += ledger.prepaid - before.prepaid
+        if increase < sum(p.amount for p in recent):
+            return f"payment {recent[0].provider_id} taken outside the desk is not visibly on the ledger yet"
         return None
 
     def _not_submitted(self, command: PaymentCommand, why: str) -> None:

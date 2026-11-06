@@ -78,15 +78,11 @@ OUTCOME = re.compile(r"\b(went through|gone through|went thru|gone thru|cleared|
                      r"no (outstanding |remaining )?(balance|amount|money)|(don't|do not) owe|up to date|in good standing|"
                      r"(don't|do not|no) need to pay|nothing (else |more |further )?to pay|owe nothing|squared away|resolved|"
                      r"erased|wiped|forgiven|written off|zeroed|gone|credited|refunded)\b", re.I)
-SUBJECT = re.compile(r"\b(payment|balance|account|card|charge|rent|bill|you|your|it|that|everything)\b", re.I)
-# the model may ask about money ("Would you like to pay all of it?") but every statement about it is the desk's
-FINANCIAL = re.compile(r"\b(owe[sd]?|owing|debt|balance|account|payments?|paid|pay(ing)?|charge[sd]?|fees?|rent|bill|money|"
-                       r"credit(ed)?|due|card|refund(ed)?|amount|erased|wiped|forgiven|written off|zeroed|outstanding|owed|"
-                       r"free and clear|in the clear|square[d]?)\b", re.I)
-SENTENCES = re.compile(r"[^.!?\n]+[.!?]*")
-# a sentence counts as a question only if it reads as one from its first word, ends with "?" and claims no outcome
-QUESTION = re.compile(r"^\s*(would|do|does|did|can|could|shall|should|may|is|are|will|how|what|when|which|who|have|has)\b", re.I)
-MONEY_SPAN = re.compile(r"\$\s?[\d,]+(\.\d+)?")
+# after verification the model may make small talk and choose actions, but any text of its own that touches money is
+# replaced by the desk's sentence: a figure, a money word, or an outcome, anywhere in the reply, question or not
+FINANCIAL = re.compile(r"\b(owe[sd]?|owing|debts?|balance|account|payments?|paid|pay(ing)?|charge[sd]?|fees?|rent|bill|money|"
+                       r"credit(ed)?|due|card|refund(ed)?|amount|transactions?|erased|wiped|forgiven|written off|zeroed|outstanding|"
+                       r"owed|free and clear|in the clear|square[d]?|debt free|arrears|delinquen\w*|past due|overdue|late)\b", re.I)
 
 
 @dataclass
@@ -208,15 +204,12 @@ class Conversation:
                 record(session, session.get(DelinquencyCase, self.case_id), "model reply replaced",
                        {"conversation": self.id, "model_said": text, "sent": IDENTITY_ASK}, source="chat")
             return IDENTITY_ASK
-        masked = MONEY_SPAN.sub(" AMOUNT ", text)
-        figure = bool(NUMBER_WORDS.search(text))
-        sentences = SENTENCES.findall(masked)
-        outcome = any(OUTCOME.search(x) and SUBJECT.search(x) for x in sentences)
-        asks = lambda x: bool(QUESTION.match(x)) and x.strip().endswith("?") and not OUTCOME.search(x)  # noqa: E731
-        outcome = outcome or any(FINANCIAL.search(x) and not asks(x) for x in sentences)
-        if not (figure or outcome):
+        plain = re.sub(r"[-\u2010-\u2015_/]+", " ", text.replace("\u2019", "'"))   # "up-to-date" reads as "up to date"
+        figure = bool(NUMBER_WORDS.search(plain))
+        outcome = bool(OUTCOME.search(plain))
+        if not (figure or outcome or FINANCIAL.search(plain)):
             return text
-        if outcome and self.command_id:
+        if self.command_id:
             replacement = self._status_and_balance(session)
         else:
             replacement = self._balance_line(session)
