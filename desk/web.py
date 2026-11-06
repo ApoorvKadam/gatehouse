@@ -40,17 +40,24 @@ LANE_OF = {
 # payments that still hold the lease, and what each is waiting for
 IN_FLIGHT = {"SUBMITTING": "being sent to the FMS", "PENDING_AT_FMS": "pending at the FMS",
              "AWAITING_APPLICATION": "accepted by the FMS but not yet on the ledger",
-             "OUTCOME_UNKNOWN": "unconfirmed: the FMS answer did not arrive and Gatehouse is checking"}
+             "OUTCOME_UNKNOWN": "not confirmed yet, and Gatehouse is checking the FMS"}
 # what a lien file's latest state means on Today: rank, head, what proves it done, who acts. A file stays on the list
 # until a person's decision is recorded, which Gatehouse cannot record yet, so these items do not close on their own.
 LIEN_ITEMS = {
     "Account changed: re-review": (1, "Lien file out of date", "A person reviews the file against the account as it is now and decides what happens to the sale.", "Collections lead"),
     "FMS reports paid": (1, "Lien file on a paid account", "A person confirms the sale is cancelled everywhere it was listed.", "Collections lead"),
-    "FMS data unavailable": (2, "Lien file cannot be checked", "Gatehouse reads the FMS again and the file is evaluated.", "Gatehouse checks on its own"),
+    "FMS data unavailable": (2, "Lien file cannot be checked", "Once the FMS answers, a person has the file evaluated again.", "Collections lead"),
     "Evidence incomplete": (2, "Lien file incomplete", "Every requirement has a record, with its document where one is needed.", "Front desk"),
-    "Waiting for a timing threshold": (3, "Lien file waiting on a date", "The date passes and the file is evaluated again.", "Gatehouse checks on its own"),
+    "Waiting for a timing threshold": (3, "Lien file waiting on a date", "After the date, a person has the file evaluated again.", "Collections lead"),
     "Counsel review required": (3, "Counsel review required", "Counsel's decision is recorded on the file. Gatehouse cannot record one yet.", "Counsel"),
     "Review packet assembled": (3, "Lien packet ready for review", "A person reviews the packet. Sale authorization is outside Gatehouse.", "Collections lead"),
+}
+# a payment the FMS later reversed or put in dispute, and what closes it
+REVERSED = {
+    "RETURNED": ("Payment returned", "The FMS ledger shows the balance paid."),
+    "REFUNDED": ("Payment refunded", "The FMS ledger shows the balance paid."),
+    "REFUND_PENDING": ("Refund in progress", "The FMS reports the refund finished, or that it was cancelled."),
+    "DISPUTED": ("Payment disputed", "The FMS reports the dispute settled, and the ledger shows what is owed."),
 }
 EVIDENCE_NAMES = {"notice": "Lien notice", "mail_deposit": "Certificate of mailing", "posting": "Notice posted",
                   "publication": "Newspaper publication", "legal_check": "Legal check", "email_delivery": "Email delivery"}
@@ -116,7 +123,7 @@ def describe(e: CaseEvent, commands: dict[int, PaymentCommand], evidence: dict[i
     if kind == "case opened":
         title, text = "Past due", f"{money(d.get('total_due'))} owed since {day(d.get('delinquent_since'))}."
     elif kind == "payment submitted":
-        said = {"lost": "No answer came back before the timeout.", "accepted": f"The FMS answered {d.get('status')}."}
+        said = {"lost": f"The outcome was not confirmed ({d.get('detail') or 'no usable answer'}).", "accepted": f"The FMS answered {d.get('status')}."}
         title = f"Sent a {money(d.get('amount'))} card payment"
         text = said.get(d.get("fms_said"), f"The FMS answered: {d.get('detail') or d.get('fms_said')}.")
     elif kind == "possible match for staff":
@@ -197,18 +204,25 @@ class Pages:
                                       "The FMS reports it succeeded and the ledger shows it, the FMS reports it declined, or "
                                       "Gatehouse hands it to a person.",
                                       "Gatehouse checks on its own", f"/payments/{cmd.id}", money(cmd.amount)))
-                elif cmd.state == "RETURNED":
+                elif cmd.state in REVERSED:
                     found = True
-                    items.append(Item(2, "Payment returned", lease.unit_name, case.id, cmd.reversed_at or cmd.created_at,
-                                      f"{money(cmd.amount)} posted and was confirmed, then the FMS reported it returned. The account is open again.",
-                                      "The FMS ledger shows the balance paid.", "Front desk", f"/payments/{cmd.id}", money(owed)))
+                    head, proof = REVERSED[cmd.state]
+                    before = (f"{money(cmd.amount)} was confirmed on the ledger {local(cmd.confirmed_at)}. " if cmd.confirmed_at
+                              else f"A {money(cmd.amount)} payment. ")
+                    items.append(Item(2, head, lease.unit_name, case.id, cmd.reversed_at or cmd.created_at,
+                                      before + f"The FMS now reports it {cmd.provider_status}.",
+                                      proof, "Front desk", f"/payments/{cmd.id}", money(owed)))
             last = s.scalar(select(LienEvaluation).where(LienEvaluation.case_id == case.id).order_by(LienEvaluation.id.desc()).limit(1))
             if last is not None:
                 found = True
-                rank, head, proof, who = LIEN_ITEMS.get(last.state, (3, last.state, "A person reviews the file.", "Collections lead"))
+                state = "FMS reports paid" if case.state == "paid" else last.state
+                rank, head, proof, who = LIEN_ITEMS.get(state, (3, state, "A person reviews the file.", "Collections lead"))
                 open_findings = [sentence(f["detail"]) for f in last.findings if f["status"] != "met"]
                 sale = next((v for k, v in last.timing.items() if k.startswith("earliest sale")), None)
-                what = " ".join(open_findings) if last.state not in ("Counsel review required",) and open_findings else sentence(last.summary)
+                if state != last.state:
+                    what = f"The FMS now shows this account paid. The file was last evaluated before that, as \u201c{last.state}\u201d."
+                else:
+                    what = " ".join(open_findings) if state != "Counsel review required" and open_findings else sentence(last.summary)
                 items.append(Item(rank, head, lease.unit_name, case.id, last.evaluated_at,
                                   what + (f" Earliest sale under the statute: {day(sale)}." if sale and rank <= 2 else ""),
                                   proof, who, f"/accounts/{case.id}/lien", money(owed)))

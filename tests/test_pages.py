@@ -101,3 +101,16 @@ def test_a_payment_still_pending_at_the_fms_is_shown_as_in_progress(fms_url, sim
         page = visitor.get("/").text
         unit = page[page.index("Unit A-012") - 400: page.index("Unit A-012") + 400]
         assert "Payment in progress" in unit and "No payment or lien step in progress" not in unit
+
+
+def test_a_lien_file_on_an_account_paid_since_says_so(fms_url, sim):
+    app = preview(fms_url)
+    with TestClient(app) as visitor, TestClient(app, headers={"X-Desk-Token": "op-token"}) as desk:
+        # the tenant pays the rest at the counter; Gatehouse sees it on its next read of the FMS
+        sim.post("/sim/payments/offline", {"allocations": {"lease_OkfrE0505": 11500}})
+        assert desk.post("/api/reconcile").status_code == 200
+        rows = desk.get(f"/api/facilities/{ORLANDO}/queue").json()["rows"]
+        assert next(r for r in rows if r["lease"] == "lease_OkfrE0505")["state"] == "paid"
+        page = visitor.get("/").text
+        unit = page[page.index("Unit E-505") - 400: page.index("Unit E-505") + 500]
+        assert "Lien file on a paid account" in unit and "The FMS now shows this account paid" in unit
