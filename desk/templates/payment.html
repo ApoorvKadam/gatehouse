@@ -9,7 +9,7 @@
 {% set held = cmd.state in ('NEEDS_STAFF', 'OUTCOME_UNKNOWN') %}
 <p class="state-line{% if held or cmd.state == 'RETURNED' %} act{% endif %}">
   {% if cmd.state == 'NEEDS_STAFF' and not cmd.provider_payment_id %}Outcome unknown: held for a person
-  {% elif cmd.state == 'RETURNED' %}Confirmed, then returned by the bank
+  {% elif cmd.state == 'RETURNED' %}{% if cmd.confirmed_at %}Confirmed, then returned{% else %}Returned before Gatehouse confirmed it{% endif %}
   {% elif cmd.state == 'CONFIRMED' %}Confirmed by the FMS ledger
   {% else %}{{ cmd.state|replace('_', ' ')|capitalize }}{% endif %}
 </p>
@@ -34,7 +34,8 @@
     <dl class="kv">
       <dt>Written down first</dt><dd>{{ local(cmd.created_at) }}, before the FMS was called</dd>
       <dt>Sent to the FMS</dt><dd>{{ local(cmd.submitted_at) or 'Not sent' }}</dd>
-      <dt>Answer</dt><dd>{% if cmd.provider_payment_id %}{{ cmd.provider_payment_id }}, {{ cmd.provider_status }}{% elif cmd.submitted_at %}No usable answer: the outcome was not confirmed{% else %}None{% endif %}</dd>
+      <dt>Answer at the time</dt><dd>{% if sent and sent.fms_said == 'accepted' %}{{ sent.status }}{% if sent.detail %} ({{ sent.detail }}){% endif %}{% elif sent %}No usable answer: {{ sent.detail or 'the outcome was not confirmed' }}{% elif cmd.submitted_at %}Not recorded{% else %}Not sent{% endif %}</dd>
+      <dt>Status at the FMS now</dt><dd>{% if cmd.provider_payment_id %}{{ cmd.provider_payment_id }}, {{ cmd.provider_status }}{% else %}No FMS payment identified as this attempt{% endif %}</dd>
       <dt>Checks since</dt><dd>{{ cmd.checks }}, last {{ local(cmd.last_checked_at) or 'not yet' }}</dd>
       <dt>Retried</dt><dd>No. A payment whose outcome is unknown is never sent again.</dd>
     </dl>

@@ -126,7 +126,7 @@ class CubbyAdapter:
             return SubmitOutcome(kind="lost", detail="no response before the timeout")
         except httpx.TransportError as exc:
             # the connection broke after the request may have reached the FMS
-            return SubmitOutcome(kind="lost", detail=f"connection failed: {exc.__class__.__name__}")
+            return SubmitOutcome(kind="lost", detail=f"the connection broke before the answer arrived ({exc.__class__.__name__})")
         payload = _json(response)
         errors = payload.get("errors") if isinstance(payload.get("errors"), list) else []
         if 400 <= response.status_code < 500 and "errors" in payload and "code" in payload:

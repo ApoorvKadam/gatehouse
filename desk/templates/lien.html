@@ -6,7 +6,9 @@
   <h1>Lien file, unit {{ lease.unit_name }}</h1>
   <p>{{ facility.name }} ({{ facility.jurisdiction }}) &middot; evaluated {{ local(current.evaluated_at) }}</p>
 </div>
-<p class="state-line{% if current.state != 'Review packet assembled' %} act{% endif %}">{{ current.state }}</p>
+<p class="state-line{% if current.state != 'Review packet assembled' or moved or case.state == 'paid' %} act{% endif %}">{{ current.state }}</p>
+{% if case.state == 'paid' %}<p class="lede"><b>The FMS now shows this account paid.</b> This evaluation was made before that. A person has to review the file and confirm any sale is cancelled.</p>
+{% elif moved %}<p class="lede"><b>The FMS balance moved from {{ money(moved[0]) }} to {{ money(moved[1]) }} after this evaluation.</b> The state below is from before that, and the file needs to be evaluated again.</p>{% endif %}
 <p class="lede">{{ current.summary }} Gatehouse never says a file is compliant or that a unit may be sold. The best a file can reach is a packet ready for a person to review.</p>
 
 {% if changed %}

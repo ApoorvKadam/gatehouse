@@ -159,6 +159,17 @@ def describe(e: CaseEvent, commands: dict[int, PaymentCommand], evidence: dict[i
     return Entry(e.occurred_at, LANE_OF.get(kind, OBSERVED), title, text, e.actor if e.actor not in ("desk",) else "", pay_link)
 
 
+def balance_moved(s: Session, lease: Lease, evaluation: LienEvaluation) -> tuple[int, int] | None:
+    """The FMS balance before the evaluation and now, when the worker has seen it change since. Nothing evaluates a
+    lien file on its own yet, so a file can fall behind its account; this says when it has."""
+    snaps = s.scalars(select(LedgerSnapshot).where(LedgerSnapshot.lease_id == lease.id).order_by(LedgerSnapshot.observed_at)).all()
+    before = [x for x in snaps if x.observed_at <= evaluation.evaluated_at]
+    after = [x for x in snaps if x.observed_at > evaluation.evaluated_at]
+    if before and after and after[-1].total_due != before[-1].total_due:
+        return before[-1].total_due, after[-1].total_due
+    return None
+
+
 @dataclass
 class Pages:
     factory: sessionmaker[Session]
@@ -179,8 +190,10 @@ class Pages:
             snap = s.get(LedgerSnapshot, case.last_snapshot_id) if case.last_snapshot_id else None
             owed = snap.total_due if snap else None
             found = False
-            commands = s.scalars(select(PaymentCommand).where(PaymentCommand.case_id == case.id)).all() if case.state != "paid" else []
+            commands = s.scalars(select(PaymentCommand).where(PaymentCommand.case_id == case.id)).all()
             for cmd in commands:
+                if case.state == "paid" and cmd.state in ("RETURNED", "REFUNDED"):
+                    continue   # their proof is a paid balance, which the FMS now shows
                 how = "by phone" if (cmd.authorization or {}).get("channel") == "desk" else "in the tenant chat"
                 if cmd.state == "NEEDS_STAFF":
                     found = True
@@ -215,19 +228,23 @@ class Pages:
             last = s.scalar(select(LienEvaluation).where(LienEvaluation.case_id == case.id).order_by(LienEvaluation.id.desc()).limit(1))
             if last is not None:
                 found = True
-                state = "FMS reports paid" if case.state == "paid" else last.state
+                moved = balance_moved(s, lease, last)
+                state = "FMS reports paid" if case.state == "paid" else ("Account changed: re-review" if moved else last.state)
                 rank, head, proof, who = LIEN_ITEMS.get(state, (3, state, "A person reviews the file.", "Collections lead"))
                 open_findings = [sentence(f["detail"]) for f in last.findings if f["status"] != "met"]
                 sale = next((v for k, v in last.timing.items() if k.startswith("earliest sale")), None)
-                if state != last.state:
+                if state == "FMS reports paid" and last.state != state:
                     what = f"The FMS now shows this account paid. The file was last evaluated before that, as \u201c{last.state}\u201d."
+                elif moved and last.state != state:
+                    what = (f"The FMS balance moved from {money(moved[0])} to {money(moved[1])} after the file was last evaluated, "
+                            f"as \u201c{last.state}\u201d.")
                 else:
                     what = " ".join(open_findings) if state != "Counsel review required" and open_findings else sentence(last.summary)
                 items.append(Item(rank, head, lease.unit_name, case.id, last.evaluated_at,
                                   what + (f" Earliest sale under the statute: {day(sale)}." if sale and rank <= 2 else ""),
                                   proof, who, f"/accounts/{case.id}/lien", money(owed)))
             if case.state == "paid":
-                continue
+                continue   # past due no longer; any open payment or lien work above still shows
             if not found:
                 items.append(Item(4, "Past due", lease.unit_name, case.id, case.opened_at,
                                   f"{money(owed)} owed. No payment or lien step in progress.",
@@ -306,11 +323,14 @@ def router(pages: Pages) -> APIRouter:
                 raise HTTPException(404, "No such payment")
             case, lease, facility = case_or_404(s, cmd.case_id)
             proposal = s.scalar(select(PaymentProposal).where(PaymentProposal.command_id == cmd.id))
+            sent = next((e.detail for e in s.scalars(select(CaseEvent).where(CaseEvent.case_id == case.id,
+                                                                           CaseEvent.kind == "payment submitted")).all()
+                         if (e.detail or {}).get("command") == cmd.id), None)
             check = s.get(IdentityCheck, proposal.identity_check_id) if proposal else None
             snap = s.get(LedgerSnapshot, case.last_snapshot_id) if case.last_snapshot_id else None
             return templates.TemplateResponse(request, "payment.html", {
                 "cmd": cmd, "case": case, "lease": lease, "facility": facility, "proposal": proposal, "check": check,
-                "snap": snap, "told": tenant_message(cmd), "truth": pages.trace.get(lease.provider_id),
+                "snap": snap, "told": tenant_message(cmd), "truth": pages.trace.get(lease.provider_id), "sent": sent,
                 "money": money, "local": local, "nav": "today", "facilities": pages.facilities(s)})
 
     @r.get("/accounts/{case_id}/lien", response_class=HTMLResponse)
@@ -322,6 +342,7 @@ def router(pages: Pages) -> APIRouter:
             if not evaluations:
                 raise HTTPException(404, "This account has no lien file")
             current, previous = evaluations[0], (evaluations[1] if len(evaluations) > 1 else None)
+            moved = balance_moved(s, lease, current)
             before = {f["requirement"]: f for f in previous.findings} if previous else {}
             changed = [(before.get(f["requirement"]), f) for f in current.findings
                        if previous and before.get(f["requirement"]) != f]
@@ -329,7 +350,7 @@ def router(pages: Pages) -> APIRouter:
             findings = sorted(current.findings, key=lambda f: order.get(f["status"], 5))
             evidence = s.scalars(select(LienEvidence).where(LienEvidence.case_id == case.id).order_by(LienEvidence.id)).all()
             return templates.TemplateResponse(request, "lien.html", {
-                "case": case, "lease": lease, "facility": facility, "current": current, "previous": previous,
+                "case": case, "lease": lease, "facility": facility, "current": current, "previous": previous, "moved": moved, "money": money,
                 "changed": changed, "findings": findings, "evidence": evidence, "names": EVIDENCE_NAMES, "day": day,
                 "local": local, "nav": "today", "facilities": pages.facilities(s)})
 

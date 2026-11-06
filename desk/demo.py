@@ -81,9 +81,10 @@ def settle(session: Session, adapter: FMSAdapter, passes: int = 4) -> None:
 
 
 def lost_response(session: Session, adapter: FMSAdapter, sim: httpx.Client) -> None:
-    """Dana pays her $240 balance by phone. The FMS takes the money and applies it, and its answer never arrives:
+    """Dana pays her $240 balance by phone. The FMS takes the money and applies it, and the connection breaks before
+    its answer arrives:
     the desk does not retry, does not tell her it went through, and holds the account for a person."""
-    sim.post("/sim/behaviors", json={"leaseId": "lease_WhitB1042", "mode": "lose_response"}).raise_for_status()
+    sim.post("/sim/behaviors", json={"leaseId": "lease_WhitB1042", "mode": "drop_after_charge"}).raise_for_status()
     case = case_of(session, "lease_WhitB1042")
     pay_by_phone(session, adapter, case, IdentityClaim("Whitfield", "0142", "B-1042"), 24000)
     settle(session, adapter)

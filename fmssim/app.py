@@ -6,7 +6,7 @@ import time
 from datetime import date, datetime
 
 from fastapi import Depends, FastAPI, Header, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -18,7 +18,7 @@ from .store import (
 
 PII_FIELDS = ("name", "firstName", "lastName", "phone", "email")
 PAYMENT_MODES = {"approve", "decline", "fail", "pending_then_succeed", "pending_then_decline",
-                 "late_application", "lose_response", "server_error", "gateway_error", "reject"}
+                 "late_application", "lose_response", "drop_after_charge", "server_error", "gateway_error", "reject"}
 
 
 class ApiError(Exception):
@@ -221,6 +221,13 @@ def create_app(database_url: str | None = None, lose_response_seconds: float = 8
         if mode == "lose_response":
             # the money is taken and applied, then the response never arrives in time
             time.sleep(app.state.lose_response_seconds)
+        if mode == "drop_after_charge":
+            # the money is taken and applied, then the connection breaks before the answer is complete: the same
+            # unknown outcome as a timeout, without depending on how fast this machine is
+            def broken():
+                yield b'{"status": 200, "data": {"payment": '
+                raise ConnectionResetError("connection dropped after charging")
+            return StreamingResponse(broken(), media_type="application/json")
         return ok({"payment": payment_json(payment)})
 
     # ---------------- simulator controls ----------------

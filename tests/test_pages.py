@@ -13,10 +13,10 @@ from .conftest import FULL_KEY, ORLANDO
 
 
 def preview(fms_url, **kw):
-    settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=2.0,
+    settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=5.0,
                         reconcile_every_seconds=60, operator_token="op-token", staff_token="staff-token",
                         public_view=True, demo_seed=True, **kw)
-    return create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 2.0), start_worker=False)
+    return create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 5.0), start_worker=False)
 
 
 def counts(app) -> dict:
@@ -81,9 +81,9 @@ def test_reading_every_page_writes_nothing(fms_url, sim):
 
 
 def test_the_screens_exist_only_in_the_preview(fms_url, sim):
-    settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=2.0,
+    settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=5.0,
                         reconcile_every_seconds=60, operator_token="op-token")
-    with TestClient(create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 2.0), start_worker=False)) as c:
+    with TestClient(create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 5.0), start_worker=False)) as c:
         assert c.get("/").status_code == 404 and c.get("/payments/1").status_code == 404
 
 
