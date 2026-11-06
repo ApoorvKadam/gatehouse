@@ -229,13 +229,27 @@ def create_app(database_url: str | None = None, lose_response_seconds: float = 8
         seed.reset(session)
         return ok({"reset": True})
 
+    # test controls answer a bad request with 400 or 404, never a 500 that looks like the simulated server_error mode
+    def control_lease(session: Session, lease_id) -> Lease:
+        lease = session.get(Lease, lease_id or "")
+        if lease is None:
+            raise ApiError(404, "Lease not found")
+        return lease
+
+    def control_int(value, name: str) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError) as exc:
+            raise ApiError(400, f"{name} must be a whole number of cents") from exc
+
     @app.post("/sim/behaviors")
     def sim_behavior(body: dict, session: Session = Depends(db)):
         mode = body.get("mode")
         if mode not in PAYMENT_MODES:
             raise ApiError(400, f"mode must be one of {sorted(PAYMENT_MODES)}")
-        b = session.get(LeaseBehavior, body["leaseId"]) or LeaseBehavior(lease_id=body["leaseId"], mode=mode)
-        b.mode, b.lag = mode, int(body.get("lag", 2))
+        lease = control_lease(session, body.get("leaseId"))
+        b = session.get(LeaseBehavior, lease.lease_id) or LeaseBehavior(lease_id=lease.lease_id, mode=mode)
+        b.mode, b.lag = mode, control_int(body.get("lag", 2), "lag")
         session.merge(b)
         session.commit()
         return ok({"leaseId": b.lease_id, "mode": b.mode, "lag": b.lag})
@@ -257,8 +271,13 @@ def create_app(database_url: str | None = None, lose_response_seconds: float = 8
     @app.post("/sim/payments/offline")
     def sim_offline(body: dict, session: Session = Depends(db)):
         """One payment taken at the counter that covers several leases of the same customer."""
-        allocations: dict = body["allocations"]
-        leases = [session.get(Lease, lid) for lid in allocations]
+        allocations = body.get("allocations")
+        if not isinstance(allocations, dict) or not allocations:
+            raise ApiError(400, "allocations must map lease ids to amounts")
+        leases = [control_lease(session, lid) for lid in allocations]
+        allocations = {lid: control_int(v, f"allocation for {lid}") for lid, v in allocations.items()}
+        if len({lease.customer_id for lease in leases}) != 1:
+            raise ApiError(400, "an offline payment covers leases of one customer")
         payment = Payment(payment_id=new_id("payment"), customer_id=leases[0].customer_id,
                           facility_id=leases[0].facility_id, amount=sum(allocations.values()), method_type="CASH",
                           status="SUCCEEDED", reason="Approved", allocations=allocations, applied=True)
@@ -271,9 +290,9 @@ def create_app(database_url: str | None = None, lose_response_seconds: float = 8
     @app.post("/sim/charges")
     def sim_charge(body: dict, session: Session = Depends(db)):
         """Post a new charge to a lease (a late fee, or a balance change between two reads)."""
-        lease = session.get(Lease, body["leaseId"])
+        lease = control_lease(session, body.get("leaseId"))
         session.add(BookEntry(book_entry_id=new_id("be"), lease_id=lease.lease_id, category=body.get("category", "FEE"),
-                              description=body.get("description"), amount=int(body["amount"])))
+                              description=body.get("description"), amount=control_int(body.get("amount"), "amount")))
         session.commit()
         return ok({"totalDue": lease_total_due(session, lease.lease_id)})
 

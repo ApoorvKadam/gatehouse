@@ -751,3 +751,11 @@ def test_a_desk_payment_posting_late_cannot_vouch_for_an_outside_payment(session
     with pytest.raises(PaymentRefused, match="not visibly on the ledger"):
         PaymentService(session, WithCounter(fms_url, "sim_org_northstar_full", timeout_seconds=2.0)).take_payment(
             case.id, "pm_DanaVisa4242", Authorization.new(True, 14000, 14000))
+
+
+def test_simulator_controls_refuse_bad_requests_without_a_500(sim):
+    assert sim.post("/sim/behaviors", {"mode": "approve"}).status_code == 404
+    assert sim.post("/sim/behaviors", {"leaseId": DANA, "mode": "approve", "lag": "soon"}).status_code == 400
+    assert sim.post("/sim/charges", {"leaseId": "lease_nope", "amount": 100}).status_code == 404
+    assert sim.post("/sim/payments/offline", {"allocations": {}}).status_code == 400
+    assert sim.post("/sim/payments/offline", {"allocations": {DANA: 100, MARCUS: 100}}).status_code == 400
