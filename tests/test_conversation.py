@@ -116,6 +116,17 @@ def test_three_wrong_identity_answers_hand_the_thread_to_staff(session, adapter,
     assert len(model.sent) == calls   # the model is not asked again
 
 
+def test_guessing_in_one_turn_or_in_a_new_conversation_stays_locked(session, adapter, sim):
+    wrong = {"last_name": "Whitfield", "phone_last4": "1111", "unit_name": "B-1042"}
+    burst = [tool("verify_identity", wrong, f"g{i}") for i in range(3)] + [tool("verify_identity", DANA_ID, "g3")]
+    conv, case = start(session, adapter, ScriptedModel(burst))
+    reply = conv.say(session, "Whitfield, 1111 or 2222 or 3333 or 0142, B-1042")
+    assert reply.handed_to_staff and not reply.verified   # the fourth guess in the same turn was never checked
+
+    fresh = Conversation(case.id, adapter, ScriptedModel([tool("verify_identity", DANA_ID)], [text("Sorry, I can't verify you here.")]))
+    assert not fresh.say(session, "Whitfield 0142 B-1042").verified
+
+
 def test_a_refusal_goes_to_staff_and_never_back_to_the_model(session, adapter, sim):
     model = ScriptedModel([text("")], stop_reason="refusal")
     conv, _ = start(session, adapter, model)

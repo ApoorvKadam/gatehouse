@@ -71,3 +71,12 @@ def test_verified_payment_end_to_end_and_a_resend_charges_once(client, sim):
     assert detail["state"] == "paid" and detail["ledger"]["total_due"] == 0
     kinds = [h["kind"] for h in detail["history"]]
     assert kinds[0] == "case opened" and "payment confirmed" in kinds
+
+
+def test_identity_checks_lock_after_three_misses(client):
+    cid = dana_case(client)["case_id"]
+    wrong = {"last_name": "Whitfield", "phone_last4": "1111", "unit_name": "B-1042"}
+    for _ in range(3):
+        assert client.post(f"/api/cases/{cid}/identity", json=wrong).json()["verified"] is False
+    right = {"last_name": "Whitfield", "phone_last4": "0142", "unit_name": "B-1042"}
+    assert client.post(f"/api/cases/{cid}/identity", json=right).status_code == 429

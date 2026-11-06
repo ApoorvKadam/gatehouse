@@ -19,7 +19,9 @@ from sqlalchemy.orm import Session
 from .adapter import FMSAdapter, FMSError
 from .cases import record
 from .models import DelinquencyCase, Facility, IdentityCheck, Lease, PaymentCommand
-from .payments import Authorization, IdentityClaim, PaymentRefused, PaymentService, tenant_message, verify_identity
+from .payments import (
+    Authorization, IdentityClaim, PaymentRefused, PaymentService, identity_locked, tenant_message, verify_identity,
+)
 
 log = logging.getLogger("desk.conversation")
 
@@ -28,7 +30,6 @@ PRICES = {"claude-haiku-5-5": (0.10, 0.50), "claude-sonnet-5-5": (2.00, 10.00)}
 # a confirmation is a short, unambiguous yes and nothing else
 CONFIRM = re.compile(r"^\s*(yes|yes please|yep|confirm|confirmed|i confirm|go ahead|yes,? go ahead)[\s.!]*$", re.I)
 MAX_MODEL_TURNS = 6
-MAX_IDENTITY_ATTEMPTS = 3
 
 SYSTEM = """You handle messages for {facility}, a self-storage facility, about one storage unit whose rent is past due.
 
@@ -89,7 +90,6 @@ class Conversation:
         self.lock = threading.Lock()
         self.messages: list = []
         self.identity_verified = False
-        self.failed_identity = 0
         self.proposal: Proposal | None = None
         self.command_id: int | None = None
         self.handed_to_staff = False
@@ -157,6 +157,9 @@ class Conversation:
         case = session.get(DelinquencyCase, self.case_id)
         try:
             if name == "verify_identity":
+                if identity_locked(session, case.id):
+                    self._to_staff(session, case, "identity not confirmed after three tries")
+                    return {"verified": False, "reason": "too many failed checks; a team member has to verify this caller"}
                 claim = IdentityClaim(str(args.get("last_name", "")), str(args.get("phone_last4", "")), str(args.get("unit_name", "")))
                 ok, why = verify_identity(self.adapter, lease, claim)
                 session.add(IdentityCheck(id=uuid.uuid4().hex, case_id=case.id, verified=ok, reason=why))
@@ -164,10 +167,8 @@ class Conversation:
                 if ok:
                     self.identity_verified = True
                     return {"verified": True}
-                self.failed_identity += 1
-                if self.failed_identity >= MAX_IDENTITY_ATTEMPTS:
-                    self.handed_to_staff = True
-                    record(session, case, "handed to staff", {"conversation": self.id, "reason": "identity not confirmed after three tries"}, source="chat")
+                if identity_locked(session, case.id):
+                    self._to_staff(session, case, "identity not confirmed after three tries")
                 return {"verified": False, "reason": why}
             if name == "get_balance":
                 if not self.identity_verified:
@@ -195,12 +196,16 @@ class Conversation:
                 command = session.get(PaymentCommand, self.command_id) if self.command_id else None
                 return {"state": command.state, "what_to_tell_the_caller": tenant_message(command)} if command else {"state": "no payment yet"}
             if name == "hand_to_staff":
-                self.handed_to_staff = True
-                record(session, case, "handed to staff", {"conversation": self.id, "reason": args.get("reason")}, source="chat")
+                self._to_staff(session, case, args.get("reason"))
                 return {"handed_to_staff": True}
         except FMSError as exc:
             return {"error": f"the facility system did not answer: {exc}"}
         return {"error": f"unknown tool {name}"}
+
+    def _to_staff(self, session: Session, case: DelinquencyCase, reason: str | None) -> None:
+        if not self.handed_to_staff:
+            self.handed_to_staff = True
+            record(session, case, "handed to staff", {"conversation": self.id, "reason": reason}, source="chat")
 
     def _log_usage(self, response) -> None:
         u = response.usage

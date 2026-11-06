@@ -20,7 +20,9 @@ from .config import Settings
 from .conversation import Conversation
 from .db import make_session_factory, utcnow
 from .models import CaseEvent, DelinquencyCase, IdentityCheck, Lease, LedgerSnapshot, PaymentCommand
-from .payments import Authorization, IdentityClaim, PaymentRefused, PaymentService, collected, tenant_message, verify_identity
+from .payments import (
+    Authorization, IdentityClaim, PaymentRefused, PaymentService, collected, identity_locked, tenant_message, verify_identity,
+)
 from .worker import Worker
 
 log = logging.getLogger("desk.api")
@@ -127,6 +129,8 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
     @app.post("/api/cases/{case_id}/identity")
     def check_identity(case_id: int, body: IdentityIn, session: Session = Depends(db), _: str = Depends(operator)):
         case = get_case(session, case_id)
+        if identity_locked(session, case.id):
+            raise HTTPException(429, "too many failed identity checks on this account; try again in 30 minutes or verify the caller another way")
         lease = session.get(Lease, case.lease_id)
         verified, reason = verify_identity(adapter, lease, IdentityClaim(body.last_name, body.phone_last4, body.unit_name))
         check = IdentityCheck(id=uuid.uuid4().hex, case_id=case.id, verified=verified, reason=reason)

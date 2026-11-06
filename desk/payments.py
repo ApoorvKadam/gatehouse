@@ -9,14 +9,14 @@ import uuid
 from dataclasses import dataclass
 from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .adapter import FMSAdapter, FMSError, NotFound, PermissionDenied, ProviderPayment
 from .cases import record, refresh_case
 from .db import utcnow
-from .models import DelinquencyCase, Lease, ObservedPayment, PaymentCommand
+from .models import DelinquencyCase, IdentityCheck, Lease, ObservedPayment, PaymentCommand
 
 RETURNED_STATUSES = {"REFUND_INITIATED", "REFUNDED", "DISPUTED", "DIRECT_DEBIT_RETURN"}
 UNRESOLVED = ("AWAITING_APPLICATION", "PENDING_AT_FMS", "OUTCOME_UNKNOWN")
@@ -52,6 +52,21 @@ class Authorization:
         return Authorization(uuid.uuid4().hex, identity_verified, balance_seen, amount, channel)
 
 
+IDENTITY_TRIES = 3
+IDENTITY_LOCK = timedelta(minutes=30)
+
+
+def identity_locked(session: Session, case_id: int) -> bool:
+    """Three failed checks on a case since its last success lock it for 30 minutes, whichever channel they came from.
+    Counted on the case, not the conversation, so starting a new conversation does not reset it."""
+    last_ok = session.scalar(select(func.max(IdentityCheck.created_at))
+                             .where(IdentityCheck.case_id == case_id, IdentityCheck.verified.is_(True)))
+    since = max(utcnow() - IDENTITY_LOCK, last_ok) if last_ok else utcnow() - IDENTITY_LOCK
+    failed = session.scalar(select(func.count()).select_from(IdentityCheck)
+                            .where(IdentityCheck.case_id == case_id, IdentityCheck.verified.is_(False), IdentityCheck.created_at > since))
+    return failed >= IDENTITY_TRIES
+
+
 def verify_identity(adapter: FMSAdapter, lease: Lease, claim: IdentityClaim) -> tuple[bool, str]:
     """True only when the caller matches the tenant on file. A key that cannot see personal data never verifies."""
     try:
@@ -60,6 +75,8 @@ def verify_identity(adapter: FMSAdapter, lease: Lease, claim: IdentityClaim) -> 
         return False, "the tenant record is not available to this desk"
     if customer.last_name is None or customer.phone is None:
         return False, "this desk's FMS access does not include tenant contact details, so identity cannot be checked"
+    if not (len(claim.phone_last4.strip()) == 4 and claim.phone_last4.strip().isdigit()):
+        return False, "the details do not match the tenant on file"
     matches = (customer.last_name.strip().lower() == claim.last_name.strip().lower()
                and customer.phone[-4:] == claim.phone_last4.strip()
                and lease.unit_name.strip().lower() == claim.unit_name.strip().lower())
