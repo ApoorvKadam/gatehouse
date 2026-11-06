@@ -120,4 +120,4 @@ def test_the_seeded_lien_file_is_not_called_stale_by_its_own_payment(fms_url, si
     with TestClient(preview(fms_url)) as visitor:
         lien = visitor.get("/accounts/2/lien").text
         assert "Account changed: re-review" in lien
-        assert "needs to be evaluated again" not in lien and "The FMS now shows this account paid" not in lien
+        assert "The FMS now shows this account paid" not in lien and "not reflected here until the file is evaluated again" in lien

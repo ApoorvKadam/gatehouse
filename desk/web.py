@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from .models import (
     CaseEvent, DelinquencyCase, DeskBinding, Facility, IdentityCheck, Lease, LedgerSnapshot, LienEvaluation, LienEvidence,
-    ObservedPayment, PaymentCommand, PaymentProposal,
+    PaymentCommand, PaymentProposal,
 )
 from .payments import tenant_message
 
@@ -159,28 +159,14 @@ def describe(e: CaseEvent, commands: dict[int, PaymentCommand], evidence: dict[i
     return Entry(e.occurred_at, LANE_OF.get(kind, OBSERVED), title, text, e.actor if e.actor not in ("desk",) else "", pay_link)
 
 
-def account_moved(s: Session, lease: Lease, evaluation: LienEvaluation) -> str | None:
-    """Why the account no longer matches what this evaluation read, or None when nothing Gatehouse has seen since
-    says so. Compared with the balance the evaluation itself recorded, and with later status changes of payments
-    known before it. A payment and a new charge that cancel out between two worker reads are not caught here;
-    that needs evaluations driven by every account change, which comes with the shared work model."""
+def balance_now(s: Session, lease: Lease, evaluation: LienEvaluation | None = None) -> int | None:
+    """The latest FMS balance Gatehouse has for this lease: its newest ledger reading, or the evaluation's own FMS
+    reading when that is newer. Read per lease, not per case, because a settled case can owe again under a new one."""
     snap = s.scalar(select(LedgerSnapshot).where(LedgerSnapshot.lease_id == lease.id).order_by(LedgerSnapshot.observed_at.desc()).limit(1))
-    then = (evaluation.facts or {}).get("total_due_cents")
-    if snap is not None and snap.observed_at > evaluation.evaluated_at and then is not None and snap.total_due != then:
-        return f"The FMS balance is {money(snap.total_due)} now; the file was evaluated at {money(then)}."
-    for p in s.scalars(select(ObservedPayment)).all():
-        # a payment Gatehouse already knew about whose status changed later (a return, a refund). A payment first seen
-        # after the evaluation may be one the evaluation read from the FMS itself, so only the balance speaks for those.
-        if (lease.provider_id in (p.lease_provider_ids or []) and p.first_seen_at <= evaluation.evaluated_at
-                and p.status_changed_at is not None and p.status_changed_at > evaluation.evaluated_at):
-            return f"The FMS changed {p.provider_payment_id} on this lease to {p.status} after the file was evaluated."
-    return None
-
-
-def paid_now(s: Session, case: DelinquencyCase) -> bool:
-    """The account's latest FMS balance, not the case's state: a settled case can owe again."""
-    snap = s.get(LedgerSnapshot, case.last_snapshot_id) if case.last_snapshot_id else None
-    return snap is not None and snap.total_due <= 0
+    then = (evaluation.facts or {}).get("total_due_cents") if evaluation is not None else None
+    if evaluation is not None and then is not None and (snap is None or evaluation.evaluated_at > snap.observed_at):
+        return then
+    return snap.total_due if snap is not None else None
 
 
 @dataclass
@@ -241,16 +227,13 @@ class Pages:
             last = s.scalar(select(LienEvaluation).where(LienEvaluation.case_id == case.id).order_by(LienEvaluation.id.desc()).limit(1))
             if last is not None:
                 found = True
-                moved = account_moved(s, lease, last)
-                paid = paid_now(s, case)
-                state = "FMS reports paid" if paid else ("Account changed: re-review" if moved else last.state)
+                owed_now = balance_now(s, lease, last)
+                state = "FMS reports paid" if owed_now is not None and owed_now <= 0 else last.state
                 rank, head, proof, who = LIEN_ITEMS.get(state, (3, state, "A person reviews the file.", "Collections lead"))
                 open_findings = [sentence(f["detail"]) for f in last.findings if f["status"] != "met"]
                 sale = next((v for k, v in last.timing.items() if k.startswith("earliest sale")), None)
                 if state == "FMS reports paid" and last.state != state:
                     what = f"The FMS now shows this account paid. The file was last evaluated before that, as \u201c{last.state}\u201d."
-                elif moved and last.state != state:
-                    what = f"{moved} It was last evaluated as \u201c{last.state}\u201d."
                 else:
                     what = " ".join(open_findings) if state != "Counsel review required" and open_findings else sentence(last.summary)
                 items.append(Item(rank, head, lease.unit_name, case.id, last.evaluated_at,
@@ -355,7 +338,7 @@ def router(pages: Pages) -> APIRouter:
             if not evaluations:
                 raise HTTPException(404, "This account has no lien file")
             current, previous = evaluations[0], (evaluations[1] if len(evaluations) > 1 else None)
-            moved = account_moved(s, lease, current)
+            owed_now = balance_now(s, lease, current)
             before = {f["requirement"]: f for f in previous.findings} if previous else {}
             changed = [(before.get(f["requirement"]), f) for f in current.findings
                        if previous and before.get(f["requirement"]) != f]
@@ -363,7 +346,7 @@ def router(pages: Pages) -> APIRouter:
             findings = sorted(current.findings, key=lambda f: order.get(f["status"], 5))
             evidence = s.scalars(select(LienEvidence).where(LienEvidence.case_id == case.id).order_by(LienEvidence.id)).all()
             return templates.TemplateResponse(request, "lien.html", {
-                "case": case, "lease": lease, "facility": facility, "current": current, "previous": previous, "moved": moved, "paid": paid_now(s, case), "money": money,
+                "case": case, "lease": lease, "facility": facility, "current": current, "previous": previous, "paid": owed_now is not None and owed_now <= 0, "money": money,
                 "changed": changed, "findings": findings, "evidence": evidence, "names": EVIDENCE_NAMES, "day": day,
                 "local": local, "nav": "today", "facilities": pages.facilities(s)})
 

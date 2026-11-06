@@ -5,5 +5,4 @@ data/
 .playwright-mcp
 __pycache__
 *.pyc
-tests/
 .worktrees
