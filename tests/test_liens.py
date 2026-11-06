@@ -82,12 +82,13 @@ def notice(deadline=date(2026, 11, 20), sale=date(2026, 12, 6), nid=1, total=240
 
 def mailed(on=DELIVERED, nid=1, certificate=True):
     return {"id": 2, "kind": "mail_deposit", "document_sha256": DOC, "facts": {"notice_id": nid, "deposited_on": on.isoformat(),
-            "certificate_of_mailing": certificate, "postage_prepaid": True, "address": "88 Pine St, Orlando FL",
+            "first_class": True, "certificate_of_mailing": certificate, "postage_prepaid": True, "address": "88 Pine St, Orlando FL",
             "address_basis": "rental agreement"}}
 
 
 def posted(on=DELIVERED, nid=1):
-    return {"id": 3, "kind": "posting", "document_sha256": DOC, "facts": {"notice_id": nid, "posted_on": on.isoformat(), "location": "unit"}}
+    return {"id": 3, "kind": "posting", "document_sha256": DOC, "facts": {"notice_id": nid, "posted_on": on.isoformat(), "location": "unit",
+                                                                "location_detail": "door of unit B-1042", "conspicuous": "yes"}}
 
 
 def published(on, i, sale=date(2026, 12, 6), nid=1, **extra):
@@ -117,7 +118,7 @@ def by(evaluation, requirement):
 def test_a_complete_file_is_a_review_packet_and_never_a_sale_approval():
     e = evaluate(facts(complete()))
     assert e.state == "Review packet assembled"
-    assert "A person still has to check the documents themselves; sale authorization is outside this desk." in e.summary
+    assert "Nothing here authenticates those documents" in e.summary and "sale authorization is outside this desk" in e.summary
     assert e.timing["payment deadline in the notice"] == "2026-11-20"
     assert e.timing["earliest sale under the statute (15 days after first publication)"] == "2026-12-06"
     assert all(f.basis.startswith(("statute", "policy")) for f in e.findings)
@@ -207,7 +208,7 @@ def test_paid_unavailable_and_waiting():
 
 
 def test_evidence_for_an_earlier_notice_record_does_not_count():
-    corrected = notice(nid=50, deadline=date(2026, 11, 20))     # a new notice record, never delivered
+    corrected = dict(notice(nid=50, deadline=date(2026, 11, 20)), document_sha256="b" * 64)   # a new notice, never delivered
     assert evaluate(facts(complete() + [corrected])).state == "Evidence incomplete"
 
 
@@ -303,3 +304,48 @@ def test_one_document_cannot_serve_two_notices():
 
 def test_the_no_newspaper_route_goes_to_counsel():
     assert evaluate(facts(complete()[:5] + legal(no_newspaper_in_area="yes"))).state == "Counsel review required"
+
+
+def test_a_posting_not_recorded_as_conspicuous_goes_to_review():
+    evidence = complete()
+    evidence[2] = dict(posted(), facts=dict(posted()["facts"], conspicuous="unknown"))
+    assert by(evaluate(facts(evidence)), "conspicuous posting").status == "review"
+
+
+def test_two_different_newspapers_go_to_review():
+    evidence = complete()[:3] + [published(date(2026, 11, 21), 1), published(date(2026, 11, 28), 2, newspaper="Another Weekly")] + legal()
+    assert by(evaluate(facts(evidence)), "same newspaper both weeks").basis == "policy"
+
+
+def test_a_third_advertisement_with_other_terms_is_not_ignored():
+    evidence = complete() + [published(date(2026, 12, 5), 3, sale=date(2026, 12, 20))]
+    assert by(evaluate(facts(evidence)), "sale terms agree").status == "review"
+
+
+def test_a_mailing_before_the_unconfirmed_email_is_not_its_fallback():
+    email = {"id": 4, "kind": "email_delivery", "document_sha256": "e" * 64,
+             "facts": {"notice_id": 1, "sent_on": "2026-11-07", "sent_to": "dana@example.com"}}
+    assert by(evaluate(facts(complete() + [email])), "e-mail fallback mailing").status == "missing"
+
+
+def test_a_document_also_filed_on_another_case_goes_to_review():
+    shared = CaseFacts("FL", "America/New_York", 24000, [], "2026-12-01", complete(),
+                       {"7": {"total_due": 24000, "observed_on": "2026-11-05",
+                              "open_charges": [{"name": "october rent", "open_cents": 21500}, {"name": "late fee", "open_cents": 2500}]}},
+                       [], "", [DOC])
+    assert by(evaluate(shared), "document reuse").status == "review"
+
+
+def test_a_ledger_charge_without_a_name_matches_nothing():
+    f = CaseFacts("FL", "America/New_York", 24000, [], "2026-12-01", complete(),
+                  {"7": {"total_due": 24000, "observed_on": "2026-11-05",
+                         "open_charges": [{"name": "", "open_cents": 21500}, {"name": "late fee", "open_cents": 2500}]}}, [])
+    assert by(evaluate(f), "itemized charge on the ledger").status == "review"
+
+
+def test_the_fee_check_applies_only_when_a_fee_is_claimed():
+    rent_only = [notice(itemized_charges=[{"description": "October rent", "amount_cents": 21500, "due_on": "2026-10-01"}], total=21500)]
+    checks = [x for x in legal() if x["facts"]["check"] != "fees_authorized_by_rental_agreement"]
+    f = CaseFacts("FL", "America/New_York", 21500, [], "2026-12-01", rent_only + complete()[1:5] + checks,
+                  {"7": {"total_due": 21500, "observed_on": "2026-11-05", "open_charges": [{"name": "october rent", "open_cents": 21500}]}}, [])
+    assert evaluate(f).state == "Review packet assembled"

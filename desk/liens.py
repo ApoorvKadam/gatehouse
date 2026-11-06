@@ -53,8 +53,15 @@ FL_R1 = RuleVersion(
         "The notice names the FMS ledger snapshot its claim came from, taken before the delivery day, and each itemized "
         "charge is an open charge on it.",
         "The no-newspaper posting route of 83.806(4)(c) is not evaluated here; such files go to counsel.",
+        "Both publications are in the same newspaper, and every advertisement recorded for the notice must agree.",
+        "The fallback mailing for an unconfirmed e-mail is deposited on or after the e-mail was sent.",
+        "A document filed for two notices, or on another case, goes to review.",
     ),
 )
+# a rule version is its label and the exact code that evaluates it: change this file and old evaluations no longer
+# claim to replay under it
+RULES = f"{FL_R1.label}+" + __import__("hashlib").sha256(open(__file__, "rb").read()).hexdigest()[:12]
+
 REFERENCE_ONLY = {"NY": "N.Y. Lien Law 182 is imported as reference material only; New York cases are not evaluated here."}
 
 # ------------------------------------------------------------------ dates at the facility
@@ -127,6 +134,7 @@ class Notice(BaseModel):
 class MailDeposit(BaseModel):
     notice_id: int = Field(description="the notice record this mailing carried")
     deposited_on: date
+    first_class: bool = Field(description="sent by USPS first-class mail")
     certificate_of_mailing: bool
     postage_prepaid: bool
     address: str = Field(min_length=5)
@@ -164,6 +172,8 @@ class Posting(BaseModel):
     notice_id: int
     posted_on: date
     location: Literal["facility", "unit"]
+    location_detail: str = Field(min_length=3, description="where exactly, e.g. the office door or the unit's door")
+    conspicuous: YesNoUnknown
 
 
 class Publication(BaseModel):
@@ -238,7 +248,8 @@ class CaseFacts:
     evidence: list[dict]                 # {"id", "kind", "facts", "document_sha256"} for every current record
     notice_snapshots: dict = field(default_factory=dict)   # snapshot id -> {"total_due", "observed_on"} for snapshots notices name
     ledger_changes: list[str] | None = None   # changes since the notice's snapshot to the charges it claimed
-    rules: str = "FL-r1"                 # the rule version these facts are evaluated under
+    rules: str = ""                      # the rule version and the fingerprint of the code that evaluates it
+    reused_elsewhere: list[str] = field(default_factory=list)   # document hashes this case shares with another case
 
     def digest(self) -> str:
         return hashlib.sha256(json.dumps(asdict(self), sort_keys=True, default=str).encode()).hexdigest()
@@ -247,8 +258,9 @@ class CaseFacts:
 STATES = ("FMS data unavailable", "FMS reports paid", "Counsel review required", "Account changed: re-review",
           "Evidence incomplete", "Waiting for a timing threshold", "Review packet assembled")
 SUMMARIES = {
-    "Review packet assembled": ("Every listed requirement has a record and a kept document. A person still has to check the "
-                                "documents themselves; sale authorization is outside this desk."),
+    "Review packet assembled": ("Every listed requirement has a record, with its document or transcription kept where one is "
+                                "needed. Nothing here authenticates those documents: a person still has to check them, and sale "
+                                "authorization is outside this desk."),
     "FMS reports paid": "The FMS shows nothing due. This case leaves active lien work; releasing any lien is a separate review.",
 }
 
@@ -293,6 +305,7 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
 
     # legal checks: every one recorded, and only a clean answer lets the file continue without counsel. Several current
     # records for one check must agree; a later "no" never erases an earlier "yes" unless it supersedes that record.
+    claims_fee = any("fee" in c.description.lower() for e in ev["notice"][-1:] for c in Notice.model_validate(e["facts"]).itemized_charges)
     answers: dict[str, list[LegalCheck]] = {}
     for e in ev["legal_check"]:
         c = LegalCheck.model_validate(e["facts"])
@@ -303,6 +316,8 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
                                 ("document_of_title_issued", "statute 83.803(5)", "no"),
                                 ("fees_authorized_by_rental_agreement", "statute 83.808(3)", "yes"),
                                 ("no_newspaper_in_area", "statute 83.806(4)(c)", "no")):
+        if check == "fees_authorized_by_rental_agreement" and not claims_fee:
+            continue   # the agreement's fee terms matter only when the notice claims a fee
         records = answers.get(check, [])
         label = check.replace("_", " ")
         said = "; ".join(f"{c.answer} ({c.source}, {c.observed_on})" for c in records)
@@ -315,11 +330,14 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
         else:
             out.append(Finding(label, basis, "met", f"{label}: {said}"))
 
+    for digest in facts.reused_elsewhere:
+        out.append(Finding("document reuse", "policy", "review", "a document in this file is also filed on another case",
+                           "attach the document that belongs to this tenant and notice"))
     # one document behind records for two different notices of this case cannot be both
     by_hash: dict[str, set] = {}
     for e in facts.evidence:
-        if e.get("document_sha256") and e["kind"] != "notice":
-            by_hash.setdefault(e["document_sha256"], set()).add(e["facts"].get("notice_id"))
+        if e.get("document_sha256"):
+            by_hash.setdefault(e["document_sha256"], set()).add(e["id"] if e["kind"] == "notice" else e["facts"].get("notice_id"))
     for digest, ids in by_hash.items():
         if len(ids) > 1:
             out.append(Finding("document reuse", "policy", "review", f"one document is filed as evidence for notices {sorted(ids)}",
@@ -357,8 +375,12 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
                                f"the notice claims {notice.itemized_total_cents} cents; the FMS ledger then showed {snap['total_due']}", "send to review"))
         open_then = [dict(c) for c in snap.get("open_charges", [])]
         for item in notice.itemized_charges:
-            match = next((c for c in open_then if c["open_cents"] == item.amount_cents
+            match = next((c for c in open_then if c["open_cents"] == item.amount_cents and c["name"]
                           and (item.description.lower() in c["name"] or c["name"] in item.description.lower())), None)
+            if match is not None and match.get("due_on") and match["due_on"] != item.due_on.isoformat():
+                out.append(Finding("date the charge became due", "statute 83.806(2)(a)", "review",
+                                   f"\"{item.description}\" is dated {item.due_on} in the notice and {match['due_on']} on the ledger",
+                                   "correct the notice; send to review"))
             if match is None:
                 out.append(Finding("itemized charge on the ledger", "statute 83.806(2)(a)", "review",
                                    f"\"{item.description}\" for {item.amount_cents} cents is not an open charge on the FMS ledger snapshot",
@@ -383,15 +405,16 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
     deliveries: list[tuple[date, str]] = []
     for e in for_notice("mail_deposit"):
         m = MailDeposit.model_validate(e["facts"])
-        if m.certificate_of_mailing and m.postage_prepaid:
+        if m.first_class and m.certificate_of_mailing and m.postage_prepaid:
             deliveries.append((m.deposited_on, f"first-class mail deposited {m.deposited_on} with a certificate of mailing (presumed delivered)"))
         else:
             out.append(Finding("mail delivery", "statute 83.806(1), (3)", "missing",
-                               "the mailing lacks a certificate of mailing or prepaid postage", "record the certificate of mailing"))
+                               "the mailing is not recorded as first-class with a certificate of mailing and prepaid postage",
+                               "record the first-class mailing and its certificate"))
     for e in for_notice("in_person_delivery"):
         p = InPersonDelivery.model_validate(e["facts"])
         deliveries.append((p.delivered_on, f"delivered in person on {p.delivered_on} by {p.delivered_by}"))
-    unconfirmed_email = False
+    unconfirmed_email, unconfirmed_sent = False, None
     for e in for_notice("email_delivery"):
         m = EmailDelivery.model_validate(e["facts"])
         same_address = m.confirmation_from is not None and m.confirmation_from.strip().lower() == m.sent_to.strip().lower()
@@ -404,19 +427,20 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
             out.append(Finding("e-mail confirmation", basis, "met", f"{m.confirmation} from {m.confirmation_from}"))
         else:
             unconfirmed_email = True
-    if unconfirmed_email and not any("mail deposited" in d for _, d in deliveries):
+            unconfirmed_sent = max(unconfirmed_sent or m.sent_on, m.sent_on)
+    fallback = [d for d in deliveries if "mail deposited" in d[1] and unconfirmed_sent and d[0] >= unconfirmed_sent]
+    if unconfirmed_email and not fallback:
         out.append(Finding("e-mail fallback mailing", "statute 83.806(1)", "missing",
-                           "the e-mail has no response, return receipt or delivery confirmation from the same address",
+                           "the e-mail has no response, return receipt or delivery confirmation from the same address, and no "
+                           "first-class mailing on or after it is recorded (policy: the fallback follows the e-mail)",
                            "send the notice by first-class mail with a certificate of mailing and record it"))
     if not deliveries:
         out.append(Finding("notice delivery", "statute 83.806(1)", "missing", f"no qualifying delivery of notice {notice_id} is recorded",
                            "record the certificate of mailing, the in-person delivery, or the e-mail confirmation"))
         return _finish(out, timing)
     delivered_on, how = min(deliveries)
-    if unconfirmed_email:
-        mail = [d for d in deliveries if "mail deposited" in d[1]]
-        if mail:
-            delivered_on, how = mail[0]   # policy: count from the fallback mailing
+    if unconfirmed_email and fallback:
+        delivered_on, how = min(fallback)   # policy: count from the fallback mailing
     out.append(Finding("notice delivery", "statute 83.806(1)", "met", how))
     timing["notice delivered"] = delivered_on.isoformat()
     if notice.sum_due_since > delivered_on:
@@ -431,8 +455,12 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
     postings = [Posting.model_validate(e["facts"]) for e in for_notice("posting")]
     if not postings:
         out.append(Finding("conspicuous posting", "statute 83.806(1)", "missing", "no posting is recorded", "post the notice and record it"))
+    elif any(p.conspicuous != "yes" for p in postings):
+        out.append(Finding("conspicuous posting", "statute 83.806(1)", "review",
+                           "the posting is not recorded as conspicuous: " + "; ".join(f"{p.location_detail}: {p.conspicuous}" for p in postings),
+                           "send to review"))
     elif any(p.posted_on == delivered_on for p in postings):
-        out.append(Finding("conspicuous posting", "statute 83.806(1)", "met", f"posted on {delivered_on}"))
+        out.append(Finding("conspicuous posting", "statute 83.806(1)", "met", f"posted on {delivered_on} ({postings[0].location_detail})"))
     else:
         out.append(Finding("posting date", "policy", "review", f"posted on {postings[-1].posted_on}, notice delivered {delivered_on}", "send to review"))
 
@@ -482,9 +510,12 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
     elif pubs[1].published_on != second_due:
         out.append(Finding("publication spacing", "policy", "review",
                            f"publications on {first.published_on} and {pubs[1].published_on}, not seven days apart", "send to review"))
+    elif pubs[1].newspaper.strip().lower() != first.newspaper.strip().lower():
+        out.append(Finding("same newspaper both weeks", "policy", "review",
+                           f"published in {first.newspaper} and then in {pubs[1].newspaper}", "send to review"))
     else:
         out.append(Finding("advertisement", "statute 83.806(4)", "met", f"published {first.published_on} and {pubs[1].published_on} in {first.newspaper}"))
-    for p in pubs[:2]:
+    for p in pubs:
         if p.general_circulation_in_facility_area != "yes":
             out.append(Finding("newspaper of general circulation in the area", "statute 83.806(4)", "review",
                                f"{p.newspaper}: {p.general_circulation_in_facility_area} ({p.circulation_source})", "send to review"))
@@ -497,7 +528,7 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
     sale_threshold = plus_days(first.published_on, 15)
     timing["earliest sale under the statute (15 days after first publication)"] = sale_threshold.isoformat()
     stated = {(notice.sale_date, notice.sale_time.strip().lower(), notice.sale_place.strip().lower())} | {
-        (p.sale_date, p.sale_time.strip().lower(), p.sale_place.strip().lower()) for p in pubs[:2]}
+        (p.sale_date, p.sale_time.strip().lower(), p.sale_place.strip().lower()) for p in pubs}
     if len(stated) > 1:
         out.append(Finding("sale terms agree", "statute 83.806(5)", "review", "the notice and the advertisements state different sale dates, times or places",
                            "send to review"))

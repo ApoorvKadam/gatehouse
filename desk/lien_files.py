@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from .adapter import FMSAdapter, FMSError
 from .cases import record
 from .db import utcnow
-from .liens import CaseFacts, DateProblem, evaluate, facility_zone, local_date, parse_evidence
+from .liens import RULES, CaseFacts, DateProblem, evaluate, facility_zone, local_date, parse_evidence
 from .models import DelinquencyCase, Facility, Lease, LedgerSnapshot, LienEvaluation, LienEvidence
 
 NOT_MONEY = ("DECLINED", "FAILED", "REJECTED")
@@ -46,7 +46,7 @@ def ensure_append_only(engine) -> None:
                                      f"BEGIN SELECT RAISE(ABORT, '{table} is append-only'); END")
 
 
-EVALUATORS = {"FL-r1": evaluate}   # rule version -> the evaluator that implements it; replay refuses anything else
+EVALUATORS = {RULES: evaluate}   # only the code that is running can replay; an evaluation from other code says so   # rule version -> the evaluator that implements it; replay refuses anything else
 
 
 def record_evidence(session: Session, case: DelinquencyCase, kind: str, facts: dict, entered_by: str,
@@ -61,6 +61,10 @@ def record_evidence(session: Session, case: DelinquencyCase, kind: str, facts: d
         old = session.get(LienEvidence, supersedes)
         if old is None or old.case_id != case.id or old.kind != kind:
             raise ValueError("a correction must supersede a record of the same kind on the same case")
+        if kind == "legal_check" and old.facts.get("check") != facts.get("check"):
+            raise ValueError("a legal check can only be corrected by a check on the same subject")
+        if old.facts.get("notice_id") != getattr(parsed, "notice_id", None):
+            raise ValueError("a correction must belong to the same notice as the record it corrects")
         newer = session.scalar(select(LienEvidence.id).where(LienEvidence.supersedes_id == supersedes).limit(1))
         if newer is not None:
             raise ValueError(f"record {supersedes} was already corrected by record {newer}; correct the latest one")
@@ -115,7 +119,7 @@ def case_facts(session: Session, adapter: FMSAdapter, case: DelinquencyCase) -> 
         except DateProblem:
             continue
         open_charges = [{"name": ((e.get("details") or {}).get("description") or (e.get("details") or {}).get("category") or "").lower(),
-                         "open_cents": e.get("amount", 0) - e.get("amountPaid", 0)}
+                         "open_cents": e.get("amount", 0) - e.get("amountPaid", 0), "due_on": (e.get("details") or {}).get("accruesOn")}
                         for e in (snap.raw.get("bookEntries") or []) if isinstance(e, dict) and e.get("type") == "CHARGE"
                         and e.get("amount", 0) > e.get("amountPaid", 0)]
         snapshots[str(sid)] = {"total_due": snap.total_due, "observed_on": observed, "open_charges": open_charges}
@@ -126,7 +130,10 @@ def case_facts(session: Session, adapter: FMSAdapter, case: DelinquencyCase) -> 
     except DateProblem:
         today = utcnow().date().isoformat()
     records = [{"id": r.id, "kind": r.kind, "facts": r.facts, "document_sha256": r.document_sha256} for r in evidence]
-    return CaseFacts(facility.jurisdiction, zone_name, total, payments_after, today, records, snapshots, changes)
+    mine = {r.document_sha256 for r in evidence if r.document_sha256 and r.kind != "publication"}   # one ad may name several tenants
+    shared = sorted(set(session.scalars(select(LienEvidence.document_sha256).where(
+        LienEvidence.case_id != case.id, LienEvidence.document_sha256.in_(mine))).all())) if mine else []
+    return CaseFacts(facility.jurisdiction, zone_name, total, payments_after, today, records, snapshots, changes, RULES, shared)
 
 
 def ledger_changes(then: dict, now: dict) -> list[str]:
