@@ -60,11 +60,23 @@ def current_case(session: Session, lease: Lease) -> DelinquencyCase | None:
                           .order_by(DelinquencyCase.id.desc()))
 
 
-def reversed_at_fms(session: Session, lease: Lease, case: DelinquencyCase) -> bool:
-    """A payment on this lease, taken by anyone, came back after this case was settled."""
+def reversed_at_fms(session: Session, lease: Lease, case: DelinquencyCase, was_paid: bool) -> bool:
+    """A payment on this lease, taken by anyone, came back after this case was settled.
+
+    A reversal the desk saw happen counts when it happened after the case was settled (or opened). One the desk first
+    saw already reversed has no known date: it counts only against a paid case, and only if the desk first saw it after
+    the case was settled, so a settled case whose balance came back is never left looking paid, while an old reversal
+    found when a new case opens does not mark that case reopened."""
     since = case.resolved_at or case.opened_at
     rows = session.scalars(select(ObservedPayment).where(ObservedPayment.status.in_(FMS_REVERSAL_STATUSES))).all()
-    return any(lease.provider_id in r.lease_provider_ids and (since is None or r.status_changed_at >= since) for r in rows)
+    for r in rows:
+        if lease.provider_id not in r.lease_provider_ids:
+            continue
+        if r.status_changed_at is not None and (since is None or r.status_changed_at >= since):
+            return True
+        if r.status_changed_at is None and was_paid and case.resolved_at is not None and r.first_seen_at >= case.resolved_at:
+            return True
+    return False
 
 
 def refresh_case(session: Session, adapter: FMSAdapter, case: DelinquencyCase) -> DelinquencyCase:
@@ -91,7 +103,7 @@ def refresh_case(session: Session, adapter: FMSAdapter, case: DelinquencyCase) -
         case.state, case.owner = "paid", "front desk"
         case.resolved_at = case.resolved_at or utcnow()
     else:
-        reversed_here = bool(returned) or reversed_at_fms(session, lease, case)
+        reversed_here = bool(returned) or reversed_at_fms(session, lease, case, before == "paid")
         if before == "paid" and not reversed_here:
             # new charges on a settled account are the next delinquency, which gets its own case
             case.state = "paid"

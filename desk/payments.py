@@ -12,7 +12,7 @@ import re
 import threading
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -672,11 +672,10 @@ class PaymentService:
         row = self.session.scalar(select(ObservedPayment).where(ObservedPayment.provider == self.adapter.provider,
                                                                 ObservedPayment.provider_payment_id == p.provider_id))
         if row is None:
+            # already reversed when first seen: when that happened is unknown, so no date is recorded
             row = ObservedPayment(provider=self.adapter.provider, provider_payment_id=p.provider_id, amount=p.amount,
-                                  status=p.status, lease_provider_ids=[lease.provider_id])
-            if p.status in REVERSALS:
-                # already reversed when first seen: the reversal is old news, not something that happened in this episode
-                row.status_changed_at = p.created_at or datetime(1970, 1, 1)
+                                  status=p.status, lease_provider_ids=[lease.provider_id],
+                                  status_changed_at=None if p.status in REVERSALS else utcnow())
             self.session.add(row)
             self.session.flush()
             return True

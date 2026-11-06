@@ -759,3 +759,15 @@ def test_simulator_controls_refuse_bad_requests_without_a_500(sim):
     assert sim.post("/sim/charges", {"leaseId": "lease_nope", "amount": 100}).status_code == 404
     assert sim.post("/sim/payments/offline", {"allocations": {}}).status_code == 400
     assert sim.post("/sim/payments/offline", {"allocations": {DANA: 100, MARCUS: 100}}).status_code == 400
+
+
+def test_a_settled_case_reopens_when_its_payment_is_first_seen_already_returned(session, adapter, sim):
+    case, _ = case_for(session, adapter, DANA)
+    counter = sim.post("/sim/payments/offline", {"allocations": {DANA: 24000}}).json()["data"]["payment"]
+    sync_facility(session, adapter, ORLANDO)   # the ledger shows nothing due: paid, without the desk ever reading the payment
+    refresh_case(session, adapter, session.get(DelinquencyCase, case.id))
+    session.commit()
+    assert session.get(DelinquencyCase, case.id).state == "paid"
+    sim.post("/sim/payments/return", {"paymentId": counter["paymentId"]})
+    PaymentService(session, adapter).reconcile_all()   # first sight of that payment: already returned
+    assert session.get(DelinquencyCase, case.id).state == "reopened"

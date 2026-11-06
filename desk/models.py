@@ -131,7 +131,8 @@ class ObservedPayment(Base):
     lease_provider_ids: Mapped[list] = mapped_column(JSON, default=list)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-    status_changed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    # when the desk saw the status change; None when the payment was already reversed the first time the desk saw it
+    status_changed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     __table_args__ = (UniqueConstraint("provider", "provider_payment_id"),)
 
 
