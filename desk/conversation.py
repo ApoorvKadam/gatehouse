@@ -214,7 +214,7 @@ class Conversation:
             for e in entries:
                 details = e.get("details") or {}
                 name = (details.get("description") or details.get("category") or "").lower()
-                if e.get("type") == "CHARGE" and e["amount"] > e.get("amountPaid", 0) and asked and (asked in name or name in asked):
+                if e.get("type") == "CHARGE" and e["amount"] > e.get("amountPaid", 0) and asked and name and (asked in name or name in asked):
                     period = f", for the period starting {details['accruesOn']}" if details.get("accruesOn") else ""
                     return f"That is the {name} on your account: ${(e['amount'] - e.get('amountPaid', 0)) / 100:,.2f}{period}."
         return self._balance_line(session)

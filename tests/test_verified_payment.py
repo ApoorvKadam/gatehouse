@@ -717,3 +717,13 @@ def test_staff_cannot_confirm_a_payment_the_fms_or_the_ledger_contradicts(sessio
     with pytest.raises(PaymentRefused, match="DECLINED"):
         PaymentService(session, adapter).resolve_by_staff(command, True, "Ledger checked", "J. Ortiz", declined.provider_id, ledger_checked=True)
     assert command.state == "NEEDS_STAFF" and command.provider_payment_id is None
+
+
+def test_a_reversal_older_than_the_case_does_not_reopen_it(session, adapter, sim):
+    first, case, _ = pay(session, adapter, DANA, "pm_DanaVisa4242", 24000)
+    sim.post("/sim/payments/return", {"paymentId": first.provider_payment_id})
+    from desk.db import make_session_factory
+    with make_session_factory("sqlite:///:memory:")() as other:   # a desk that starts now sees the old return first
+        new_case, _ = case_for(other, adapter, DANA)
+        PaymentService(other, adapter).reconcile_all()
+        assert other.get(DelinquencyCase, new_case.id).state == "open"
