@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from desk.adapter.cubby import CubbyAdapter
 from desk.api import create_app
 from desk.config import Settings
+from desk.models import DelinquencyCase
 
 from .conftest import FULL_KEY, ORLANDO
 
@@ -84,13 +85,23 @@ def test_the_public_preview_refuses_to_start_on_anything_but_the_synthetic_world
         settings = Settings(**{**preview_settings(fms_url, demo_seed=True).__dict__, **loose})
         with pytest.raises(RuntimeError, match="operator token"):
             create_app(settings, adapter, start_worker=False)
-    # a database that already holds other records (or a world whose build never finished) is never served publicly
+    # the preview never opens the configured database: whatever another run left there is not served
     db = f"sqlite:///{tmp_path / 'desk.db'}"
     with TestClient(create_app(Settings(**{**preview_settings(fms_url).__dict__, "public_view": False, "database_url": db}),
                                adapter, start_worker=False), headers={"X-Desk-Token": TOKEN}) as desk:
         assert desk.post(f"/api/facilities/{ORLANDO}/sync").status_code == 200
-    with pytest.raises(RuntimeError, match="only from an empty database"):
-        create_app(Settings(**{**preview_settings(fms_url, demo_seed=True).__dict__, "database_url": db}), adapter, start_worker=False)
+        with desk.app.state.session_factory() as s:
+            from desk.cases import record
+            record(s, s.get(DelinquencyCase, 1), "private note", {"text": "kept by an earlier run"})
+            s.commit()
+    preview = create_app(Settings(**{**preview_settings(fms_url, demo_seed=True).__dict__, "database_url": db}), adapter, start_worker=False)
+    assert str(preview.state.session_factory.kw["bind"].url) != db
+    with TestClient(preview) as visitor:
+        for row in visitor.get(f"/api/facilities/{ORLANDO}/queue").json()["rows"]:
+            history = visitor.get(f"/api/cases/{row['case_id']}").json()["history"]
+            assert all(h["kind"] != "private note" for h in history)
+    # and a second preview started on the same settings builds its own world again instead of refusing to start
+    assert create_app(Settings(**{**preview_settings(fms_url, demo_seed=True).__dict__, "database_url": db}), adapter, start_worker=False)
 
 
 def test_the_preview_reads_the_same_after_the_worker_runs(fms_url, sim):

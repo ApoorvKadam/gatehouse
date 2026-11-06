@@ -1,9 +1,11 @@
 """The desk's HTTP API: the past-due queue, a case with its full history, identity checks and payments."""
 from __future__ import annotations
 
+import dataclasses
 import hmac
 import logging
 import os
+import tempfile
 from contextlib import asynccontextmanager
 from urllib.parse import urlsplit
 
@@ -80,6 +82,11 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         raise RuntimeError("the public preview runs only on the synthetic world against the local simulator")
     if settings.public_view and (settings.operator_token is None or settings.allow_without_token):
         raise RuntimeError("the public preview needs an operator token for every change")
+    if settings.public_view:
+        # anyone may read the preview, so it never opens a database that existed before this process: each start
+        # gets a new one and builds the synthetic world in it (a configured database is left untouched)
+        preview_dir = tempfile.mkdtemp(prefix="gatehouse-preview-")
+        settings = dataclasses.replace(settings, database_url=f"sqlite:///{preview_dir}/desk.db")
     if chat_client is None and os.environ.get("ANTHROPIC_API_KEY"):
         import anthropic
         chat_client = anthropic.Anthropic()
@@ -94,11 +101,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         import_stitch(session)   # published lien-law reference data, stored once per file
     if settings.demo_seed:
         from . import demo
-        built = demo.build(factory, adapter, settings.fms_base_url)
-        if settings.public_view and not built:
-            # a database that already held records may hold more than the synthetic world (an earlier run's chats,
-            # notes or a half-built world), so the public preview always builds a fresh one
-            raise RuntimeError("the public preview starts only from an empty database, where it builds the synthetic world")
+        demo.build(factory, adapter, settings.fms_base_url)
     worker = Worker(factory, adapter, settings.reconcile_every_seconds)
 
     @asynccontextmanager
