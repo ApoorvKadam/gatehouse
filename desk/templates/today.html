@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Today, {{ facility.name }} | Gatehouse{% endblock %}
+{% block main %}
+<div class="title">
+  <h1>Today at {{ facility.name }}</h1>
+  <p>{{ items|length }} open {{ 'item' if items|length == 1 else 'items' }}, most consequential first</p>
+</div>
+<p class="lede">Every unfinished piece of work at this facility, with the fact that will prove it done. Nothing leaves this list because someone said it is done; it leaves when the system of record shows it.</p>
+{% if items %}
+<ol class="notices">
+  {% for i in items %}
+  <li class="notice{% if i.rank < 2 %} urgent{% endif %}">
+    <div>
+      <h2><a href="{{ i.link }}">{{ i.head }}</a></h2>
+      <p class="dateline">Unit {{ i.unit }} &middot; since {{ local(i.since) }}</p>
+      <p class="what">{{ i.what }}</p>
+    </div>
+    <p class="proof"><b>Proved done when</b>{{ i.proof }}</p>
+    <p class="act">{% if i.amount %}<span class="amount">{{ i.amount }}</span>{% endif %}<span class="who">{{ i.who }}</span><a href="{{ i.link }}">Open</a></p>
+  </li>
+  {% endfor %}
+</ol>
+{% else %}
+<p class="empty">Nothing is open at this facility. Every account the FMS reports past due has been worked to a confirmed result.</p>
+{% endif %}
+{% endblock %}

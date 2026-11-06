@@ -99,9 +99,11 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
     ensure_append_only(factory.kw["bind"])
     with factory() as session:
         import_stitch(session)   # published lien-law reference data, stored once per file
+    trace: dict = {}
     if settings.demo_seed:
         from . import demo
         demo.build(factory, adapter, settings.fms_base_url)
+        trace = demo.trace(settings.fms_base_url)
     worker = Worker(factory, adapter, settings.reconcile_every_seconds)
 
     @asynccontextmanager
@@ -114,6 +116,13 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
 
     app = FastAPI(title="Gatehouse", lifespan=lifespan)
     app.state.session_factory = factory
+    if settings.public_view:
+        # the operator screens; for now they exist only in the read-only preview, which needs no sign-in
+        from fastapi.staticfiles import StaticFiles
+
+        from .web import HERE, Pages, router
+        app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
+        app.include_router(router(Pages(factory, trace)))
 
     @app.exception_handler(StaleDataError)
     async def changed_meanwhile(_, exc: StaleDataError):

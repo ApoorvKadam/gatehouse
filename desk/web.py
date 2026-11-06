@@ -1,0 +1,297 @@
+"""The operator screens of the hosted preview: Today, an account's record, a payment under review and a lien file.
+
+Every page reads Gatehouse's own records and the simulator trace saved when the world was built. No page calls the
+FMS or writes anything, so a visitor can read freely without moving the world."""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+from sqlalchemy import select
+from sqlalchemy.orm import Session, sessionmaker
+
+from .models import (
+    CaseEvent, DelinquencyCase, DeskBinding, Facility, IdentityCheck, Lease, LedgerSnapshot, LienEvaluation, LienEvidence,
+    PaymentCommand, PaymentProposal,
+)
+from .payments import tenant_message
+
+HERE = Path(__file__).parent
+templates = Jinja2Templates(directory=HERE / "templates")
+
+# The four kinds of entry an account's record keeps apart. Every event kind lands in exactly one of them.
+FMS, OBSERVED, CONCLUDED, DECIDED = "fms", "observed", "concluded", "decided"
+LANES = [(FMS, "The FMS said"), (OBSERVED, "Gatehouse observed"), (CONCLUDED, "Gatehouse concluded"), (DECIDED, "A person decided")]
+LANE_OF = {
+    "case opened": FMS, "payment taken outside the desk": FMS, "payment declined": FMS,
+    "payment status changed after success": FMS,
+    "payment submitted": OBSERVED, "fms read failed": OBSERVED, "possible match for staff": OBSERVED,
+    "identity checked": OBSERVED, "tenant said": OBSERVED,
+    "state changed": CONCLUDED, "payment confirmed": CONCLUDED, "payment needs staff": CONCLUDED,
+    "payment needs a new authorization": CONCLUDED, "lien file evaluated": CONCLUDED, "verification expired": CONCLUDED,
+    "handed to staff": CONCLUDED, "desk replied": CONCLUDED,
+    "payment resolved by staff": DECIDED, "lien evidence recorded": DECIDED,
+}
+EVIDENCE_NAMES = {"notice": "Lien notice", "mail_deposit": "Certificate of mailing", "posting": "Notice posted",
+                  "publication": "Newspaper publication", "legal_check": "Legal check", "email_delivery": "Email delivery"}
+
+
+def money(cents: int | None) -> str:
+    return "" if cents is None else f"${cents / 100:,.2f}"
+
+
+def local(when: datetime | None, zone: str = "America/New_York") -> str:
+    if when is None:
+        return ""
+    t = when.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(zone))
+    return t.strftime("%b %-d, %-I:%M %p")
+
+
+def sentence(text: str) -> str:
+    text = text.strip()
+    return (text[0].upper() + text[1:] + ("" if text.endswith(".") else ".")) if text else ""
+
+
+templates.env.globals.update(sentence=sentence)
+
+
+def day(iso: str | None) -> str:
+    return datetime.fromisoformat(iso).strftime("%b %-d, %Y") if iso else ""
+
+
+@dataclass
+class Entry:
+    """One line of an account's record, in its lane."""
+    at: datetime
+    lane: str
+    title: str
+    text: str = ""
+    who: str = ""
+    link: str | None = None
+    count: int = 1
+
+
+@dataclass
+class Item:
+    """One piece of open work on Today."""
+    rank: int
+    head: str
+    unit: str
+    case_id: int
+    since: datetime
+    what: str
+    proof: str
+    who: str
+    link: str
+    amount: str = ""
+    extra: list[str] = field(default_factory=list)
+
+
+def describe(e: CaseEvent, commands: dict[int, PaymentCommand], evidence: dict[int, dict]) -> Entry:
+    """An event in operator words. The detail keys are the ones each `record(...)` call writes."""
+    d, kind = e.detail or {}, e.kind
+    cmd = commands.get(d.get("command"))
+    pay_link = f"/payments/{cmd.id}" if cmd else None
+    text, title = "", kind[0].upper() + kind[1:]
+    if kind == "case opened":
+        title, text = "Past due", f"{money(d.get('total_due'))} owed since {day(d.get('delinquent_since'))}."
+    elif kind == "payment submitted":
+        said = {"lost": "No answer came back before the timeout.", "accepted": f"The FMS answered {d.get('status')}."}
+        title = f"Sent a {money(d.get('amount'))} card payment"
+        text = said.get(d.get("fms_said"), f"The FMS answered: {d.get('detail') or d.get('fms_said')}.")
+    elif kind == "possible match for staff":
+        title, text = "Found a possible match", f"{d.get('payment')} ({d.get('status')}) at the FMS may be this attempt. Not matched automatically."
+    elif kind == "state changed":
+        title, text = f"Account {d.get('to')}", f"From {d.get('from')}. The FMS balance read {money(d.get('total_due'))}."
+    elif kind == "payment confirmed":
+        title, text = "Payment confirmed", f"{money(d.get('amount'))} as {d.get('payment')}, applied on the FMS ledger."
+    elif kind == "payment status changed after success":
+        title, text = "Payment came back", f"The FMS now reports {d.get('fms_status')} for a payment Gatehouse had confirmed."
+    elif kind == "payment taken outside the desk":
+        title, text = "Payment at the counter", f"{money(d.get('amount'))}, recorded as {d.get('payment')}."
+    elif kind == "payment needs staff":
+        title, text = "Held for a person", d.get("reason") or (cmd.provider_reason if cmd else "")
+    elif kind == "lien file evaluated":
+        title, text = d.get("state", "Lien file evaluated"), f"Rule version {d.get('rule_version') or 'none'}."
+        pay_link = f"/accounts/{e.case_id}/lien"
+    elif kind == "lien evidence recorded":
+        title = EVIDENCE_NAMES.get(d.get("kind"), d.get("kind", "Evidence")) + " recorded"
+        facts = evidence.get(d.get("evidence"), {})
+        when = next((facts[k] for k in ("deposited_on", "posted_on", "published_on", "observed_on", "delivered_on") if facts.get(k)), None)
+        if d.get("kind") == "legal_check":
+            text = f"{facts.get('check', '').replace('_', ' ').capitalize()}: {facts.get('answer', '')}."
+        elif when:
+            text = f"Dated {day(when)}."
+        pay_link = f"/accounts/{e.case_id}/lien"
+    elif kind == "payment resolved by staff":
+        title, text = "Resolved by staff", d.get("note", "")
+    elif kind == "fms read failed":
+        title, text = "The FMS did not answer", d.get("error", "")
+    elif kind in ("tenant said", "desk replied"):
+        text = d.get("text", "")
+    return Entry(e.occurred_at, LANE_OF.get(kind, OBSERVED), title, text, e.actor if e.actor not in ("desk",) else "", pay_link)
+
+
+@dataclass
+class Pages:
+    factory: sessionmaker[Session]
+    trace: dict = field(default_factory=dict)   # simulator truth saved when the world was built, keyed by lease
+
+    def facilities(self, s: Session) -> list[Facility]:
+        binding = s.get(DeskBinding, 1)
+        rows = s.scalars(select(Facility).order_by(Facility.id)).all()
+        return [f for f in rows if binding is None or f.provider_id in binding.facility_ids]
+
+    def today(self, s: Session, facility: Facility) -> list[Item]:
+        items: list[Item] = []
+        cases = s.scalars(select(DelinquencyCase).join(Lease, Lease.id == DelinquencyCase.lease_id)
+                          .where(Lease.facility_id == facility.id, DelinquencyCase.state != "paid")).all()
+        for case in cases:
+            lease = s.get(Lease, case.lease_id)
+            snap = s.get(LedgerSnapshot, case.last_snapshot_id) if case.last_snapshot_id else None
+            owed = snap.total_due if snap else None
+            found = False
+            for cmd in s.scalars(select(PaymentCommand).where(PaymentCommand.case_id == case.id)).all():
+                if cmd.state == "NEEDS_STAFF":
+                    found = True
+                    lost = cmd.provider_payment_id is None
+                    items.append(Item(0, "Payment outcome unknown" if lost else "Payment needs a person", lease.unit_name, case.id,
+                                      cmd.created_at,
+                                      (f"A {money(cmd.amount)} card payment taken by phone. The FMS took a payment, but its answer "
+                                       "never reached Gatehouse, so the account is held and nothing was retried.") if lost else cmd.provider_reason or "",
+                                      "A person names the FMS payment that is this attempt, and the ledger shows it applied.",
+                                      "Collections lead", f"/payments/{cmd.id}", money(cmd.amount)))
+                elif cmd.state == "RETURNED":
+                    found = True
+                    items.append(Item(2, "Payment returned", lease.unit_name, case.id, cmd.reversed_at or cmd.created_at,
+                                      f"{money(cmd.amount)} posted and was confirmed, then the bank returned it. The account is open again.",
+                                      f"The ledger shows the {money(owed)} paid again, or a person records why not.",
+                                      "Front desk", f"/payments/{cmd.id}", money(owed)))
+            last = s.scalar(select(LienEvaluation).where(LienEvaluation.case_id == case.id).order_by(LienEvaluation.id.desc()).limit(1))
+            if last is not None and last.state == "Account changed: re-review":
+                found = True
+                sale = next((v for k, v in last.timing.items() if k.startswith("earliest sale")), None)
+                items.append(Item(1, "Lien file out of date", lease.unit_name, case.id, last.evaluated_at,
+                                  "A payment posted after the lien notice went out, so the file no longer matches the balance."
+                                  + (f" Earliest sale under the statute: {day(sale)}." if sale else ""),
+                                  "A person reviews the file against today's balance and decides whether the sale can go on.",
+                                  "Collections lead", f"/accounts/{case.id}/lien", money(owed)))
+            elif last is not None and last.state == "Counsel review required":
+                found = True
+                items.append(Item(3, "Sent to counsel", lease.unit_name, case.id, last.evaluated_at,
+                                  "No reviewed lien rules for this state, so Gatehouse does not evaluate the file.",
+                                  "Counsel's review is recorded on the file.", "Counsel", f"/accounts/{case.id}/lien", money(owed)))
+            if not found:
+                items.append(Item(4, "Past due", lease.unit_name, case.id, case.opened_at,
+                                  f"{money(owed)} owed. No payment or lien step in progress.",
+                                  "The FMS ledger shows the balance paid.", "Front desk", f"/accounts/{case.id}", money(owed)))
+        return sorted(items, key=lambda i: (i.rank, i.since))
+
+    def record(self, s: Session, case: DelinquencyCase) -> list[Entry]:
+        commands = {c.id: c for c in s.scalars(select(PaymentCommand).where(PaymentCommand.case_id == case.id)).all()}
+        evidence = {r.id: r.facts for r in s.scalars(select(LienEvidence).where(LienEvidence.case_id == case.id)).all()}
+        entries = [describe(e, commands, evidence) for e in s.scalars(select(CaseEvent).where(CaseEvent.case_id == case.id)).all()]
+        for p in s.scalars(select(PaymentProposal).where(PaymentProposal.case_id == case.id, PaymentProposal.confirmed_by.is_not(None))).all():
+            when = commands[p.command_id].created_at if p.command_id in commands else p.created_at
+            entries.append(Entry(when, DECIDED, f"Tenant agreed to {money(p.amount)}",
+                                 f"“{p.tenant_answer}”, card ending {p.card_last4}, heard by {p.confirmed_by}.",
+                                 "", f"/payments/{p.command_id}" if p.command_id else None))
+        entries.sort(key=lambda x: x.at)
+        # nine legal checks entered one after another by the same person read as one row with its list
+        folded: list[Entry] = []
+        for e in entries:
+            last = folded[-1] if folded else None
+            if last and last.lane == e.lane == DECIDED and last.title == e.title and last.who == e.who and e.title.startswith("Legal check"):
+                last.count += 1
+                last.text = f"{last.text} {e.text}".strip()
+            else:
+                folded.append(e)
+        for e in folded:
+            if e.count > 1:
+                e.title = f"{e.count} legal checks recorded"
+        return folded
+
+
+def router(pages: Pages) -> APIRouter:
+    r = APIRouter()
+
+    def session():
+        return pages.factory()
+
+    def case_or_404(s: Session, case_id: int) -> tuple[DelinquencyCase, Lease, Facility]:
+        case = s.get(DelinquencyCase, case_id)
+        if case is None:
+            raise HTTPException(404, "No such account")
+        lease = s.get(Lease, case.lease_id)
+        facility = s.get(Facility, lease.facility_id)
+        if facility not in pages.facilities(s):
+            raise HTTPException(404, "No such account")
+        return case, lease, facility
+
+    @r.get("/", response_class=HTMLResponse)
+    def today(request: Request, facility: str | None = None):
+        with session() as s:
+            facilities = pages.facilities(s)
+            if not facilities:
+                raise HTTPException(503, "No facility has been read from the FMS yet")
+            current = next((f for f in facilities if f.provider_id == facility), facilities[0])
+            items = pages.today(s, current)
+            return templates.TemplateResponse(request, "today.html", {
+                "facilities": facilities, "facility": current, "items": items, "local": local, "nav": "today"})
+
+    @r.get("/accounts/{case_id}", response_class=HTMLResponse)
+    def account(request: Request, case_id: int):
+        with session() as s:
+            case, lease, facility = case_or_404(s, case_id)
+            snap = s.get(LedgerSnapshot, case.last_snapshot_id) if case.last_snapshot_id else None
+            entries = pages.record(s, case)
+            return templates.TemplateResponse(request, "account.html", {
+                "case": case, "lease": lease, "facility": facility, "snap": snap, "entries": entries, "lanes": LANES,
+                "money": money, "local": local, "nav": "today", "facilities": pages.facilities(s)})
+
+    @r.get("/payments/{command_id}", response_class=HTMLResponse)
+    def payment(request: Request, command_id: int):
+        with session() as s:
+            cmd = s.get(PaymentCommand, command_id)
+            if cmd is None:
+                raise HTTPException(404, "No such payment")
+            case, lease, facility = case_or_404(s, cmd.case_id)
+            proposal = s.scalar(select(PaymentProposal).where(PaymentProposal.command_id == cmd.id))
+            check = s.get(IdentityCheck, proposal.identity_check_id) if proposal else None
+            snap = s.get(LedgerSnapshot, case.last_snapshot_id) if case.last_snapshot_id else None
+            return templates.TemplateResponse(request, "payment.html", {
+                "cmd": cmd, "case": case, "lease": lease, "facility": facility, "proposal": proposal, "check": check,
+                "snap": snap, "told": tenant_message(cmd), "truth": pages.trace.get(lease.provider_id),
+                "money": money, "local": local, "nav": "today", "facilities": pages.facilities(s)})
+
+    @r.get("/accounts/{case_id}/lien", response_class=HTMLResponse)
+    def lien(request: Request, case_id: int):
+        with session() as s:
+            case, lease, facility = case_or_404(s, case_id)
+            evaluations = s.scalars(select(LienEvaluation).where(LienEvaluation.case_id == case.id)
+                                    .order_by(LienEvaluation.id.desc())).all()
+            if not evaluations:
+                raise HTTPException(404, "This account has no lien file")
+            current, previous = evaluations[0], (evaluations[1] if len(evaluations) > 1 else None)
+            before = {f["requirement"]: f for f in previous.findings} if previous else {}
+            changed = [(before.get(f["requirement"]), f) for f in current.findings
+                       if previous and before.get(f["requirement"]) != f]
+            order = {"blocked": 0, "review": 1, "missing": 2, "waiting": 3, "met": 9}
+            findings = sorted(current.findings, key=lambda f: order.get(f["status"], 5))
+            evidence = s.scalars(select(LienEvidence).where(LienEvidence.case_id == case.id).order_by(LienEvidence.id)).all()
+            return templates.TemplateResponse(request, "lien.html", {
+                "case": case, "lease": lease, "facility": facility, "current": current, "previous": previous,
+                "changed": changed, "findings": findings, "evidence": evidence, "names": EVIDENCE_NAMES, "day": day,
+                "local": local, "nav": "today", "facilities": pages.facilities(s)})
+
+    @r.get("/limits", response_class=HTMLResponse)
+    def limits(request: Request):
+        with session() as s:
+            return templates.TemplateResponse(request, "limits.html", {"nav": "limits", "facilities": pages.facilities(s)})
+
+    return r

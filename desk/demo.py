@@ -51,6 +51,18 @@ def build(factory: sessionmaker[Session], adapter: FMSAdapter, fms_base_url: str
     return True
 
 
+def trace(fms_base_url: str) -> dict:
+    """The simulator's own record of the seeded payments, saved once the world is built. A real FMS has nothing
+    like it; the preview shows it next to what Gatehouse concluded, so a reader can check the two agree."""
+    recorded_at = datetime.now(ZoneInfo("America/New_York")).strftime("%b %-d, %-I:%M %p")
+    out = {}
+    with httpx.Client(base_url=fms_base_url, timeout=30) as sim:
+        for lease in ("lease_WhitB1042", "lease_BellC0207", "lease_OkfrE0505"):
+            data = sim.get("/sim/truth", params={"leaseId": lease}).raise_for_status().json()["data"]
+            out[lease] = {**data, "recorded_at": recorded_at}
+    return out
+
+
 def case_of(session: Session, lease_provider_id: str) -> DelinquencyCase:
     lease = session.scalar(select(Lease).where(Lease.provider_id == lease_provider_id))
     return current_case(session, lease)

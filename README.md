@@ -2,11 +2,23 @@
 
 Operations reconciliation for self-storage, checked against the FMS.
 
-Gatehouse works the delinquent accounts of a self-storage operator against the facility management system (FMS) that holds the truth about them. It takes a payment, a promise or a lien step, checks the FMS until the outcome is known, and keeps the account in an explicit exception state whenever the two disagree. Nothing is reported as done until the FMS shows it.
+Self-storage operators already run a facility management system (FMS), a payment processor, a gate system, a call service and often a lien vendor. The expensive failures happen between them: work one system reports done that another never finished. A card is charged and the FMS never shows it. A returned payment leaves the account closed. A lien file stays built on a balance that has changed. A paid tenant is still locked out.
 
-It exists because the expensive failures in collections are not missing features. They are a payment that timed out and got charged twice, a "paid" message sent before the money was applied to the lease, a returned payment that never reopened the account, and a lien file that moved toward auction with a notice nobody can prove was delivered.
+Gatehouse finds that work, keeps the evidence, and closes an item only when the system of record shows the fact that proves it done. When the systems disagree, a person decides from the evidence. When one fact changes, Gatehouse checks again every piece of work it touches.
 
-## What it does
+## What is built and what is next
+
+| Part | Status | Done means |
+|---|---|---|
+| Collections and payments | Built | The FMS shows the payment succeeded and the ledger shows the money on the charges the tenant agreed to pay |
+| Florida lien evidence | Built | Every requirement has a record; the best a file reaches is a packet for a person to review |
+| Access and overlocks | Next | Gate codes and overlocks in the FMS match what each tenant has paid, in both directions |
+| Leads and move-ins | Planned | A missed call counts as recovered only when a specific lease is linked to it |
+| Rent changes | Planned | An approved increase is saved, noticed and charged in the FMS, with what happened after |
+
+The hosted preview is read-only and runs on synthetic data. Its home page lists the open work at a facility. Each item opens to the record behind it, kept in four lanes: what the FMS said, what Gatehouse observed, what Gatehouse concluded, and what a person decided. The lost payment also shows the simulator's own record of what happened, which a real FMS cannot show.
+
+## Collections and payments, and lien evidence
 
 - **Past-due queue.** One worklist per facility: what is owed, what was last attempted, what is blocking the account and who has to act.
 - **Payments the tenant actually agreed to.** After a fresh identity check, the desk builds a proposal from the FMS balance and the tenant's saved cards, and a payment can only be taken by confirming one, with the name of the person who heard the tenant's yes and the tenant's words; anything but a clear yes is refused. Confirming it twice returns the same payment.

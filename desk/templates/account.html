@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Unit {{ lease.unit_name }} | Gatehouse{% endblock %}
+{% block main %}
+<p class="crumbs"><a href="/?facility={{ facility.provider_id }}">Today at {{ facility.name }}</a></p>
+<div class="title">
+  <h1>Unit {{ lease.unit_name }}</h1>
+  <p>{{ facility.name }} &middot; {{ lease.provider_id }}</p>
+</div>
+<dl class="facts">
+  <div><dt>Account</dt><dd>{{ case.state|capitalize }}</dd></div>
+  <div><dt>Owed, per the FMS</dt><dd>{{ money(snap.total_due) if snap else 'Not read yet' }}</dd></div>
+  <div><dt>Last read from the FMS</dt><dd>{{ local(snap.observed_at) if snap else '' }}</dd></div>
+  <div><dt>Who acts</dt><dd>{{ case.owner|capitalize }}</dd></div>
+</dl>
+{% if case.hold_reasons %}<p class="lede">{% for r in case.hold_reasons %}{{ sentence(r) }} {% endfor %}</p>{% endif %}
+<table class="docket">
+  <caption class="visually-hidden">Everything on this account, one moment per row, in the lane of whoever said it</caption>
+  <thead><tr><th scope="col" class="when">Recorded</th>{% for key, label in lanes %}<th scope="col">{{ label }}</th>{% endfor %}</tr></thead>
+  <tbody>
+  {% for e in entries %}
+  <tr>
+    <td class="when">{{ local(e.at) }}</td>
+    {% for key, label in lanes %}
+      {% if key == e.lane %}
+      <td class="entry {{ key }}">
+        <span class="lane-label">{{ label }}</span>
+        <b>{% if e.link %}<a href="{{ e.link }}">{{ e.title }}</a>{% else %}{{ e.title }}{% endif %}</b>
+        {% if e.text %}<p>{{ e.text }}</p>{% endif %}
+        {% if e.who %}<span class="who">{{ e.who }}</span>{% endif %}
+      </td>
+      {% else %}<td class="lane-empty"></td>{% endif %}
+    {% endfor %}
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

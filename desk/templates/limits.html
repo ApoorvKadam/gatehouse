@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}What this is and is not | Gatehouse{% endblock %}
+{% block main %}
+<div class="title"><h1>What this is and is not</h1></div>
+<div class="prose">
+<p class="lede">Gatehouse finds the work that one system reports done and another never finished, keeps the evidence, and refuses to call anything done until the system of record shows it.</p>
+<h2>What you are looking at</h2>
+<p>A synthetic technical preview. The facility management system (FMS) is a simulator built on the shapes of Cubby's public Operator API. Every tenant, payment and document is made up. When this preview starts, it builds its world by running Gatehouse's own flows against the simulator, so each case on Today is what the code actually did.</p>
+<h2>What is built</h2>
+<ul>
+  <li>Collections and payments: identity, the tenant's explicit yes, one charge, lost answers held for a person, returned payments reopening the account.</li>
+  <li>Florida lien evidence review: every requirement with its statutory or policy basis, re-evaluated when the account changes. New York and other states go to counsel.</li>
+</ul>
+<h2>What comes next</h2>
+<ul>
+  <li>Access and overlocks: gate codes and overlocks checked against what each tenant has paid, in both directions.</li>
+  <li>Leads and move-ins: a missed call counts as recovered only when a specific lease is linked to it.</li>
+  <li>Rent changes: an approved increase tracked until the FMS shows it saved, noticed and charged, with what happened after.</li>
+</ul>
+<h2>Limits</h2>
+<ul>
+  <li>No real payments, no real FMS, no real tenants.</li>
+  <li>Cubby's ledger does not say which payment paid which charge, so some outcomes need a person.</li>
+  <li>No legal approval. The Florida rules are a reading of the statute, not counsel's review. Nothing here says a file is compliant or a unit may be sold.</li>
+  <li>The preview runs on a free host that sleeps when idle. It takes a minute or two to wake, and it rebuilds the same world each time it starts.</li>
+</ul>
+</div>
+{% endblock %}
