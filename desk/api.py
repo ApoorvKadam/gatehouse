@@ -248,7 +248,8 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         facility = session.get(Facility, session.get(Lease, case.lease_id).facility_id)
         ref = reference_row(session, facility.jurisdiction)
         return {
-            "evaluation_id": ev.id, "evaluated_at": ev.evaluated_at, "state": ev.state, "findings": ev.findings, "timing": ev.timing,
+            "evaluation_id": ev.id, "evaluated_at": ev.evaluated_at, "state": ev.state, "summary": ev.summary,
+            "findings": ev.findings, "timing": ev.timing,
             "rule_version": ({"label": FL_R1.label, "citations": FL_R1.citations, "review_note": FL_R1.review_note, "policies": FL_R1.policies}
                              if ev.rule_version == FL_R1.label else None),
             "facts_digest": ev.facts_digest,

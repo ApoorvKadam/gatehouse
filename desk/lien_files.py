@@ -5,14 +5,14 @@ from __future__ import annotations
 import hashlib
 from dataclasses import asdict
 
-from sqlalchemy import event, select
+from sqlalchemy import DDL, event, select
 from sqlalchemy.orm import Session
 
 from .adapter import FMSAdapter, FMSError
 from .cases import record
 from .db import utcnow
 from .liens import CaseFacts, DateProblem, evaluate, facility_zone, local_date, parse_evidence
-from .models import DelinquencyCase, Facility, Lease, LienEvaluation, LienEvidence
+from .models import DelinquencyCase, Facility, Lease, LedgerSnapshot, LienEvaluation, LienEvidence
 
 NOT_MONEY = ("DECLINED", "FAILED", "REJECTED")
 
@@ -22,13 +22,36 @@ def _evidence_is_never_edited(mapper, connection, target):
     raise ValueError("lien evidence is never edited; record a correction that supersedes it")
 
 
+@event.listens_for(LienEvidence, "before_delete")
+def _evidence_is_never_deleted(mapper, connection, target):
+    raise ValueError("lien evidence is never deleted; record a correction that supersedes it")
+
+
+# the same rule in the database itself, so a bulk statement or another client cannot rewrite the record either
+for _table in ("lien_evidence", "rule_source_rows"):
+    for _op in ("UPDATE", "DELETE"):
+        event.listen(LienEvidence.metadata.tables[_table], "after_create", DDL(
+            f"CREATE TRIGGER IF NOT EXISTS {_table}_no_{_op.lower()} BEFORE {_op} ON {_table} "
+            f"BEGIN SELECT RAISE(ABORT, '{_table} is append-only'); END").execute_if(dialect="sqlite"))
+
+EVALUATORS = {"FL-r1": evaluate}   # rule version -> the evaluator that implements it; replay refuses anything else
+
+
 def record_evidence(session: Session, case: DelinquencyCase, kind: str, facts: dict, entered_by: str,
                     document_name: str | None = None, document_text: str | None = None, supersedes: int | None = None) -> LienEvidence:
     parsed = parse_evidence(kind, facts)   # raises ValueError or ValidationError with the exact problem
+    notice_id = getattr(parsed, "notice_id", None)
+    if notice_id is not None:
+        notice = session.get(LienEvidence, notice_id)
+        if notice is None or notice.case_id != case.id or notice.kind != "notice":
+            raise ValueError(f"notice {notice_id} is not a notice on this case")
     if supersedes is not None:
         old = session.get(LienEvidence, supersedes)
         if old is None or old.case_id != case.id or old.kind != kind:
             raise ValueError("a correction must supersede a record of the same kind on the same case")
+        newer = session.scalar(select(LienEvidence.id).where(LienEvidence.supersedes_id == supersedes).limit(1))
+        if newer is not None:
+            raise ValueError(f"record {supersedes} was already corrected by record {newer}; correct the latest one")
     row = LienEvidence(case_id=case.id, kind=kind, facts=parsed.model_dump(mode="json"), entered_by=entered_by,
                        document_name=document_name, document_text=document_text, supersedes_id=supersedes,
                        document_sha256=hashlib.sha256(document_text.encode()).hexdigest() if document_text else None)
@@ -49,24 +72,61 @@ def case_facts(session: Session, adapter: FMSAdapter, case: DelinquencyCase) -> 
     """Read what the evaluation needs. The facility's zone comes from the FMS every time, with no default."""
     lease = session.get(Lease, case.lease_id)
     facility = session.get(Facility, lease.facility_id)
-    zone_name = total = None
+    evidence = current_evidence(session, case)
+    zone_name = total = ledger = None
     payments_after: list[str] | None = None   # None: the payments could not be read or dated, which blocks the evaluation
     try:
         info = next((f for f in adapter.facilities() if f["facilityId"] == facility.provider_id), {})
         zone_name = info.get("timeZone") or None
-        total = adapter.ledger(lease.provider_id).total_due
+        ledger = adapter.ledger(lease.provider_id)
+        total = ledger.total_due
         zone = facility_zone(zone_name)
         money = [p for p in adapter.payments_for_lease(lease.provider_id) if p.status not in NOT_MONEY]
         if all(p.created_at is not None for p in money):
             payments_after = sorted({local_date(p.created_at, zone).isoformat() for p in money})
     except (FMSError, DateProblem):
         pass   # the evaluation reports exactly what could not be read
+    # the ledger snapshots the notices name, and what has changed since on the charges a notice claimed
+    snapshots, changes = {}, None
+    for r in evidence:
+        sid = r.facts.get("ledger_snapshot_id") if r.kind == "notice" else None
+        snap = session.get(LedgerSnapshot, sid) if sid is not None else None
+        if snap is None or snap.lease_id != lease.id:
+            continue
+        try:
+            observed = local_date(snap.observed_at, facility_zone(zone_name)).isoformat()
+        except DateProblem:
+            continue
+        snapshots[str(sid)] = {"total_due": snap.total_due, "observed_on": observed}
+        if ledger is not None:
+            changes = ledger_changes(snap.raw, ledger.raw)
     try:
         today = local_date(utcnow(), facility_zone(zone_name)).isoformat()
     except DateProblem:
         today = utcnow().date().isoformat()
-    evidence = [{"id": r.id, "kind": r.kind, "facts": r.facts} for r in current_evidence(session, case)]
-    return CaseFacts(facility.jurisdiction, zone_name, total, payments_after, today, evidence)
+    records = [{"id": r.id, "kind": r.kind, "facts": r.facts, "document_sha256": r.document_sha256} for r in evidence]
+    return CaseFacts(facility.jurisdiction, zone_name, total, payments_after, today, records, snapshots, changes)
+
+
+def ledger_changes(then: dict, now: dict) -> list[str]:
+    """What changed on the charges that were open in an earlier ledger: payments applied or reversed, waivers, amounts,
+    charges that disappeared. New charges posted since are not changes to the claim."""
+    current = {e["bookEntryId"]: e for e in now.get("bookEntries", [])}
+    out = []
+    for e in then.get("bookEntries", []):
+        if e.get("type") != "CHARGE":
+            continue
+        name = ((e.get("details") or {}).get("description") or (e.get("details") or {}).get("category") or e["bookEntryId"]).lower()
+        later = current.get(e["bookEntryId"])
+        if later is None:
+            out.append(f"the {name} charge is no longer on the ledger")
+            continue
+        for key, label in (("amount", "amount"), ("amountPaid", "amount paid")):
+            if later.get(key, 0) != e.get(key, 0):
+                out.append(f"the {name} charge's {label} changed from {e.get(key, 0)} to {later.get(key, 0)} cents")
+        if bool((later.get("details") or {}).get("waive")) != bool((e.get("details") or {}).get("waive")):
+            out.append(f"the {name} charge was waived" if (later.get("details") or {}).get("waive") else f"the waiver on the {name} charge was removed")
+    return out
 
 
 def evaluate_case(session: Session, adapter: FMSAdapter, case: DelinquencyCase) -> LienEvaluation:
@@ -76,8 +136,8 @@ def evaluate_case(session: Session, adapter: FMSAdapter, case: DelinquencyCase) 
     last = session.scalar(select(LienEvaluation).where(LienEvaluation.case_id == case.id).order_by(LienEvaluation.id.desc()).limit(1))
     if last is not None and last.facts_digest == digest:
         return last
-    result = evaluate(facts)
-    row = LienEvaluation(case_id=case.id, rule_version=result.rule_version, state=result.state, facts=asdict(facts),
+    result = EVALUATORS[facts.rules](facts)
+    row = LienEvaluation(case_id=case.id, rule_version=result.rule_version, state=result.state, summary=result.summary, facts=asdict(facts),
                          facts_digest=digest, findings=[asdict(f) for f in result.findings], timing=result.timing)
     session.add(row)
     session.flush()
@@ -87,6 +147,10 @@ def evaluate_case(session: Session, adapter: FMSAdapter, case: DelinquencyCase) 
 
 
 def replay(row: LienEvaluation) -> bool:
-    """Run the evaluator again on the facts an evaluation kept: the same facts must give the same findings."""
-    again = evaluate(CaseFacts(**row.facts))
+    """Run the evaluator of the recorded rule version again on the facts the evaluation kept: the same facts must give
+    the same findings. A rule version this desk no longer carries cannot be replayed."""
+    facts = CaseFacts(**row.facts)
+    if facts.rules not in EVALUATORS:
+        return False
+    again = EVALUATORS[facts.rules](facts)
     return again.state == row.state and [asdict(f) for f in again.findings] == row.findings and again.timing == row.timing

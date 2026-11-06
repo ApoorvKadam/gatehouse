@@ -11,6 +11,7 @@ import io
 from pathlib import Path
 
 from sqlalchemy import event, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .models import RuleSourceRow
@@ -35,7 +36,11 @@ def import_stitch(session: Session, path: Path = STITCH_CSV) -> int:
     rows = list(csv.DictReader(io.StringIO(raw.decode("utf-8"))))
     session.add_all(RuleSourceRow(source=STITCH_SOURCE, file_sha256=digest, jurisdiction=r["state_code"], row=r,
                                   attribution=STITCH_ATTRIBUTION) for r in rows)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()   # another process imported the same file at the same moment
+        return 0
     return len(rows)
 
 

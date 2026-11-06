@@ -107,8 +107,10 @@ class CubbyAdapter:
 
     def payments_for_lease(self, lease_provider_id: str) -> list[ProviderPayment]:
         data = self._read("/v1/payments/search", {"leaseId": lease_provider_id})
+        if not isinstance(data.get("payments"), list):
+            raise FMSError("/v1/payments/search: the answer has no payments list")
         try:
-            return [_payment(p) for p in data.get("payments", [])]
+            return [_payment(p) for p in data["payments"]]
         except (ValueError, TypeError) as exc:
             raise FMSError(f"/v1/payments/search: unreadable payment ({exc})") from exc
 

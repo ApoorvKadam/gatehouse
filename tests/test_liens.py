@@ -57,43 +57,55 @@ def test_a_missing_or_unknown_zone_blocks_instead_of_defaulting():
 DELIVERED = date(2026, 11, 6)
 
 
+DOC = "a" * 64   # a kept document's hash
+
+
 def legal(**overrides):
     answers = {"military_disclosure_provision": "yes", "military_service": "no", "bankruptcy": "no",
                "vehicle_or_watercraft": "no", "dispute": "no", "secured_party": "no"} | overrides
-    return [{"id": i, "kind": "legal_check", "facts": {"check": k, "answer": v, "source": "rental agreement and PACER search",
-                                                        "observed_on": "2026-11-05"}} for i, (k, v) in enumerate(answers.items(), 100)]
+    return [{"id": i, "kind": "legal_check", "document_sha256": None,
+             "facts": {"check": k, "answer": v, "source": "rental agreement and PACER search", "observed_on": "2026-11-05"}}
+            for i, (k, v) in enumerate(answers.items(), 100)]
 
 
-def notice(deadline=date(2026, 11, 20), sale=date(2026, 12, 6), version="N1", **extra):
-    return {"id": 1, "kind": "notice", "facts": {
-        "notice_version": version, "itemized_total_cents": 24000, "sum_due_since": "2026-10-01",
-        "property_description": "household goods and boxes", "demand_deadline": deadline.isoformat(), "sale_statement": True,
-        "sale_date": sale.isoformat(), "sale_place": "lockerbid.example online auction", "owner_name": "Northstar Storage",
+def notice(deadline=date(2026, 11, 20), sale=date(2026, 12, 6), nid=1, total=24000, **extra):
+    return {"id": nid, "kind": "notice", "document_sha256": DOC, "facts": {
+        "itemized_charges": [{"description": "October rent", "amount_cents": 21500, "due_on": "2026-10-01"},
+                             {"description": "Late fee", "amount_cents": 2500, "due_on": "2026-10-06"}],
+        "itemized_total_cents": total, "sum_due_since": "2026-10-01", "ledger_snapshot_id": 7,
+        "property_description": "household goods and boxes", "description_matches_rental_agreement": "yes",
+        "demand_deadline": deadline.isoformat(), "sale_statement": True, "sale_date": sale.isoformat(), "sale_time": "10:00 AM",
+        "sale_place": "lockerbid.example online auction", "owner_name": "Northstar Storage",
         "owner_street_address": "1200 E Colonial Dr, Orlando FL", "owner_phone": "407-555-0100"} | extra}
 
 
-def mailed(on=DELIVERED, version="N1", certificate=True):
-    return {"id": 2, "kind": "mail_deposit", "facts": {"notice_version": version, "deposited_on": on.isoformat(),
+def mailed(on=DELIVERED, nid=1, certificate=True):
+    return {"id": 2, "kind": "mail_deposit", "document_sha256": DOC, "facts": {"notice_id": nid, "deposited_on": on.isoformat(),
             "certificate_of_mailing": certificate, "postage_prepaid": True, "address": "88 Pine St, Orlando FL",
             "address_basis": "rental agreement"}}
 
 
-def posted(on=DELIVERED):
-    return {"id": 3, "kind": "posting", "facts": {"notice_version": "N1", "posted_on": on.isoformat(), "location": "unit"}}
+def posted(on=DELIVERED, nid=1):
+    return {"id": 3, "kind": "posting", "document_sha256": DOC, "facts": {"notice_id": nid, "posted_on": on.isoformat(), "location": "unit"}}
 
 
-def published(on, i, sale=date(2026, 12, 6), **extra):
-    return {"id": 10 + i, "kind": "publication", "facts": {"newspaper": "Orlando Sentinel", "published_on": on.isoformat(),
-            "sale_date": sale.isoformat(), "sale_place": "lockerbid.example online auction", "includes_property_description": True,
-            "includes_facility_address": True, "includes_tenant_name": True, "includes_sale_time_place_manner": True} | extra}
+def published(on, i, sale=date(2026, 12, 6), nid=1, **extra):
+    return {"id": 10 + i, "kind": "publication", "document_sha256": DOC, "facts": {
+        "notice_id": nid, "newspaper": "Orlando Sentinel", "general_circulation_in_facility_area": "yes",
+        "circulation_source": "Florida Press Association listing for Orange County", "published_on": on.isoformat(),
+        "sale_date": sale.isoformat(), "sale_time": "10:00 AM", "sale_place": "lockerbid.example online auction",
+        "includes_property_description": True, "includes_facility_address": True, "includes_tenant_name": True,
+        "includes_sale_time_place_manner": True} | extra}
 
 
 def complete():
     return [notice(), mailed(), posted(), published(date(2026, 11, 21), 1), published(date(2026, 11, 28), 2)] + legal()
 
 
-def facts(evidence, today=date(2026, 12, 1), jurisdiction="FL", zone="America/New_York", due=24000, payments=()):
-    return CaseFacts(jurisdiction, zone, due, None if payments is None else list(payments), today.isoformat(), evidence)
+def facts(evidence, today=date(2026, 12, 1), jurisdiction="FL", zone="America/New_York", due=24000, payments=(), changes=(),
+          snapshot_total=24000):
+    return CaseFacts(jurisdiction, zone, due, None if payments is None else list(payments), today.isoformat(), evidence,
+                     {"7": {"total_due": snapshot_total, "observed_on": "2026-11-05"}}, list(changes))
 
 
 def by(evaluation, requirement):
@@ -104,7 +116,8 @@ def test_a_complete_file_is_a_review_packet_and_never_a_sale_approval():
     e = evaluate(facts(complete()))
     assert e.state == "Review packet assembled"
     assert e.summary == "Listed evidence checks completed; sale authorization is outside this desk."
-    assert e.timing["payment deadline"] == "2026-11-20" and e.timing["calculated sale threshold under this policy"] == "2026-12-06"
+    assert e.timing["payment deadline in the notice"] == "2026-11-20"
+    assert e.timing["calculated sale threshold under this policy"] == "2026-12-06"
     assert all(f.basis.startswith(("statute", "policy")) for f in e.findings)
 
 
@@ -115,7 +128,8 @@ def test_mail_needs_a_certificate_but_never_proof_of_receipt():
 
 
 def test_an_unconfirmed_email_needs_the_fallback_mailing_and_counts_from_it():
-    email = {"id": 4, "kind": "email_delivery", "facts": {"notice_version": "N1", "sent_on": "2026-11-02", "sent_to": "dana@example.com"}}
+    email = {"id": 4, "kind": "email_delivery", "document_sha256": DOC,
+             "facts": {"notice_id": 1, "sent_on": "2026-11-02", "sent_to": "dana@example.com"}}
     only_email = [x for x in complete() if x["kind"] != "mail_deposit"] + [email]
     assert by(evaluate(facts(only_email)), "e-mail fallback mailing").status == "missing"
     with_fallback = only_email + [mailed(on=DELIVERED)]
@@ -123,7 +137,7 @@ def test_an_unconfirmed_email_needs_the_fallback_mailing_and_counts_from_it():
 
 
 def test_an_email_reply_dates_delivery_by_the_reply():
-    email = {"id": 4, "kind": "email_delivery", "facts": {"notice_version": "N1", "sent_on": "2026-11-02", "sent_to": "dana@example.com",
+    email = {"id": 4, "kind": "email_delivery", "document_sha256": DOC, "facts": {"notice_id": 1, "sent_on": "2026-11-02", "sent_to": "dana@example.com",
                                                            "confirmation": "response", "confirmation_from": "Dana@example.com",
                                                            "confirmed_on": "2026-11-06"}}
     evidence = [x for x in complete() if x["kind"] != "mail_deposit"] + [email]
@@ -190,9 +204,46 @@ def test_paid_unavailable_and_waiting():
     assert evaluate(facts(complete()[:3] + legal(), today=date(2026, 11, 15))).state == "Waiting for a timing threshold"
 
 
-def test_evidence_for_another_notice_version_does_not_count():
-    evidence = [notice(version="N2")] + complete()[1:]
+def test_evidence_for_an_earlier_notice_record_does_not_count():
+    corrected = notice(nid=50, deadline=date(2026, 11, 20))     # a new notice record, never delivered
+    assert evaluate(facts(complete() + [corrected])).state == "Evidence incomplete"
+
+
+def test_an_out_of_area_newspaper_goes_to_review():
+    evidence = complete()[:3] + [published(date(2026, 11, 21), 1, general_circulation_in_facility_area="unknown",
+                                           circulation_source="not checked"), published(date(2026, 11, 28), 2)] + legal()
+    assert by(evaluate(facts(evidence)), "newspaper of general circulation in the area").status == "review"
+
+
+def test_a_file_without_its_documents_is_incomplete():
+    evidence = [dict(e, document_sha256=None) if e["kind"] == "mail_deposit" else e for e in complete()]
     assert evaluate(facts(evidence)).state == "Evidence incomplete"
+
+
+def test_the_claim_is_checked_against_the_ledger_at_notice_time():
+    assert by(evaluate(facts(complete(), snapshot_total=26500)), "claim at notice time").status == "review"
+    no_snapshot = [notice(ledger_snapshot_id=None)] + complete()[1:]
+    assert by(evaluate(facts(no_snapshot)), "claim at notice time").status == "missing"
+    unbalanced = [notice(total=30000)] + complete()[1:]
+    assert by(evaluate(facts(unbalanced, snapshot_total=30000)), "itemized statement").status == "missing"
+
+
+def test_a_waiver_or_return_on_the_claimed_charges_reopens_review():
+    e = evaluate(facts(complete(), changes=["the late fee charge was waived"]))
+    assert e.state == "Account changed: re-review"
+
+
+def test_a_payment_on_the_delivery_day_is_held_as_policy():
+    f = by(evaluate(facts(complete(), payments=["2026-11-06"])), "account unchanged since notice")
+    assert "order is unknown" in f.detail and f.basis == "policy"
+
+
+def test_impossible_email_dates_are_refused():
+    import pytest as _pytest
+    from desk.liens import ValidationError, parse_evidence
+    with _pytest.raises(ValidationError):
+        parse_evidence("email_delivery", {"notice_id": 1, "sent_on": "2026-11-19", "sent_to": "d@example.com", "confirmation": "response",
+                                          "confirmation_from": "d@example.com", "confirmed_on": "2026-11-19", "delivered_on": "2026-11-06"})
 
 
 def test_new_york_and_other_states_go_to_counsel():

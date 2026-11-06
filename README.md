@@ -78,7 +78,8 @@ Tests run against the simulator over real HTTP: `pip install -e ".[dev,chat]" &&
 
 ```bash
 curl -X POST -H "$H" -H "$J" localhost:8000/api/cases/1/lien/evidence -d '{"kind": "mail_deposit", "entered_by": "J. Ortiz",
-  "facts": {"notice_version": "N1", "deposited_on": "2026-10-02", "certificate_of_mailing": true, "postage_prepaid": true,
+  "document_name": "certificate-of-mailing.pdf.txt", "document_text": "PS Form 3817 ...",
+  "facts": {"notice_id": 12, "deposited_on": "2026-10-02", "certificate_of_mailing": true, "postage_prepaid": true,
             "address": "88 Pine St, Orlando FL", "address_basis": "rental agreement"}}'
 curl -H "$H" localhost:8000/api/cases/1/lien
 ```
@@ -95,9 +96,12 @@ What the statute says and what is policy:
 | Conspicuous posting at the facility or on the unit | 83.806(1) |
 | Advertisement once a week for two consecutive weeks after the demand period, with its required content; sale at least 15 days after the first publication | 83.806(4) |
 | Rental agreement discloses uniformed-services membership; vehicles and watercraft; secured parties | 83.808(2), 83.806(10), 83.805 |
-| Posting dated the day of delivery; publications exactly seven days apart; an e-mail confirmed only by a later reply is dated by the reply; unconfirmed e-mail counts from the fallback mailing; every legal check recorded as yes, no or unknown, and anything but a clean no goes to counsel; any payment after delivery reopens review | policy |
+| The newspaper is one of general circulation in the facility's area, with how that was established | 83.806(4) |
+| The itemized claim adds up and equals the FMS ledger snapshot the notice was built from, taken before delivery | 83.806(2)(a), compared as policy |
+| Posting dated the day of delivery; publications exactly seven days apart; an e-mail confirmed only by a later reply is dated by the reply; unconfirmed e-mail counts from the fallback mailing; every legal check recorded as yes, no or unknown, and anything but a clean no goes to counsel; any payment after delivery, or any change to the claimed charges since the snapshot (a waiver, a return, a new amount), reopens review; a payment on the delivery day counts as after it | policy |
+| Every record keeps its document (the notice, the certificate, the confirmation, the acknowledgment, the posting photo, the publisher's affidavit); delivery, posting and publication count only for the notice record they name, so a corrected notice starts over | policy |
 
-Each evaluation keeps the exact facts it read and can be replayed to the same result (`GET /api/lien/evaluations/{id}/replay`). Evidence is never edited; a correction supersedes the record it fixes.
+Each evaluation keeps the exact facts it read, including each document's hash and the rule version, and can be replayed by that version's evaluator to the same result (`GET /api/lien/evaluations/{id}/replay`). Evidence is append-only in the database itself; a correction supersedes the record it fixes, once.
 
 Not covered: sending notices, scheduling or conducting sales, commercial reasonableness, lien priority, proceeds and surplus notices, the no-newspaper posting route, vehicle towing, and any reading of Cubby's delinquency exemptions as legal clearance.
 

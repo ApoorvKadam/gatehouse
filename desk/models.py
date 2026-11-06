@@ -237,6 +237,7 @@ class LienEvaluation(Base):
     case_id: Mapped[int] = mapped_column(ForeignKey("cases.id"))
     rule_version: Mapped[str | None] = mapped_column(String, nullable=True)
     state: Mapped[str] = mapped_column(String)
+    summary: Mapped[str] = mapped_column(String, default="")
     facts: Mapped[dict] = mapped_column(JSON)
     facts_digest: Mapped[str] = mapped_column(String)
     findings: Mapped[list] = mapped_column(JSON)
