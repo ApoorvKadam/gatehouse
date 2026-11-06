@@ -3,6 +3,7 @@ model asks for: which lookups it allows, when a card is charged and what the ten
 from __future__ import annotations
 
 import os
+from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -86,6 +87,16 @@ def test_a_yes_to_some_other_question_never_charges(session, adapter, sim):
     conv.say(session, "wait, what is the $25 for?")
     conv.say(session, "yes")   # answers "anything else?", not the old proposal
     assert commands(session) == [] and sim.payments(DANA) == []
+
+
+def test_a_verification_expires_after_fifteen_minutes(session, adapter, sim):
+    model = ScriptedModel([tool("verify_identity", DANA_ID)], [text("You're verified.")],
+                          [tool("get_balance", id_="t2")], [text("I need to confirm who you are again.")])
+    conv, _ = start(session, adapter, model)
+    assert conv.say(session, "Whitfield 0142 B-1042").verified
+    conv.verified_at -= timedelta(minutes=16)
+    reply = conv.say(session, "how much do I owe?")
+    assert not reply.verified and "expired" in model.sent[-1][-1]["content"][0]["content"]
 
 
 def test_the_model_cannot_propose_before_verification_or_above_the_balance(session, adapter, sim):

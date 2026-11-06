@@ -5,7 +5,6 @@ import hmac
 import logging
 import os
 from contextlib import asynccontextmanager
-from datetime import timedelta
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
@@ -20,12 +19,11 @@ from .conversation import Conversation
 from .db import make_session_factory, utcnow
 from .models import CaseEvent, DelinquencyCase, IdentityCheck, Lease, LedgerSnapshot, PaymentCommand
 from .payments import (
-    Authorization, IdentityClaim, PaymentRefused, PaymentService, check_identity, collected, tenant_message,
+    IDENTITY_VALID_FOR, Authorization, IdentityClaim, PaymentRefused, PaymentService, check_identity, collected, tenant_message,
 )
 from .worker import Worker
 
 log = logging.getLogger("desk.api")
-IDENTITY_VALID_FOR = timedelta(minutes=15)
 
 
 class IdentityIn(BaseModel):

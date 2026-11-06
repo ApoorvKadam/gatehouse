@@ -18,9 +18,10 @@ from sqlalchemy.orm import Session
 
 from .adapter import FMSAdapter, FMSError
 from .cases import record
+from .db import utcnow
 from .models import DelinquencyCase, Facility, Lease, PaymentCommand
 from .payments import (
-    Authorization, IdentityClaim, PaymentRefused, PaymentService, check_identity, identity_locked, tenant_message,
+    IDENTITY_VALID_FOR, Authorization, IdentityClaim, PaymentRefused, PaymentService, check_identity, identity_locked, tenant_message,
 )
 
 log = logging.getLogger("desk.conversation")
@@ -89,11 +90,15 @@ class Conversation:
         self.case_id, self.adapter, self.client, self.model = case_id, adapter, client, model
         self.lock = threading.Lock()
         self.messages: list = []
-        self.identity_verified = False
+        self.verified_at = None
         self.proposal: Proposal | None = None
         self.command_id: int | None = None
         self.handed_to_staff = False
         self.cost_usd = 0.0
+
+    @property
+    def identity_verified(self) -> bool:
+        return self.verified_at is not None and utcnow() - self.verified_at <= IDENTITY_VALID_FOR
 
     # ------------------------------------------------------------------ one tenant message
     def say(self, session: Session, text: str) -> Reply:
@@ -165,14 +170,14 @@ class Conversation:
                 ok, why = check.verified, check.reason
                 record(session, case, "identity checked", {"conversation": self.id, "verified": ok, "reason": why}, source="chat")
                 if ok:
-                    self.identity_verified = True
+                    self.verified_at = check.created_at
                     return {"verified": True}
                 if identity_locked(session, case.id):
                     self._to_staff(session, case, "identity not confirmed after three tries")
                 return {"verified": False, "reason": why}
             if name == "get_balance":
                 if not self.identity_verified:
-                    return {"error": "identity not verified; do not discuss the account"}
+                    return {"error": "identity not verified, or the check expired; verify again before discussing the account"}
                 ledger = self.adapter.ledger(lease.provider_id)
                 open_charges = [{"what": (e.get("details") or {}).get("description") or (e.get("details") or {}).get("category"),
                                  "open_cents": e["amount"] - e.get("amountPaid", 0), "for_period_starting": (e.get("details") or {}).get("accruesOn")}
