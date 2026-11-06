@@ -12,6 +12,8 @@ class Settings:
     fms_timeout_seconds: float
     reconcile_every_seconds: float
     operator_token: str | None
+    # only for running on a laptop: without a token the API refuses every request unless this is set
+    allow_without_token: bool = False
 
     @staticmethod
     def from_env() -> "Settings":
@@ -22,4 +24,5 @@ class Settings:
             fms_timeout_seconds=float(os.environ.get("DESK_FMS_TIMEOUT_SECONDS", "5")),
             reconcile_every_seconds=float(os.environ.get("DESK_RECONCILE_EVERY_SECONDS", "10")),
             operator_token=os.environ.get("DESK_OPERATOR_TOKEN") or None,
+            allow_without_token=os.environ.get("DESK_ALLOW_WITHOUT_TOKEN") == "1",
         )

@@ -1,6 +1,7 @@
 """The desk's HTTP API: the past-due queue, a case with its full history, identity checks and payments."""
 from __future__ import annotations
 
+import hmac
 import logging
 import uuid
 from contextlib import asynccontextmanager
@@ -59,7 +60,11 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
             yield session
 
     def operator(x_desk_token: str | None = Header(default=None)) -> str:
-        if settings.operator_token and x_desk_token != settings.operator_token:
+        if settings.operator_token is None:
+            if settings.allow_without_token:
+                return "local"
+            raise HTTPException(503, "the desk has no operator token configured")
+        if x_desk_token is None or not hmac.compare_digest(x_desk_token, settings.operator_token):
             raise HTTPException(401, "operator token required")
         return "operator"
 

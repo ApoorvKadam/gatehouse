@@ -32,6 +32,14 @@ def test_the_desk_refuses_calls_without_the_operator_token(client):
     assert client.get(f"/api/facilities/{ORLANDO}/queue", headers={"X-Desk-Token": "wrong"}).status_code == 401
 
 
+def test_a_desk_with_no_token_configured_refuses_everything(fms_url, sim):
+    settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY,
+                        fms_timeout_seconds=0.5, reconcile_every_seconds=60, operator_token=None)
+    with TestClient(create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 0.5), start_worker=False)) as c:
+        assert c.get(f"/api/facilities/{ORLANDO}/queue").status_code == 503
+        assert c.get("/api/health").status_code == 200
+
+
 def test_queue_shows_what_is_owed_and_who_has_to_act(client):
     row = dana_case(client)
     assert row["total_due"] == 24000 and row["state"] == "open" and row["owner"] == "front desk"
