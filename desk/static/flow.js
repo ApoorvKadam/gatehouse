@@ -12,9 +12,9 @@
   };
   var phase = function (t, a, b) { return Math.max(0, Math.min(1, (t - a) / (b - a))); };
   var links = {
-    tg: [[188, 232], [292, 232]],
-    gf: [[476, 196], [560, 118]],
-    gl: [[476, 268], [560, 346]]
+    tg: [[208, 240], [304, 240]],
+    gf: [[504, 200], [584, 124]],
+    gl: [[504, 280], [584, 356]]
   };
   var along = function (link, p) {
     var a = links[link][0], b = links[link][1];
@@ -60,7 +60,7 @@
     // the person, then the ledger check
     place("p-gl", "gl", spring(phase(t, 6.5, 7.4)), false, t > 6.5 && t < 7.5);
     on("n-lead", "lit", t > 7.3 && t < 9.2);
-    text("lead-sub", t < 7.4 ? "Waiting" : "Names the FMS payment");
+    text("lead-sub", t < 7.4 ? "Waiting" : "Names the payment");
     place("p-lg", "gl", spring(phase(t, 8.1, 9.0)), true, t > 8.1 && t < 9.1);
     place("p-chk", "gf", spring(phase(t, 9.1, 9.9)), false, t > 9.1 && t < 10.0);
     place("p-chk2", "gf", spring(phase(t, 10.0, 10.8)), true, t > 10.0 && t < 10.9);

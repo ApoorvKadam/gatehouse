@@ -18,7 +18,7 @@
     <thead><tr><th>Requirement</th><th>Before</th><th>Now</th></tr></thead>
     <tbody>
     {% for old, new in changed %}
-      <tr><td>{{ new.requirement }}</td>
+      <tr><td class="req">{{ new.requirement }}</td>
         <td>{% if old %}<span class="status {{ old.status }}">{{ old.status }}</span>: {{ sentence(readable(old.detail)) }}{% else %}No finding{% endif %}</td>
         <td><span class="status {{ new.status }}">{{ new.status }}</span>: {{ sentence(readable(new.detail)) }}{% if new.action %} <b>{{ new.action }}</b>{% endif %}</td></tr>
     {% endfor %}
@@ -33,7 +33,7 @@
     <thead><tr><th>Requirement</th><th>Basis</th><th>Status</th><th>What the file shows</th></tr></thead>
     <tbody>
     {% for f in findings %}
-      <tr><td>{{ f.requirement }}</td><td>{{ f.basis }}</td>
+      <tr><td class="req">{{ f.requirement }}</td><td>{{ f.basis }}</td>
         <td class="status {{ f.status }}"><span class="mark{% if f.status == 'met' %} filled{% endif %}"></span>{{ f.status }}</td>
         <td>{{ sentence(readable(f.detail)) }}{% if f.action %}<br><b>{{ f.action }}</b>{% endif %}</td></tr>
     {% endfor %}
@@ -41,7 +41,7 @@
   </table>
 </section>
 
-<div class="grid2">
+<div class="grid2 top">
   {% if current.timing %}
   <section class="panel">
     <h2>Dates under this rule version</h2>

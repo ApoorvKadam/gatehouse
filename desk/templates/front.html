@@ -3,8 +3,8 @@
 {% block main %}
 <section class="wrap hero">
   <div>
-    <span class="marker"><span class="tile" style="background:var(--teal)">{% include "icons/shield-check.svg" %}</span>For self-storage operators</span>
-    <h1>Work your systems call done, checked until the FMS shows it.</h1>
+    <p class="kicker">For self-storage operators</p>
+    <h1>Nothing is done until the FMS shows it.</h1>
     <p>Gatehouse watches an operator's facility management system and the systems around it. It opens an item for every unfinished piece of work, names the fact that will close it, and sends disagreements to a person with the evidence.</p>
     <div class="actions">
       <a class="button primary" href="/today">Open today's work {% include "icons/arrow-right.svg" %}</a>
@@ -13,20 +13,20 @@
   </div>
   <figure class="flow frame" id="flow" data-reveal>
     <div class="frame-bar"><span><b>How a lost payment is handled</b></span><span>Plays on a loop</span></div>
-    <svg viewBox="0 0 720 420" role="img" aria-labelledby="flow-caption">
+    <svg viewBox="0 0 800 440" role="img" aria-labelledby="flow-caption">
       <defs><pattern id="dots" width="18" height="18" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" class="dot-grid"/></pattern></defs>
-      <rect width="720" height="420" fill="url(#dots)"/>
-      <line id="l-tg" class="link" x1="188" y1="232" x2="292" y2="232"/>
-      <line id="l-gf" class="link" x1="476" y1="196" x2="560" y2="118"/>
-      <line id="l-gl" class="link" x1="476" y1="268" x2="560" y2="346"/>
-      <g id="n-tenant" class="node"><rect x="28" y="192" width="160" height="80" rx="12"/><text x="48" y="224" class="n-title">Tenant</text><text x="48" y="248" id="tenant-sub" class="n-sub">Says yes to $240.00</text></g>
-      <g id="n-gh" class="node gh"><rect x="292" y="152" width="184" height="160" rx="14"/><text x="312" y="186" class="n-title">Gatehouse</text>
-        <g id="gh-chip" class="chip-svg"><rect x="302" y="252" width="164" height="34" rx="17"/><text x="384" y="274" text-anchor="middle" id="gh-state">Idle</text></g>
-        <text x="312" y="212" class="n-sub">Intent first, one send,</text><text x="312" y="230" class="n-sub">no guessing</text></g>
-      <g id="n-fms" class="node"><rect x="560" y="74" width="154" height="88" rx="12"/><text x="576" y="106" class="n-title">FMS</text><text x="576" y="130" id="fms-sub" class="n-sub">Owed $240.00</text></g>
-      <g id="n-lead" class="node"><rect x="560" y="302" width="154" height="88" rx="12"/><text x="576" y="334" class="n-title">Collections lead</text><text x="576" y="358" id="lead-sub" class="n-sub">Waiting</text></g>
-      <g id="x-break" class="mark-x"><circle cx="518" cy="157" r="11"/><path d="M513 152 l10 10 M523 152 l-10 10"/></g>
-      <g id="x-retry" class="mark-x"><circle cx="492" cy="182" r="11"/><path d="M487 177 l10 10 M497 177 l-10 10"/></g>
+      <rect width="800" height="440" fill="url(#dots)"/>
+      <line id="l-tg" class="link" x1="208" y1="240" x2="304" y2="240"/>
+      <line id="l-gf" class="link" x1="504" y1="200" x2="584" y2="124"/>
+      <line id="l-gl" class="link" x1="504" y1="280" x2="584" y2="356"/>
+      <g id="n-tenant" class="node"><rect x="24" y="196" width="184" height="88" rx="12"/><text x="44" y="230" class="n-title">Tenant</text><text x="44" y="256" id="tenant-sub" class="n-sub">Says yes to $240.00</text></g>
+      <g id="n-gh" class="node gh"><rect x="304" y="152" width="200" height="176" rx="14"/><text x="324" y="188" class="n-title">Gatehouse</text>
+        <text x="324" y="214" class="n-sub">Intent first, one send,</text><text x="324" y="234" class="n-sub">no guessing</text>
+        <g id="gh-chip" class="chip-svg"><rect x="318" y="268" width="172" height="36" rx="18"/><text x="404" y="291" text-anchor="middle" id="gh-state">Idle</text></g></g>
+      <g id="n-fms" class="node"><rect x="584" y="76" width="192" height="96" rx="12"/><text x="604" y="112" class="n-title">FMS</text><text x="604" y="138" id="fms-sub" class="n-sub">Owed $240.00</text></g>
+      <g id="n-lead" class="node"><rect x="584" y="308" width="192" height="96" rx="12"/><text x="604" y="344" class="n-title">Collections lead</text><text x="604" y="370" id="lead-sub" class="n-sub">Waiting</text></g>
+      <g id="x-break" class="mark-x"><circle cx="544" cy="162" r="11"/><path d="M539 157 l10 10 M549 157 l-10 10"/></g>
+      <g id="x-retry" class="mark-x"><circle cx="520" cy="185" r="11"/><path d="M515 180 l10 10 M525 180 l-10 10"/></g>
       <circle id="p-tg" class="packet" r="7"/><circle id="p-gf" class="packet" r="7"/><circle id="p-fg" class="packet" r="7"/>
       <circle id="p-retry" class="packet ghost" r="7"/><circle id="p-gl" class="packet" r="7"/><circle id="p-lg" class="packet" r="7"/>
       <circle id="p-chk" class="packet ok" r="7"/><circle id="p-chk2" class="packet ok" r="7"/>
@@ -34,11 +34,10 @@
     <figcaption id="flow-caption" aria-live="polite">The tenant says yes to $240.00 on the phone.</figcaption>
   </figure>
 </section>
-<div class="stripe" id="built" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
-<section class="feature band">
+<section class="feature band" id="built">
   <div class="wrap">
     <div data-reveal>
-      <span class="marker"><span class="tile" style="background:var(--ink)">{% include "icons/list-checks.svg" %}</span>Today</span>
+      <p class="kicker" style="--c:var(--ink)">{% include "icons/list-checks.svg" %}Today</p>
       <h2>One list of everything still open, worst first.</h2>
       <p>Each item says what is wrong, what will prove it done and who acts. It leaves the list only when the system of record shows it, never because someone said so.</p>
       <a class="open" href="/today">Open today's work {% include "icons/arrow-right.svg" %}</a>
@@ -62,13 +61,17 @@
 
 
 {% if held %}
-<section class="feature">
+<section class="feature wide">
   <div class="wrap">
-    <div data-reveal>
-      <span class="marker"><span class="tile" style="background:var(--brick)">{% include "icons/credit-card.svg" %}</span>Payments</span>
-      <h2>A payment whose answer was lost is held, not retried.</h2>
-      <p>The tenant agreed to {{ money(held.amount) }} {{ "by phone" if (held.authorization or {}).get("channel") == "desk" else "in the tenant chat" }}. No usable answer came back from the FMS{% if held_answer %} ({{ held_answer }}){% endif %}, so nobody can say yet whether the card was charged. Gatehouse does not charge again and does not tell the tenant it worked. It points to an FMS payment that may be this one and waits for a person to decide.</p>
-      <a class="open" href="/payments/{{ held.id }}">Open this payment {% include "icons/arrow-right.svg" %}</a>
+    <div class="split-head" data-reveal>
+      <div>
+        <p class="kicker" style="--c:var(--brick)">{% include "icons/credit-card.svg" %}Payments</p>
+        <h2>A payment whose answer was lost is held, not retried.</h2>
+      </div>
+      <div>
+        <p>The tenant agreed to {{ money(held.amount) }} {{ "by phone" if (held.authorization or {}).get("channel") == "desk" else "in the tenant chat" }}. No usable answer came back from the FMS{% if held_answer %} ({{ held_answer }}){% endif %}, so nobody can say yet whether the card was charged. Gatehouse does not charge again and does not tell the tenant it worked. It points to an FMS payment that may be this one and waits for a person to decide.</p>
+        <a class="open" href="/payments/{{ held.id }}">Open this payment {% include "icons/arrow-right.svg" %}</a>
+      </div>
     </div>
     <div class="frame" data-reveal>
       <div class="frame-bar"><span><b>Payment</b> &middot; unit {{ held_unit }}</span><span class="chip act">Outcome unknown</span></div>
@@ -79,7 +82,7 @@
         <li class="held"><span class="dot">{% include "icons/hand.svg" %}</span><b>Held for a person</b>not retried</li>
       </ol>
       <div class="frame-body">
-        <dl class="kv">
+        <dl class="kv pairs">
           <dt>Tenant agreed to</dt><dd>{{ money(held.amount) }}, with a fresh identity check</dd>
           <dt>Sent to the FMS</dt><dd>Once, after the intent was written down</dd>
           <dt>Answer</dt><dd>None usable{% if held_answer %}: {{ held_answer }}{% endif %}</dd>
@@ -93,21 +96,21 @@
 {% endif %}
 
 {% if record_case %}
-<section class="feature band">
+<section class="feature band flip">
   <div class="wrap">
     <div data-reveal>
-      <span class="marker"><span class="tile" style="background:var(--navy)">{% include "icons/rows-3.svg" %}</span>The record</span>
+      <p class="kicker" style="--c:var(--navy)">{% include "icons/rows-3.svg" %}The record</p>
       <h2>Every fact keeps its source.</h2>
       <p>Each account's history is kept in four lanes: what the FMS said, what Gatehouse observed, what Gatehouse concluded, and what a person decided. Reading down a lane gives one source's account, so nobody has to guess who said a payment went through.</p>
       <a class="open" href="/accounts/{{ record_case }}">Open the account record {% include "icons/arrow-right.svg" %}</a>
     </div>
     <div class="frame" data-reveal>
       <div class="frame-bar"><span><b>Account record</b> &middot; unit {{ record_unit }}</span></div>
-      <div class="mini-lanes">
+      <div class="lanes4">
         {% for key, label in lane_names %}
-        <div>
-          <h3><span class="lane-{{ key }}" style="width:8px;height:8px;border-radius:2px;display:inline-block"></span>{{ label }}</h3>
-          {% for e in lanes.get(key, [])[:2] %}<p><b>{{ e.title }}</b></p>{% else %}<p class="muted">Nothing yet</p>{% endfor %}
+        <div class="lane {{ key }}">
+          <h3>{{ label }}</h3>
+          {% for e in lanes.get(key, [])[:3] %}<p><time>{{ local(e.at) }}</time>{{ e.title }}</p>{% else %}<p class="muted">Nothing yet</p>{% endfor %}
         </div>
         {% endfor %}
       </div>
@@ -117,10 +120,10 @@
 {% endif %}
 
 {% if returned %}
-<section class="feature">
+<section class="feature tight">
   <div class="wrap">
     <div data-reveal>
-      <span class="marker"><span class="tile" style="background:var(--amber)">{% include "icons/rotate-ccw.svg" %}</span>Returns and disputes</span>
+      <p class="kicker" style="--c:var(--amber)">{% include "icons/rotate-ccw.svg" %}Returns and disputes</p>
       <h2>A payment that comes back reopens the account.</h2>
       <p>A payment that posted can still be returned by the bank, refunded or disputed weeks later. Gatehouse keeps watching confirmed payments, and when the FMS reports one reversed, the account opens again and the work goes back on Today.</p>
       <a class="open" href="/payments/{{ returned.id }}">Open this payment {% include "icons/arrow-right.svg" %}</a>
@@ -140,64 +143,73 @@
 </section>
 {% endif %}
 
-{% if changed %}
-<section class="feature band">
+{% if changed or counsel %}
+<section class="feature band wide">
   <div class="wrap">
-    <div data-reveal>
-      <span class="marker"><span class="tile" style="background:var(--teal)">{% include "icons/scale.svg" %}</span>Lien files</span>
-      <h2>A lien file goes back to review when the account changes.</h2>
-      <p>For a Florida unit, every requirement of the lien statute is listed with its basis and the evidence on file: the notice, the certificate of mailing, the posting, both newspaper publications and the legal checks. A payment after the notice sends the file back to a person. The excerpt shows the recorded result of the latest evaluation. Gatehouse never says a unit may be sold.</p>
-      <a class="open" href="/accounts/{{ changed.case_id }}/lien">Open this lien file {% include "icons/arrow-right.svg" %}</a>
+    <div class="split-head" data-reveal>
+      {% if changed %}
+      <div>
+        <p class="kicker" style="--c:var(--teal)">{% include "icons/scale.svg" %}Lien files</p>
+        <h2>A lien file goes back to review when the account changes.</h2>
+      </div>
+      <div>
+        <p>For a Florida unit, every requirement of the lien statute is listed with its basis and the evidence on file: the notice, the certificate of mailing, the posting, both newspaper publications and the legal checks. A payment after the notice sends the file back to a person. The excerpt shows the recorded result of the latest evaluation. Gatehouse never says a unit may be sold.</p>
+        <a class="open" href="/accounts/{{ changed.case_id }}/lien">Open this lien file {% include "icons/arrow-right.svg" %}</a>
+      </div>
+      {% else %}
+      <div>
+        <p class="kicker" style="--c:var(--lilac)">{% include "icons/gavel.svg" %}Lien files</p>
+        <h2>Where no rules are reviewed, the file goes to counsel.</h2>
+      </div>
+      <div></div>
+      {% endif %}
     </div>
-    <div class="frame" data-reveal>
-      <div class="frame-bar"><span><b>Lien file</b> &middot; Florida &middot; evaluated {{ local(changed.evaluated_at) }}</span><span class="chip act">{{ changed.state }}</span></div>
-      <table>
-        <thead><tr><th>Requirement</th><th>Status</th></tr></thead>
-        <tbody>
-        {% for f in (changed.findings|rejectattr('status', 'equalto', 'met')|list)[:3] %}<tr><td>{{ sentence(readable(f.detail)) }}</td><td><span class="status {{ f.status }}">{{ f.status }}</span></td></tr>{% endfor %}
-        <tr><td class="muted">{{ changed.findings|selectattr('status', 'equalto', 'met')|list|length }} other requirements met, each with its record</td><td><span class="status met">met</span></td></tr>
-        </tbody>
-      </table>
+    <div class="lien-pair">
+      {% if changed %}
+      <div class="frame" data-reveal>
+        <div class="frame-bar"><span><b>Lien file</b> &middot; Florida &middot; evaluated {{ local(changed.evaluated_at) }}</span><span class="chip act">{{ changed.state }}</span></div>
+        <table>
+          <thead><tr><th>Requirement</th><th>Status</th></tr></thead>
+          <tbody>
+          {% for f in (changed.findings|rejectattr('status', 'equalto', 'met')|list)[:3] %}<tr><td>{{ sentence(readable(f.detail)) }}</td><td><span class="status {{ f.status }}">{{ f.status }}</span></td></tr>{% endfor %}
+          <tr><td class="muted">{{ changed.findings|selectattr('status', 'equalto', 'met')|list|length }} other requirements met, each with its record</td><td><span class="status met">met</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+      {% if counsel %}
+      <div class="frame counsel" data-reveal>
+        <div class="frame-bar"><span><b>Lien file</b> &middot; {{ counsel_state }}</span><span class="chip wait">Counsel review required</span></div>
+        <div class="frame-body">
+          <h3>Where no rules are reviewed, the file goes to counsel.</h3>
+          <p>Florida is the one reviewed rule set. A file from any other state ({{ counsel_state }} here) is not evaluated: it goes to counsel instead of getting a confident answer nobody checked.</p>
+          <p class="muted small">{{ counsel.summary }}</p>
+          <a class="open" href="/accounts/{{ counsel.case_id }}/lien">Open this file {% include "icons/arrow-right.svg" %}</a>
+        </div>
+      </div>
+      {% endif %}
     </div>
   </div>
 </section>
 {% endif %}
 
-{% if counsel %}
-<section class="feature">
+<section class="feature next-band">
   <div class="wrap">
-    <div data-reveal>
-      <span class="marker"><span class="tile" style="background:var(--lilac)">{% include "icons/gavel.svg" %}</span>Other states</span>
-      <h2>Where no rules are reviewed, the file goes to counsel.</h2>
-      <p>Florida is the one reviewed rule set. A file from any other state ({{ counsel_state }} here) is not evaluated: it goes to counsel instead of getting a confident answer nobody checked.</p>
-      <a class="open" href="/accounts/{{ counsel.case_id }}/lien">Open this file {% include "icons/arrow-right.svg" %}</a>
+    <div class="split-head" data-reveal>
+      <div>
+        <p class="kicker">{% include "icons/calendar-clock.svg" %}Next</p>
+        <h2>The same check, across the rest of the operator's day.</h2>
+      </div>
+      <div>
+        <p>Each part closes work only on the fact that proves it, from the system that owns that fact.</p>
+        <a class="open" href="/limits">What this is and is not {% include "icons/arrow-right.svg" %}</a>
+      </div>
     </div>
-    <div class="frame" data-reveal>
-      <div class="frame-bar"><span><b>Lien file</b> &middot; {{ counsel_state }}</span><span class="chip wait">Counsel review required</span></div>
-      <div class="frame-body"><p class="muted">{{ counsel.summary }}</p></div>
-    </div>
-  </div>
-</section>
-{% endif %}
-
-<section class="feature band">
-  <div class="wrap">
-    <div data-reveal>
-      <span class="marker"><span class="tile" style="background:var(--ink)">{% include "icons/calendar-clock.svg" %}</span>Next</span>
-      <h2>The same check, across the rest of the operator's day.</h2>
-      <p>Each part closes work only on the fact that proves it, from the system that owns that fact.</p>
-      <a class="open" href="/limits">What this is and is not {% include "icons/arrow-right.svg" %}</a>
-    </div>
-    <div class="frame" data-reveal>
-      <table class="next-table">
-        <thead><tr><th>Part</th><th>Done when</th></tr></thead>
-        <tbody>
-          <tr><td>Access and overlocks</td><td>Gate codes and overlocks in the FMS match what each tenant has paid, in both directions</td></tr>
-          <tr><td>Leads and move-ins</td><td>A missed call counts as recovered only when a specific lease is linked to it</td></tr>
-          <tr><td>Rent changes</td><td>An approved increase is saved, noticed and charged in the FMS, with what happened after</td></tr>
-        </tbody>
-      </table>
-    </div>
+    <ol class="next-cols" data-reveal>
+      <li>{% include "icons/door-open.svg" %}<b>Access and overlocks</b><span>Done when gate codes and overlocks in the FMS match what each tenant has paid, in both directions.</span></li>
+      <li>{% include "icons/phone.svg" %}<b>Leads and move-ins</b><span>Done when a missed call counts as recovered only once a specific lease is linked to it.</span></li>
+      <li>{% include "icons/trending-up.svg" %}<b>Rent changes</b><span>Done when an approved increase is saved, noticed and charged in the FMS, with what happened after.</span></li>
+    </ol>
   </div>
 </section>
 {% endblock %}
