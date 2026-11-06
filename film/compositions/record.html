@@ -19,6 +19,7 @@
 
 #r-title { position: absolute; left: 120px; top: 92px; font-size: 60px; }
 #r-chip { position: absolute; right: 120px; top: 108px; height: 60px; }
+#r-chip-l { position: absolute; right: 590px; top: 116px; font-size: 28px; }
 #r-chip .chip { position: absolute; right: 0; top: 0; }
 #r-lanes { left: 120px; right: 120px; top: 220px; bottom: 80px; display: grid; grid-template-columns: repeat(4, 1fr); overflow: hidden; }
 .lane { padding: 34px 30px; border-left: 2px solid #232725; } .lane:first-child { border-left: 0; }
@@ -27,11 +28,13 @@
 .ent time { display: block; font-size: 28px; color: #8f9590; }
 .ent b { display: block; font-size: 30px; font-weight: 600; margin-top: 4px; line-height: 1.25; }
 .ent p { font-size: 28px; color: #b8bdb9; margin: 8px 0 0; line-height: 1.4; }
-#r-new1, #r-new2 { padding: 18px 20px; margin: -18px -20px 16px; }
+#r-new1, #r-new2, #r-new3 { padding: 14px 20px; margin: -14px -20px 14px; }
+.ent { margin-bottom: 26px; }
 </style>
   <div id="root" data-composition-id="record" data-width="1920" data-height="1080">
     <div class="cam" id="r-cam">
       <h1 id="r-title" class="serif">Account record &middot; unit B-1042</h1>
+      <p id="r-chip-l" class="muted">Payment 1</p>
       <div id="r-chip" data-layout-allow-overlap>
         <span class="chip act" id="r-c1"><svg class="ic " width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2" /><path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2" /><path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8" /><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" /></svg>Outcome unknown: held for a person</span>
         <span class="chip act" id="r-c2"><svg class="ic " width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16.5 12" /></svg>Outcome unknown</span>
@@ -42,15 +45,17 @@
           <div class="ent" ><time>Nov 6, 5:52 PM</time><b>Past due</b><p>$240.00 owed since Oct 1, 2026.</p></div>
         </div>
         <div class="lane"><h3><i style="background:#a99ff0"></i>Gatehouse observed</h3>
-          <div class="ent" ><time>Nov 6, 5:52 PM</time><b>Sent a $240.00 card payment</b><p>The outcome was not confirmed: the connection broke before the answer arrived.</p></div>
-          <div class="ent" ><time>Nov 6, 5:52 PM</time><b>Found a possible match</b><p>payment_NTSaWQLBzls (SUCCEEDED) at the FMS may be this attempt.</p></div>
+          <div class="ent" ><time>Nov 6, 5:52 PM</time><b>Sent a $240.00 card payment</b><p>The outcome was not confirmed (the connection broke before the answer arrived).</p></div>
+          <div class="ent" ><time>Nov 6, 5:52 PM</time><b>Found a possible match</b><p>payment_NTSaWQLBzIs (SUCCEEDED) at the FMS may be this attempt. Not matched automatically.</p></div>
         </div>
         <div class="lane"><h3><i style="background:#63c8be"></i>Gatehouse concluded</h3>
-          <div class="ent" ><time>Nov 6, 5:52 PM</time><b>Account needs staff</b><p>From past due. The FMS balance read $240.00.</p></div>
-          <div class="ent" id="r-new2"><time>Nov 6, 5:58 PM</time><b>Payment confirmed</b><p>$240.00 as payment_NTSaWQLBzls, applied on the FMS ledger.</p></div>
+          <div class="ent" ><time>Nov 6, 5:52 PM</time><b>Account needs staff</b><p>From open. The FMS balance read $0.00.</p></div>
+          <div class="ent" id="r-new2"><time>Nov 6, 5:58 PM</time><b>Payment confirmed</b><p>$240.00 as payment_NTSaWQLBzIs, applied on the FMS ledger.</p></div>
+          <div class="ent" id="r-new3"><time>Nov 6, 5:58 PM</time><b>Account paid</b><p>From payment in flight. The FMS balance read $0.00.</p></div>
         </div>
         <div class="lane"><h3><i style="background:#ff8f78"></i>A person decided</h3>
-          <div class="ent" id="r-new1"><time>Nov 6, 5:58 PM</time><b>Resolved by staff</b><p>Collections lead named payment_NTSaWQLBzls: same lease and amount.</p></div>
+          <div class="ent" ><time>Nov 6, 5:52 PM</time><b>Tenant agreed to $240.00</b><p>“Yes, go ahead”, card ending 4242, heard by front desk (synthetic).</p></div>
+          <div class="ent" id="r-new1"><time>Nov 6, 5:58 PM</time><b>Resolved by staff</b><p>Collections lead named payment_NTSaWQLBzIs: same lease and amount.</p></div>
         </div>
       </div>
     </div>
@@ -59,7 +64,7 @@
     const tl = gsap.timeline({ paused: true });
 
     tl.fromTo("#r-cam", { y: 60 }, { y: 0, duration: 0.6, ease: "expo.out" }, 0);
-    tl.fromTo("#r-lanes .ent:not(#r-new1):not(#r-new2)", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.5, ease: "expo.out", stagger: 0.06 }, 0.1);
+    tl.fromTo("#r-lanes .ent:not(#r-new1):not(#r-new2):not(#r-new3)", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.5, ease: "expo.out", stagger: 0.06 }, 0.1);
     tl.fromTo("#r-new1", { opacity: 0, y: 40, backgroundColor: "rgba(255,143,120,0)" }, { opacity: 1, y: 0, backgroundColor: "rgba(255,143,120,0.12)", duration: 0.7, ease: "expo.out" }, 1.2);
     tl.to("#r-new1", { backgroundColor: "rgba(255,143,120,0)", duration: 0.8, ease: "power2.inOut" }, 3.2);
     tl.fromTo("#r-c1", { opacity: 1 }, { opacity: 0, duration: 0.15, ease: "none" }, 2.4);
@@ -67,6 +72,7 @@
     tl.fromTo("#r-new2", { opacity: 0, y: 40, backgroundColor: "rgba(99,200,190,0)" }, { opacity: 1, y: 0, backgroundColor: "rgba(99,200,190,0.12)", duration: 0.7, ease: "expo.out" }, 3.4);
     tl.to("#r-c2", { opacity: 0, duration: 0.15, ease: "none" }, 4.6);
     tl.fromTo("#r-c3", { opacity: 0, filter: "blur(6px)", scale: 0.9 }, { opacity: 1, filter: "blur(0px)", scale: 1, duration: 0.45, ease: "back.out(1.2)", transformOrigin: "100% 50%" }, 4.65);
+    tl.fromTo("#r-new3", { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.7, ease: "expo.out" }, 3.8);
     tl.to("#r-new2", { backgroundColor: "rgba(99,200,190,0)", duration: 0.8, ease: "power2.inOut" }, 5.2);
 
     window.__timelines["record"] = tl;
