@@ -1,38 +1,29 @@
 {% extends "base.html" %}
 {% block title %}Gatehouse: unfinished work in self-storage, checked against the FMS{% endblock %}
 {% block main %}
-<section class="wrap hero">
-  <div>
-    <p class="kicker">For self-storage operators</p>
-    <h1>Nothing is done until the FMS shows it.</h1>
-    <p>Gatehouse watches an operator's facility management system and the systems around it. It opens an item for every unfinished piece of work, names the fact that will close it, and sends disagreements to a person with the evidence.</p>
-    <div class="actions">
-      <a class="button primary" href="/today">Open today's work {% include "icons/arrow-right.svg" %}</a>
-      <a class="button" href="#built">See what is built</a>
+<section class="hero">
+  <div class="wrap">
+    <div class="split-head hero-head">
+      <div>
+        <p class="kicker">For self-storage operators</p>
+        <h1>Nothing is done until the FMS shows it.</h1>
+      </div>
+      <div>
+        <p>Gatehouse watches an operator's facility management system and the systems around it. It opens an item for every unfinished piece of work, names the fact that will close it, and sends disagreements to a person with the evidence.</p>
+        <div class="actions">
+          <a class="button primary" href="/today">Open today's work {% include "icons/arrow-right.svg" %}</a>
+          <a class="button" href="#built">See what is built</a>
+        </div>
+      </div>
     </div>
+    <figure class="film">
+      <video id="film" autoplay muted loop playsinline preload="metadata" poster="{{ url_for('static', path='film/gatehouse-film.jpg') }}" aria-describedby="film-caption">
+        <source src="{{ url_for('static', path='film/gatehouse-film.webm') }}" type="video/webm">
+        <source src="{{ url_for('static', path='film/gatehouse-film.mp4') }}" type="video/mp4">
+      </video>
+      <figcaption id="film-caption">One lost payment, in Gatehouse's own screens: held without a retry, named by a person, confirmed from the FMS ledger, and only then described to the tenant as applied. In this read-only preview the decision is shown, not offered.</figcaption>
+    </figure>
   </div>
-  <figure class="flow frame" id="flow" data-reveal>
-    <div class="frame-bar"><span><b>How a lost payment is handled</b></span><span>Plays on a loop</span></div>
-    <svg viewBox="0 0 800 440" role="img" aria-labelledby="flow-caption">
-      <defs><pattern id="dots" width="18" height="18" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" class="dot-grid"/></pattern></defs>
-      <rect width="800" height="440" fill="url(#dots)"/>
-      <line id="l-tg" class="link" x1="208" y1="240" x2="304" y2="240"/>
-      <line id="l-gf" class="link" x1="504" y1="200" x2="584" y2="124"/>
-      <line id="l-gl" class="link" x1="504" y1="280" x2="584" y2="356"/>
-      <g id="n-tenant" class="node"><rect x="24" y="196" width="184" height="88" rx="12"/><text x="44" y="230" class="n-title">Tenant</text><text x="44" y="256" id="tenant-sub" class="n-sub">Says yes to $240.00</text></g>
-      <g id="n-gh" class="node gh"><rect x="304" y="152" width="200" height="176" rx="14"/><text x="324" y="188" class="n-title">Gatehouse</text>
-        <text x="324" y="214" class="n-sub">Intent first, one send,</text><text x="324" y="234" class="n-sub">no guessing</text>
-        <g id="gh-chip" class="chip-svg"><rect x="318" y="268" width="172" height="36" rx="18"/><text x="404" y="291" text-anchor="middle" id="gh-state">Idle</text></g></g>
-      <g id="n-fms" class="node"><rect x="584" y="76" width="192" height="96" rx="12"/><text x="604" y="112" class="n-title">FMS</text><text x="604" y="138" id="fms-sub" class="n-sub">Owed $240.00</text></g>
-      <g id="n-lead" class="node"><rect x="584" y="308" width="192" height="96" rx="12"/><text x="604" y="344" class="n-title">Collections lead</text><text x="604" y="370" id="lead-sub" class="n-sub">Waiting</text></g>
-      <g id="x-break" class="mark-x"><circle cx="544" cy="162" r="11"/><path d="M539 157 l10 10 M549 157 l-10 10"/></g>
-      <g id="x-retry" class="mark-x"><circle cx="520" cy="185" r="11"/><path d="M515 180 l10 10 M525 180 l-10 10"/></g>
-      <circle id="p-tg" class="packet" r="7"/><circle id="p-gf" class="packet" r="7"/><circle id="p-fg" class="packet" r="7"/>
-      <circle id="p-retry" class="packet ghost" r="7"/><circle id="p-gl" class="packet" r="7"/><circle id="p-lg" class="packet" r="7"/>
-      <circle id="p-chk" class="packet ok" r="7"/><circle id="p-chk2" class="packet ok" r="7"/>
-    </svg>
-    <figcaption id="flow-caption" aria-live="polite">The tenant says yes to $240.00 on the phone.</figcaption>
-  </figure>
 </section>
 <section class="feature band" id="built">
   <div class="wrap">

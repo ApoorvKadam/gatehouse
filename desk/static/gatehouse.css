@@ -246,8 +246,12 @@ dl.kv dd { margin: 0; }
 .prose li { margin: var(--s1) 0; }
 
 /* front page */
-.hero { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: var(--s8); align-items: center; padding: var(--s7) clamp(20px, 4vw, 64px) var(--s8); }
-.hero h1 { font-family: var(--display); font-size: clamp(2.5rem, 4vw, 4.25rem); line-height: 1.04; letter-spacing: -0.025em; font-weight: 500; font-optical-sizing: auto; }
+.hero { padding: var(--s7) 0 var(--s8); }
+.hero-head { margin-bottom: var(--s7); }
+.film { margin: 0; }
+.film video { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; border-radius: 14px; background: #121413; border: 1px solid var(--frame); box-shadow: var(--shadow); }
+.film figcaption { margin-top: var(--s3); font-size: var(--t-sm); color: var(--ink-3); max-width: 90ch; }
+.hero h1 { font-family: var(--display); font-size: clamp(2.5rem, 5vw, 5.25rem); line-height: 1.04; letter-spacing: -0.025em; font-weight: 500; font-optical-sizing: auto; }
 .hero p { color: var(--ink-2); font-size: var(--t-lg); line-height: 1.6; margin-top: var(--s4); max-width: 46ch; }
 .actions { display: flex; gap: var(--s3); margin-top: var(--s5); flex-wrap: wrap; }
 .feature { padding: var(--s8) 0; border-top: 1px solid var(--rule); }
@@ -345,28 +349,6 @@ dl.kv dd { margin: 0; }
 .mono, .hash { font-family: "Geist Mono", ui-monospace, monospace; font-size: 0.92em; letter-spacing: 0; }
 
 /* the overview's system map */
-.flow { margin: 0; }
-.flow svg { display: block; width: 100%; height: auto; background: var(--paper); }
-.flow .dot-grid { fill: var(--rule); }
-.flow .link { stroke: var(--frame); stroke-width: 2; transition: stroke 240ms; }
-.flow .link.broken { stroke: var(--brick); stroke-dasharray: 6 6; }
-.flow .node rect { fill: var(--paper); stroke: var(--frame); stroke-width: 1.5; transition: stroke 300ms, fill 300ms; }
-.flow .node.lit rect { stroke: var(--ink); }
-.flow .node.gh rect { stroke-width: 2; }
-.flow .n-title { font: 600 16px "Geist", sans-serif; fill: var(--ink); letter-spacing: -0.01em; }
-.flow .n-sub { font: 400 14px "Geist", sans-serif; fill: var(--ink-2); }
-.flow .chip-svg rect { fill: var(--band); transition: fill 240ms; }
-.flow .chip-svg text { font: 600 13px "Geist", sans-serif; fill: var(--ink-2); }
-.flow .chip-svg.act rect { fill: var(--brick-wash); } .flow .chip-svg.act text { fill: var(--brick); }
-.flow .chip-svg.done rect { fill: var(--teal-wash); } .flow .chip-svg.done text { fill: var(--teal); }
-.flow .packet { fill: var(--blue); opacity: 0; }
-.flow .packet.ok { fill: var(--teal); }
-.flow .packet.ghost { fill: none; stroke: var(--ink-3); stroke-width: 2; stroke-dasharray: 3 3; }
-.flow .mark-x { opacity: 0; transform-box: fill-box; transform-origin: center; transform: scale(.4); transition: opacity 160ms, transform 420ms var(--spring-snap); }
-.flow .mark-x.show { opacity: 1; transform: none; }
-.flow .mark-x circle { fill: var(--brick); }
-.flow .mark-x path { stroke: #fff; stroke-width: 2.2; stroke-linecap: round; }
-.flow figcaption { padding: var(--s3) var(--s4); border-top: 1px solid var(--rule); font-size: var(--t-body); color: var(--ink); min-height: 3.2em; }
 
 /* overview: section kinds, so the page is not one repeated block */
 .kicker { display: inline-flex; align-items: center; gap: 8px; font-size: var(--t-sm); font-weight: 600; color: var(--ink-2); letter-spacing: 0; }
@@ -427,5 +409,4 @@ dl.kv.pairs { grid-template-columns: 11rem minmax(0, 1fr) 11rem minmax(0, 1fr); 
   .next-cols { grid-template-columns: 1fr; }
   .next-cols li, .next-cols li + li { padding: var(--s4) 0; border-left: 0; border-bottom: 1px solid rgba(255,255,255,.16); }
 }
-@media (max-width: 640px) { .flow svg { display: none; } .flow figcaption { min-height: 4.8em; } }
 .wide-prose { max-width: none; } .wide-prose .lede { max-width: 70ch; } .wide-prose section { max-width: 64ch; }

@@ -6,6 +6,10 @@ Self-storage operators already run a facility management system (FMS), a payment
 
 Gatehouse finds that work, keeps the evidence, and closes an item only when the system of record shows the fact that proves it done. When the systems disagree, a person decides from the evidence. When one fact changes, Gatehouse checks again every piece of work it touches.
 
+[![One lost payment in Gatehouse: held without a retry, named by a person, confirmed from the FMS ledger, then described to the tenant as applied](desk/static/film/gatehouse-film.jpg)](desk/static/film/gatehouse-film.mp4)
+
+A 29-second loop of one lost payment, built from the app's own screens (click the frame for the video). Its source is in `film/`.
+
 ## What is built and what is next
 
 | Part | Status | Done means |
@@ -16,7 +20,7 @@ Gatehouse finds that work, keeps the evidence, and closes an item only when the 
 | Leads and move-ins | Planned | A missed call counts as recovered only when a specific lease is linked to it |
 | Rent changes | Planned | An approved increase is saved, noticed and charged in the FMS, with what happened after |
 
-The hosted preview is read-only and runs on synthetic data. Its home page lists the open work at a facility. Each item opens to the record behind it, kept in four lanes: what the FMS said, what Gatehouse observed, what Gatehouse concluded, and what a person decided. The lost payment also shows the simulator's own record of what happened, which a real FMS cannot show.
+The hosted preview is read-only and runs on synthetic data. Its home page shows each built part with a live excerpt, and Today lists the open work at a facility. Each item opens to the record behind it, kept in four lanes: what the FMS said, what Gatehouse observed, what Gatehouse concluded, and what a person decided. The lost payment also shows the simulator's own record of what happened, which a real FMS cannot show.
 
 ## Collections and payments, and lien evidence
 
