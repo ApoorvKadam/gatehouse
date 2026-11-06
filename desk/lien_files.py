@@ -67,6 +67,10 @@ def record_evidence(session: Session, case: DelinquencyCase, kind: str, facts: d
         notice = session.get(LienEvidence, notice_id)
         if notice is None or notice.case_id != case.id or notice.kind != "notice":
             raise ValueError(f"notice {notice_id} is not a notice on this case")
+        newer = session.scalar(select(LienEvidence.id).where(LienEvidence.supersedes_id == notice_id).limit(1))
+        if newer is not None and supersedes is None:
+            # a corrected notice is served again: its delivery, posting and publications are recorded for the correction
+            raise ValueError(f"notice {notice_id} was corrected by notice {newer}; record this for the current notice")
     if supersedes is not None:
         old = session.get(LienEvidence, supersedes)
         if old is None or old.case_id != case.id or old.kind != kind:

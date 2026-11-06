@@ -343,9 +343,10 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
     fee_basis = "statute 83.808(3)" if any(c.category == "fee" for c in latest_items) or "FEE" in ledger_categories else "policy"
     # 83.808(3): a late fee of $20 or 20 percent of the monthly rent, whichever is greater, is reasonable; above that,
     # reasonableness needs its own sourced check
-    rent = sum(c.amount_cents for c in latest_items if c.category == "rent")
+    # the monthly rent is taken as the largest single rent line (several months claimed must not raise the threshold)
+    monthly_rent = max((c.amount_cents for c in latest_items if c.category == "rent"), default=0)
     fees = [c for c in latest_items if c.category == "fee"]
-    above_safe_harbor = [c for c in fees if c.amount_cents > max(2000, rent // 5)]
+    above_safe_harbor = [c for c in fees if c.amount_cents > max(2000, monthly_rent // 5)]
     answers: dict[str, list[LegalCheck]] = {}
     for e in ev["legal_check"]:
         c = LegalCheck.model_validate(e["facts"])

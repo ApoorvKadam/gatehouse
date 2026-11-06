@@ -159,3 +159,17 @@ def test_a_correction_must_be_about_the_same_subject(client):  # noqa: F811
     flag = post({"check": "secured_party", "answer": "yes", "source": "UCC filing 2026-123", "observed_on": "2026-10-01"}).json()
     swap = post({"check": "bankruptcy", "answer": "no", "source": "PACER", "observed_on": "2026-10-01"}, supersedes=flag["id"])
     assert swap.status_code == 422 and "same subject" in swap.json()["detail"]
+
+
+def test_evidence_for_a_corrected_notice_goes_to_the_correction(client):  # noqa: F811
+    cid = dana_case(client)["case_id"]
+    nid = file_for(client, cid, DELIVERED)
+    with client.app.state.session_factory() as s:
+        original = s.get(LienEvidence, nid).facts
+    fixed = client.post(f"/api/cases/{cid}/lien/evidence", json={"kind": "notice", "entered_by": "J. Ortiz", "supersedes": nid,
+                                                                 "document_text": "corrected notice", "facts": original | {"owner_phone": "407-555-0199"}})
+    assert fixed.status_code == 200
+    late = client.post(f"/api/cases/{cid}/lien/evidence", json={"kind": "posting", "entered_by": "J. Ortiz", "facts": {
+        "notice_id": nid, "posted_on": "2026-10-08", "location": "unit", "location_detail": "unit door", "conspicuous": "yes"}})
+    assert late.status_code == 422 and "record this for the current notice" in late.json()["detail"]
+    assert client.get(f"/api/cases/{cid}/lien").json()["state"] == "Evidence incomplete"   # the correction must be served again

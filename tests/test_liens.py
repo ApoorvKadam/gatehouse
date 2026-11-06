@@ -425,3 +425,16 @@ def test_a_corrected_due_date_or_category_on_the_ledger_is_a_change():
                             "details": {"category": "FEE", "accruesOn": "2026-11-10"}}]}
     changes = ledger_changes(then, now)
     assert any("due date" in c for c in changes) and any("category" in c for c in changes)
+
+
+def test_several_months_of_rent_do_not_raise_the_fee_safe_harbor():
+    charges = [{"description": "September rent", "category": "rent", "amount_cents": 21500, "due_on": "2026-09-01"},
+               {"description": "October rent", "category": "rent", "amount_cents": 21500, "due_on": "2026-10-01"},
+               {"description": "Late fee", "category": "fee", "amount_cents": 6000, "due_on": "2026-10-06"}]
+    f = CaseFacts("FL", "America/New_York", 49000, [], "2026-12-01",
+                  [notice(itemized_charges=charges, total=49000, sum_due_since="2026-09-01")] + complete()[1:],
+                  {"7": {"total_due": 49000, "observed_on": "2026-11-05", "open_charges": [
+                      {"name": "september rent", "open_cents": 21500, "category": "RENT"},
+                      {"name": "october rent", "open_cents": 21500, "category": "RENT"},
+                      {"name": "late fee", "open_cents": 6000, "category": "FEE"}]}}, [])
+    assert by(evaluate(f), "fee reasonable").status == "missing"   # $60 is above 20 percent of one month's $215
