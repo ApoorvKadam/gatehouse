@@ -80,6 +80,9 @@ class PaymentCommand(Base):
     __table_args__ = (Index("one_holding_payment_per_case", "case_id", unique=True,
                             sqlite_where=_HOLDING_SQL, postgresql_where=_HOLDING_SQL),)
     id: Mapped[int] = mapped_column(primary_key=True)
+    # every update checks the version it read, so two passes that read the same state cannot both write
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    __mapper_args__ = {"version_id_col": version}
     case_id: Mapped[int] = mapped_column(ForeignKey("cases.id"))
     lease_id: Mapped[int] = mapped_column(ForeignKey("leases.id"))
     idempotency_key: Mapped[str] = mapped_column(String, unique=True)
@@ -163,3 +166,13 @@ class PaymentProposal(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     expires_at: Mapped[datetime] = mapped_column(DateTime)
     command_id: Mapped[int | None] = mapped_column(ForeignKey("payment_commands.id"), nullable=True)
+
+
+class DeskBinding(Base):
+    """The FMS account this database belongs to. One deployment serves one operator; pointing a database at another
+    operator's FMS key would mix their accounts, so the desk refuses to start."""
+
+    __tablename__ = "desk_binding"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    fms_fingerprint: Mapped[str] = mapped_column(String)
+    bound_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

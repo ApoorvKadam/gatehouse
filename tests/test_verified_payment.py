@@ -407,3 +407,20 @@ def test_a_returned_counter_payment_reopens_a_paid_account(session, adapter, sim
     assert sim.post("/sim/payments/return", {"paymentId": counter["paymentId"]}).status_code == 200
     PaymentService(session, adapter).reconcile_all()
     assert session.get(DelinquencyCase, case.id).state == "reopened"
+
+
+def test_an_older_reconciliation_never_overwrites_a_newer_one(adapter, sim, tmp_path):
+    from desk.db import make_session_factory
+
+    sim.behave(DANA, "late_application", lag=1)
+    factory = make_session_factory(f"sqlite:///{tmp_path / 'desk.db'}")
+    with factory() as a, factory() as b:
+        command, _, _ = pay(a, adapter, DANA, "pm_DanaVisa4242", 24000)
+        stale = a.get(PaymentCommand, command.id)
+        assert stale.state == "AWAITING_APPLICATION"
+        settle(b, adapter)                      # the worker confirms it
+        assert b.get(PaymentCommand, command.id).state == "CONFIRMED"
+        stale.state = "PENDING_AT_FMS"           # the API's pass, working from what it read earlier
+        PaymentService(a, adapter)._save()
+        b.expire_all()
+        assert b.get(PaymentCommand, command.id).state == "CONFIRMED"

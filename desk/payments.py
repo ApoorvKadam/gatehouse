@@ -1,10 +1,13 @@
-"""Taking a payment so that it is never charged twice and never reported before the FMS shows it.
+"""Taking a payment from a past-due account and finding out, from the FMS, what actually happened to it.
 
-The order is fixed: check who is paying, re-read the balance they agreed to, write the intent, submit once,
-then read the FMS's own payment record and the lease ledger until the outcome is certain. Anything the desk
-cannot confirm becomes an explicit state with an owner, not a guess."""
+The order is fixed: a fresh identity check, a proposal built from the FMS balance and the tenant's saved cards,
+the tenant's yes, a claim on the account (one open payment per case, enforced by the database), a re-read of the
+balance, the intent written down, one submission. Then the FMS's payment record and the lease ledger are read
+until the outcome is known. An outcome the desk cannot establish from that evidence becomes an explicit state
+with an owner (staff), and the account stays held until a person or the FMS settles it."""
 from __future__ import annotations
 
+import logging
 import threading
 import uuid
 from dataclasses import dataclass
@@ -12,6 +15,7 @@ from datetime import timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy.orm import Session
 
 from .adapter import FMSAdapter, FMSError, NotFound, PermissionDenied, ProviderPayment
@@ -21,6 +25,8 @@ from .models import HOLDING_STATES, DelinquencyCase, IdentityCheck, Lease, Obser
 
 # what the FMS can later say about a payment that succeeded, and the state the desk records for each; none of
 # them says anything about the balance, which only the ledger does
+log = logging.getLogger("desk.payments")
+
 REVERSALS = {"DIRECT_DEBIT_RETURN": "RETURNED", "REFUNDED": "REFUNDED", "REFUND_INITIATED": "REFUND_PENDING", "DISPUTED": "DISPUTED"}
 WATCHED_AFTER_SUCCESS = ("CONFIRMED", "REFUND_PENDING", "DISPUTED")
 # card disputes can arrive months later; settled payments are re-read for this long
@@ -83,7 +89,8 @@ def identity_locked(session: Session, case_id: int) -> bool:
     return failed >= IDENTITY_TRIES
 
 
-# ponytail: per-case locks in this process; a row lock or an atomic counter when the API runs as several processes
+# Identity checks for one case run one at a time within this process. Several API processes would need a row
+# lock or an atomic counter in the database instead.
 _identity_locks: dict[int, threading.Lock] = {}
 _identity_locks_guard = threading.Lock()
 
@@ -237,7 +244,18 @@ class PaymentService:
             command.provider_reason = outcome.detail + (": " + "; ".join(outcome.errors) if outcome.errors else "")
         record(self.session, case, "payment submitted", {"command": command.id, "amount": auth.amount, "fms_said": outcome.kind,
                                                           "status": command.provider_status, "detail": outcome.detail})
-        self.session.commit()
+        try:
+            self.session.commit()
+        except StaleDataError:
+            # the FMS took longer than the worker's patience and the worker already moved this command on: keep its
+            # state, add the payment id the FMS gave us, and let reconciliation decide from the evidence
+            self.session.rollback()
+            command = self.session.get(PaymentCommand, command.id)
+            if command.provider_payment_id is None and outcome.payment is not None and outcome.payment.provider_id:
+                command.provider_payment_id = outcome.payment.provider_id
+            record(self.session, case, "payment submitted", {"command": command.id, "amount": auth.amount, "fms_said": outcome.kind,
+                                                              "late": True, "detail": outcome.detail})
+            self.session.commit()
         if command.state in UNRESOLVED:
             self.reconcile(command)
         self._refresh(case)
@@ -257,7 +275,7 @@ class PaymentService:
             payments = self.adapter.payments_for_lease(lease.provider_id)
         except FMSError as exc:
             record(self.session, case, "fms read failed", {"command": command.id, "error": str(exc)})
-            self.session.commit()
+            self._save()
             return command
         for p in payments:
             self._observe(lease, p)
@@ -270,7 +288,7 @@ class PaymentService:
                     command.provider_reason = (f"no payment of {command.amount} cents appeared at the FMS after {command.checks} checks; "
                                                "someone has to confirm with the FMS before any new attempt")
                     record(self.session, case, "payment needs staff", {"command": command.id})
-                self.session.commit()
+                self._save()
                 return command
             if command.state == "NEEDS_STAFF" or found.status not in ("SUCCEEDED", "PENDING"):
                 # matching by amount, card type, customer and time is a lead, not proof. A wrong match on a decline
@@ -280,13 +298,13 @@ class PaymentService:
                     command.state, command.provider_reason = "NEEDS_STAFF", note
                     record(self.session, case, "possible match for staff", {"command": command.id, "payment": found.provider_id,
                                                                             "status": found.status})
-                self.session.commit()
+                self._save()
                 return command
             match = found
             command.provider_payment_id = match.provider_id
             record(self.session, case, "lost payment found at the fms", {"command": command.id, "payment": match.provider_id})
         if match is None:
-            self.session.commit()
+            self._save()
             return command
         command.provider_status = match.status
         if command.state != "NEEDS_STAFF":
@@ -308,7 +326,7 @@ class PaymentService:
                 applied = self._applied_to_lease(command, lease, payments)
             except FMSError as exc:
                 record(self.session, case, "fms read failed", {"command": command.id, "error": str(exc)})
-                self.session.commit()
+                self._save()
                 return command
             if applied:
                 command.state, command.confirmed_at = "CONFIRMED", utcnow()
@@ -319,6 +337,35 @@ class PaymentService:
                            f"the FMS reports payment {match.provider_id} as SUCCEEDED, but the lease ledger does not show it")
         elif match.status in REVERSALS:
             command.state = REVERSALS[match.status]
+        self._save()
+        return command
+
+    def resolve_by_staff(self, command: PaymentCommand, charged: bool, note: str, fms_payment_id: str | None = None) -> PaymentCommand:
+        """A person checked the FMS or the processor for a payment the desk could not settle on its own.
+
+        "Not charged" releases the account for a new attempt. "Charged" names the FMS payment, which is checked to
+        exist on this lease and to belong to no other command; reconciliation then settles it from the evidence."""
+        if command.state != "NEEDS_STAFF":
+            raise PaymentRefused(f"only a payment waiting on staff can be resolved (this one is {command.state})")
+        case = self.session.get(DelinquencyCase, command.case_id)
+        if charged:
+            lease = self.session.get(Lease, command.lease_id)
+            if fms_payment_id not in {p.provider_id for p in self.adapter.payments_for_lease(lease.provider_id)}:
+                raise PaymentRefused(f"payment {fms_payment_id} is not on this lease at the FMS")
+            owner = self.session.scalar(select(PaymentCommand).where(PaymentCommand.provider_payment_id == fms_payment_id,
+                                                                     PaymentCommand.id != command.id))
+            if owner is not None:
+                raise PaymentRefused(f"payment {fms_payment_id} already belongs to payment {owner.id}")
+            command.provider_payment_id, command.state = fms_payment_id, "OUTCOME_UNKNOWN"
+        else:
+            command.state = "CLEARED_BY_STAFF"
+        command.provider_reason = note
+        record(self.session, case, "payment resolved by staff", {"command": command.id, "charged": charged,
+                                                                 "fms_payment": fms_payment_id, "note": note}, actor="staff")
+        self.session.commit()
+        if charged:
+            self.reconcile(command)
+        self._refresh(case)
         self.session.commit()
         return command
 
@@ -373,6 +420,15 @@ class PaymentService:
             refresh_case(self.session, self.adapter, case)
         except FMSError as exc:
             record(self.session, case, "fms read failed", {"error": str(exc)})
+
+    def _save(self) -> None:
+        """Commit what this pass learned, unless another pass changed the command since it was read: then this
+        pass's evidence is older, and the next pass starts from the newer state."""
+        try:
+            self.session.commit()
+        except StaleDataError:
+            self.session.rollback()
+            log.info("a newer reconciliation already updated this payment; dropped the older one")
 
     def _not_submitted(self, command: PaymentCommand, why: str) -> None:
         command.state, command.provider_reason = "NOT_SUBMITTED", why

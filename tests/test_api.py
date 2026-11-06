@@ -108,3 +108,30 @@ def test_a_proposal_cannot_outlive_the_identity_check(client):
         s.get(PaymentProposal, proposal["proposal_id"]).expires_at += timedelta(hours=1)   # even a proposal that has not expired
         s.commit()
     assert client.post(f"/api/cases/{cid}/proposals/{proposal['proposal_id']}/confirm").status_code == 409
+
+
+def test_staff_can_release_a_held_payment_only_with_a_note(client, sim):
+    cid = dana_case(client)["case_id"]
+    sim.behave("lease_WhitB1042", "gateway_error")
+    check = client.post(f"/api/cases/{cid}/identity", json={"last_name": "Whitfield", "phone_last4": "0142", "unit_name": "B-1042"}).json()
+    proposal = client.post(f"/api/cases/{cid}/proposals", json={"identity_check_id": check["identity_check_id"], "amount": 24000}).json()
+    held = client.post(f"/api/cases/{cid}/proposals/{proposal['proposal_id']}/confirm").json()
+    for _ in range(4):
+        client.post("/api/reconcile")
+    assert client.get(f"/api/payments/{held['id']}").json()["state"] == "NEEDS_STAFF"
+    assert client.post(f"/api/payments/{held['id']}/resolve", json={"charged": False, "note": "ok"}).status_code == 422
+    cleared = client.post(f"/api/payments/{held['id']}/resolve",
+                          json={"charged": False, "note": "No payment in the FMS or the processor portal, checked by J. Ortiz"}).json()
+    assert cleared["state"] == "CLEARED_BY_STAFF" and "not charged" in cleared["tenant_message"]
+    assert client.get(f"/api/cases/{cid}").json()["state"] == "open"
+
+
+def test_a_database_set_up_for_one_fms_account_refuses_another(fms_url, sim, tmp_path):
+    url = f"sqlite:///{tmp_path / 'desk.db'}"
+    first = Settings(database_url=url, fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=0.5,
+                     reconcile_every_seconds=60, operator_token=TOKEN)
+    create_app(first, start_worker=False)
+    other = Settings(database_url=url, fms_base_url=fms_url, fms_api_key="sim_org_harbor_full", fms_timeout_seconds=0.5,
+                     reconcile_every_seconds=60, operator_token=TOKEN)
+    with pytest.raises(RuntimeError, match="another FMS account"):
+        create_app(other, start_worker=False)

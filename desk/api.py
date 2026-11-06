@@ -1,6 +1,7 @@
 """The desk's HTTP API: the past-due queue, a case with its full history, identity checks and payments."""
 from __future__ import annotations
 
+import hashlib
 import hmac
 import logging
 import os
@@ -17,7 +18,7 @@ from .cases import queue, refresh_case, sync_facility
 from .config import Settings
 from .conversation import Conversation
 from .db import make_session_factory, utcnow
-from .models import CaseEvent, DelinquencyCase, Lease, LedgerSnapshot, PaymentCommand
+from .models import CaseEvent, DelinquencyCase, DeskBinding, Lease, LedgerSnapshot, PaymentCommand
 from .payments import (
     IdentityClaim, PaymentRefused, PaymentService, check_identity, collected, confirm, propose, tenant_message,
 )
@@ -43,15 +44,35 @@ class ProposalIn(BaseModel):
     payment_method_id: str | None = Field(default=None, description="a saved card of this tenant; the first one when left out")
 
 
+class StaffResolutionIn(BaseModel):
+    charged: bool = Field(description="what the FMS or the processor showed when staff checked")
+    fms_payment_id: str | None = Field(default=None, description="required when charged: the FMS payment that is this attempt")
+    note: str = Field(min_length=10, description="what was checked, where, and by whom")
+
+
+def bind_to_fms(factory, settings: Settings) -> None:
+    """Refuse to run a database that was set up for a different FMS account."""
+    fingerprint = hashlib.sha256(f"{settings.fms_base_url}\n{settings.fms_api_key}".encode()).hexdigest()
+    with factory() as session:
+        binding = session.get(DeskBinding, 1)
+        if binding is None:
+            session.add(DeskBinding(id=1, fms_fingerprint=fingerprint))
+            session.commit()
+        elif binding.fms_fingerprint != fingerprint:
+            raise RuntimeError("this database belongs to another FMS account; each operator needs its own database")
+
+
 def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = None, start_worker: bool = True,
                chat_client=None) -> FastAPI:
     settings = settings or Settings.from_env()
     if chat_client is None and os.environ.get("ANTHROPIC_API_KEY"):
         import anthropic
         chat_client = anthropic.Anthropic()
-    # ponytail: conversations live in this process and end with it; persist them when the desk runs more than one API process
+    # Conversations live in this process: a restart ends them (their proposals and payments are in the database).
+    # Running more than one API process needs them stored, and the channel in front must route each tenant to one.
     conversations: dict[str, Conversation] = {}
     factory = make_session_factory(settings.database_url)
+    bind_to_fms(factory, settings)
     adapter = adapter or CubbyAdapter(settings.fms_base_url, settings.fms_api_key, settings.fms_timeout_seconds)
     worker = Worker(factory, adapter, settings.reconcile_every_seconds)
 
@@ -180,6 +201,20 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         command = session.get(PaymentCommand, command_id)
         if command is None:
             raise HTTPException(404, "payment not found")
+        return command_json(command)
+
+    @app.post("/api/payments/{command_id}/resolve")
+    def resolve(command_id: int, body: StaffResolutionIn, session: Session = Depends(db), _: str = Depends(operator)):
+        """Staff settle a payment the desk could not: what they found at the FMS or the processor, in their words."""
+        command = session.get(PaymentCommand, command_id)
+        if command is None:
+            raise HTTPException(404, "payment not found")
+        if body.charged and not body.fms_payment_id:
+            raise HTTPException(422, "a charged payment needs the FMS payment id")
+        try:
+            command = PaymentService(session, adapter).resolve_by_staff(command, body.charged, body.note, body.fms_payment_id)
+        except PaymentRefused as exc:
+            raise HTTPException(409, str(exc)) from exc
         return command_json(command)
 
     @app.post("/api/reconcile")
