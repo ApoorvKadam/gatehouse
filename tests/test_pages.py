@@ -142,3 +142,6 @@ def test_findings_read_in_dollars_and_dates_without_changing_their_meaning():
         "the rent charge's amount paid changed from $0.00 to $50.00"
     assert readable("a payment on 2026-11-06, after the notice") == "a payment on Nov 6, 2026, after the notice"
     assert readable("\"2026-02-30 rent\" is not an open charge") == "\"2026-02-30 rent\" is not an open charge"
+    # a description quoted from the notice stays exactly as printed, around converted engine wording
+    assert readable("\"Fee 5000 cents 2026-10-06\" for 5000 cents is not an open charge") == \
+        "\"Fee 5000 cents 2026-10-06\" for $50.00 is not an open charge"

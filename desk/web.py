@@ -77,8 +77,15 @@ def local(when: datetime | None, zone: str = "America/New_York") -> str:
 
 def readable(text: str) -> str:
     """Finding details come from the rules engine in cents and ISO dates; operators read dollars and dates.
-    Only the engine's own amount phrasings are converted, and a date-shaped string that is not a real date is left
-    as it is, so free text inside a finding (a charge description) cannot be misread or break the page."""
+    Text in double quotes is quoted from a record (a charge description as printed on the notice) and is kept
+    exactly as written; only the engine's own wording around it is converted."""
+    return "".join(part if len(part) > 1 and part[0] == part[-1] == '"' else _engine_words(part)
+                   for part in re.split(r'("[^"]*")', text))
+
+
+def _engine_words(text: str) -> str:
+    """Amounts in cents and ISO dates in the engine's own phrasing. A date-shaped string that is not a real date is
+    left as it is, so nothing here can break the page."""
     text = re.sub(r"claims (\d+) cents; the FMS ledger then showed (\d+)",
                   lambda m: f"claims {money(int(m.group(1)))}; the FMS ledger then showed {money(int(m.group(2)))}", text)
     text = re.sub(r"from (\d+) to (\d+) cents", lambda m: f"from {money(int(m.group(1)))} to {money(int(m.group(2)))}", text)
