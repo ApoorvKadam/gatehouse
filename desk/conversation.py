@@ -18,9 +18,9 @@ from sqlalchemy.orm import Session
 
 from .adapter import FMSAdapter, FMSError
 from .cases import record
-from .models import DelinquencyCase, Facility, IdentityCheck, Lease, PaymentCommand
+from .models import DelinquencyCase, Facility, Lease, PaymentCommand
 from .payments import (
-    Authorization, IdentityClaim, PaymentRefused, PaymentService, identity_locked, tenant_message, verify_identity,
+    Authorization, IdentityClaim, PaymentRefused, PaymentService, check_identity, identity_locked, tenant_message,
 )
 
 log = logging.getLogger("desk.conversation")
@@ -157,12 +157,12 @@ class Conversation:
         case = session.get(DelinquencyCase, self.case_id)
         try:
             if name == "verify_identity":
-                if identity_locked(session, case.id):
+                claim = IdentityClaim(str(args.get("last_name", "")), str(args.get("phone_last4", "")), str(args.get("unit_name", "")))
+                check = check_identity(session, self.adapter, case, claim)
+                if check is None:
                     self._to_staff(session, case, "identity not confirmed after three tries")
                     return {"verified": False, "reason": "too many failed checks; a team member has to verify this caller"}
-                claim = IdentityClaim(str(args.get("last_name", "")), str(args.get("phone_last4", "")), str(args.get("unit_name", "")))
-                ok, why = verify_identity(self.adapter, lease, claim)
-                session.add(IdentityCheck(id=uuid.uuid4().hex, case_id=case.id, verified=ok, reason=why))
+                ok, why = check.verified, check.reason
                 record(session, case, "identity checked", {"conversation": self.id, "verified": ok, "reason": why}, source="chat")
                 if ok:
                     self.identity_verified = True

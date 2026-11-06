@@ -4,7 +4,6 @@ from __future__ import annotations
 import hmac
 import logging
 import os
-import uuid
 from contextlib import asynccontextmanager
 from datetime import timedelta
 
@@ -21,7 +20,7 @@ from .conversation import Conversation
 from .db import make_session_factory, utcnow
 from .models import CaseEvent, DelinquencyCase, IdentityCheck, Lease, LedgerSnapshot, PaymentCommand
 from .payments import (
-    Authorization, IdentityClaim, PaymentRefused, PaymentService, collected, identity_locked, tenant_message, verify_identity,
+    Authorization, IdentityClaim, PaymentRefused, PaymentService, check_identity, collected, tenant_message,
 )
 from .worker import Worker
 
@@ -127,15 +126,12 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         }
 
     @app.post("/api/cases/{case_id}/identity")
-    def check_identity(case_id: int, body: IdentityIn, session: Session = Depends(db), _: str = Depends(operator)):
+    def identity(case_id: int, body: IdentityIn, session: Session = Depends(db), _: str = Depends(operator)):
         case = get_case(session, case_id)
-        if identity_locked(session, case.id):
+        check = check_identity(session, adapter, case, IdentityClaim(body.last_name, body.phone_last4, body.unit_name))
+        if check is None:
             raise HTTPException(429, "too many failed identity checks on this account; try again in 30 minutes or verify the caller another way")
-        lease = session.get(Lease, case.lease_id)
-        verified, reason = verify_identity(adapter, lease, IdentityClaim(body.last_name, body.phone_last4, body.unit_name))
-        check = IdentityCheck(id=uuid.uuid4().hex, case_id=case.id, verified=verified, reason=reason)
-        session.add(check)
-        session.commit()
+        verified, reason = check.verified, check.reason
         answer = {"identity_check_id": check.id, "verified": verified, "reason": reason}
         if verified:
             # the balance is read out only to a verified caller

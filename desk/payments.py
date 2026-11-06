@@ -5,6 +5,7 @@ then read the FMS's own payment record and the lease ledger until the outcome is
 cannot confirm becomes an explicit state with an owner, not a guess."""
 from __future__ import annotations
 
+import threading
 import uuid
 from dataclasses import dataclass
 from datetime import timedelta
@@ -65,6 +66,26 @@ def identity_locked(session: Session, case_id: int) -> bool:
     failed = session.scalar(select(func.count()).select_from(IdentityCheck)
                             .where(IdentityCheck.case_id == case_id, IdentityCheck.verified.is_(False), IdentityCheck.created_at > since))
     return failed >= IDENTITY_TRIES
+
+
+# ponytail: per-case locks in this process; a row lock or an atomic counter when the API runs as several processes
+_identity_locks: dict[int, threading.Lock] = {}
+_identity_locks_guard = threading.Lock()
+
+
+def check_identity(session: Session, adapter: FMSAdapter, case: DelinquencyCase, claim: IdentityClaim) -> IdentityCheck | None:
+    """Check a caller and commit the result at once, one check per case at a time, so parallel conversations or
+    requests cannot each slip guesses in before the others are counted. None means the case is locked."""
+    with _identity_locks_guard:
+        lock = _identity_locks.setdefault(case.id, threading.Lock())
+    with lock:
+        if identity_locked(session, case.id):
+            return None
+        ok, why = verify_identity(adapter, session.get(Lease, case.lease_id), claim)
+        check = IdentityCheck(id=uuid.uuid4().hex, case_id=case.id, verified=ok, reason=why)
+        session.add(check)
+        session.commit()
+        return check
 
 
 def verify_identity(adapter: FMSAdapter, lease: Lease, claim: IdentityClaim) -> tuple[bool, str]:

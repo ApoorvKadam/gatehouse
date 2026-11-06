@@ -221,3 +221,24 @@ def test_a_submission_interrupted_by_a_crash_is_looked_up_not_resent(session, ad
     settle(session, adapter)
     assert session.get(PaymentCommand, command.id).state == "CONFIRMED"
     assert len(sim.payments(DANA)) == 1
+
+
+def test_parallel_identity_guesses_are_counted_before_the_next_one_runs(adapter, sim, tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from desk.db import make_session_factory
+    from desk.payments import check_identity
+
+    factory = make_session_factory(f"sqlite:///{tmp_path / 'desk.db'}")
+    with factory() as s:
+        case, _ = case_for(s, adapter, DANA)
+        s.commit()
+        case_id = case.id
+
+    def guess(n):
+        with factory() as s:
+            return check_identity(s, adapter, s.get(DelinquencyCase, case_id), IdentityClaim("Whitfield", f"{1000 + n}", "B-1042"))
+
+    with ThreadPoolExecutor(8) as pool:
+        results = list(pool.map(guess, range(8)))
+    assert sum(r is not None for r in results) == 3
