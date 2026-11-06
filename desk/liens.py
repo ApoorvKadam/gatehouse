@@ -50,6 +50,9 @@ FL_R1 = RuleVersion(
         "Every legal check (military disclosure and service, bankruptcy, vehicle or watercraft, dispute, secured "
         "party) is recorded as yes, no or unknown with its source; yes or unknown goes to counsel.",
         "Any payment the FMS shows after the notice was delivered reopens review of the notice.",
+        "The notice names the FMS ledger snapshot its claim came from, taken before the delivery day, and each itemized "
+        "charge is an open charge on it.",
+        "The no-newspaper posting route of 83.806(4)(c) is not evaluated here; such files go to counsel.",
     ),
 )
 REFERENCE_ONLY = {"NY": "N.Y. Lien Law 182 is imported as reference material only; New York cases are not evaluated here."}
@@ -179,7 +182,8 @@ class Publication(BaseModel):
 
 
 class LegalCheck(BaseModel):
-    check: Literal["military_disclosure_provision", "military_service", "bankruptcy", "vehicle_or_watercraft", "dispute", "secured_party"]
+    check: Literal["military_disclosure_provision", "military_service", "bankruptcy", "vehicle_or_watercraft", "dispute", "secured_party",
+                   "document_of_title_issued", "fees_authorized_by_rental_agreement", "no_newspaper_in_area"]
     answer: YesNoUnknown
     source: str = Field(min_length=3)
     observed_on: date
@@ -243,7 +247,8 @@ class CaseFacts:
 STATES = ("FMS data unavailable", "FMS reports paid", "Counsel review required", "Account changed: re-review",
           "Evidence incomplete", "Waiting for a timing threshold", "Review packet assembled")
 SUMMARIES = {
-    "Review packet assembled": "Listed evidence checks completed; sale authorization is outside this desk.",
+    "Review packet assembled": ("Every listed requirement has a record and a kept document. A person still has to check the "
+                                "documents themselves; sale authorization is outside this desk."),
     "FMS reports paid": "The FMS shows nothing due. This case leaves active lien work; releasing any lien is a separate review.",
 }
 
@@ -274,8 +279,8 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
                            "the FMS payments could not be read or dated, so a payment after the notice cannot be ruled out",
                            "retry when the FMS answers"))
         return _finish(out, timing)
-    if facts.total_due_cents == 0:
-        out.append(Finding("balance due", "statute 83.806(6)", "blocked", "the FMS shows nothing due", "take the case out of lien work"))
+    if facts.total_due_cents <= 0:
+        out.append(Finding("balance due", "statute 83.806(6)", "blocked", "the FMS shows nothing due (or a credit)", "take the case out of lien work"))
         return _finish(out, timing)
     today = date.fromisoformat(facts.today)
     ev = {k: [e for e in facts.evidence if e["kind"] == k] for k in EVIDENCE_KINDS}
@@ -286,22 +291,39 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
                 out.append(Finding("evidence dates", "policy", "review", f"{e['kind'].replace('_', ' ')} {e['id']} records {name} {when}, after today",
                                    "correct the record; evidence cannot describe something that has not happened"))
 
-    # legal checks: every one recorded, and only a "no" lets the file continue without counsel
-    answers = {}
+    # legal checks: every one recorded, and only a clean answer lets the file continue without counsel. Several current
+    # records for one check must agree; a later "no" never erases an earlier "yes" unless it supersedes that record.
+    answers: dict[str, list[LegalCheck]] = {}
     for e in ev["legal_check"]:
         c = LegalCheck.model_validate(e["facts"])
-        answers[c.check] = c
-    for check, basis, risky in (("military_disclosure_provision", "statute 83.808(2)", "no"), ("military_service", "policy", "yes"),
-                                ("bankruptcy", "policy", "yes"), ("vehicle_or_watercraft", "statute 83.806(10)", "yes"),
-                                ("dispute", "policy", "yes"), ("secured_party", "statute 83.805", "yes")):
-        c = answers.get(check)
+        answers.setdefault(c.check, []).append(c)
+    for check, basis, clean in (("military_disclosure_provision", "statute 83.808(2)", "yes"), ("military_service", "policy", "no"),
+                                ("bankruptcy", "policy", "no"), ("vehicle_or_watercraft", "statute 83.806(10)", "no"),
+                                ("dispute", "policy", "no"), ("secured_party", "statute 83.805", "no"),
+                                ("document_of_title_issued", "statute 83.803(5)", "no"),
+                                ("fees_authorized_by_rental_agreement", "statute 83.808(3)", "yes"),
+                                ("no_newspaper_in_area", "statute 83.806(4)(c)", "no")):
+        records = answers.get(check, [])
         label = check.replace("_", " ")
-        if c is None:
+        said = "; ".join(f"{c.answer} ({c.source}, {c.observed_on})" for c in records)
+        if not records:
             out.append(Finding(label, basis, "missing", f"no {label} check is recorded", "record yes, no or unknown with its source"))
-        elif c.answer == "unknown" or c.answer == risky:
-            out.append(Finding(label, basis, "review", f"{label}: {c.answer} ({c.source}, {c.observed_on})", "send to counsel"))
+        elif len({c.answer for c in records}) > 1:
+            out.append(Finding(label, basis, "review", f"conflicting {label} checks: {said}", "resolve by superseding the wrong record; send to counsel"))
+        elif records[0].answer != clean:
+            out.append(Finding(label, basis, "review", f"{label}: {said}", "send to counsel"))
         else:
-            out.append(Finding(label, basis, "met", f"{label}: {c.answer} ({c.source}, {c.observed_on})"))
+            out.append(Finding(label, basis, "met", f"{label}: {said}"))
+
+    # one document behind records for two different notices of this case cannot be both
+    by_hash: dict[str, set] = {}
+    for e in facts.evidence:
+        if e.get("document_sha256") and e["kind"] != "notice":
+            by_hash.setdefault(e["document_sha256"], set()).add(e["facts"].get("notice_id"))
+    for digest, ids in by_hash.items():
+        if len(ids) > 1:
+            out.append(Finding("document reuse", "policy", "review", f"one document is filed as evidence for notices {sorted(ids)}",
+                               "attach the document that belongs to each notice"))
 
     # every piece of evidence but a legal check needs its document kept
     for e in facts.evidence:
@@ -327,11 +349,32 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
                            f"match with the rental agreement's description: {notice.description_matches_rental_agreement}", "send to review"))
     snap = facts.notice_snapshots.get(str(notice.ledger_snapshot_id)) if notice.ledger_snapshot_id is not None else None
     if snap is None:
-        out.append(Finding("claim at notice time", "statute 83.806(2)(a)", "missing",
+        out.append(Finding("claim at notice time", "policy", "missing",
                            "the notice does not name an FMS ledger snapshot of this case that its claim was taken from", "record the snapshot"))
-    elif snap["total_due"] != notice.itemized_total_cents:
-        out.append(Finding("claim at notice time", "statute 83.806(2)(a)", "review",
-                           f"the notice claims {notice.itemized_total_cents} cents; the FMS ledger then showed {snap['total_due']}", "send to review"))
+    else:
+        if snap["total_due"] != notice.itemized_total_cents:
+            out.append(Finding("claim at notice time", "statute 83.806(2)(a)", "review",
+                               f"the notice claims {notice.itemized_total_cents} cents; the FMS ledger then showed {snap['total_due']}", "send to review"))
+        open_then = [dict(c) for c in snap.get("open_charges", [])]
+        for item in notice.itemized_charges:
+            match = next((c for c in open_then if c["open_cents"] == item.amount_cents
+                          and (item.description.lower() in c["name"] or c["name"] in item.description.lower())), None)
+            if match is None:
+                out.append(Finding("itemized charge on the ledger", "statute 83.806(2)(a)", "review",
+                                   f"\"{item.description}\" for {item.amount_cents} cents is not an open charge on the FMS ledger snapshot",
+                                   "correct the notice; send to review"))
+            else:
+                open_then.remove(match)
+    try:
+        zone = facility_zone(facts.facility_time_zone)
+        hour = datetime.strptime(notice.sale_time.strip().upper(), "%I:%M %p")
+        local_instant(datetime.combine(notice.sale_date, hour.time()), zone)
+    except ValueError as exc:
+        out.append(Finding("sale time", "statute 83.806(2)(d)", "review",
+                           f"the stated sale time {notice.sale_time!r} on {notice.sale_date} is not a clear local time: {exc}",
+                           "state the sale time as, for example, 10:00 AM; send to review"))
+    if sum(ch.isdigit() for ch in notice.owner_phone) < 10:
+        out.append(Finding("owner contact", "statute 83.806(2)(e)", "missing", "the owner's telephone number is incomplete", "correct the notice"))
 
     def for_notice(kind):
         return [e for e in ev[kind] if e["facts"].get("notice_id") == notice_id]
@@ -379,9 +422,10 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
     if notice.sum_due_since > delivered_on:
         out.append(Finding("date the sum became due", "statute 83.806(2)(a)", "review",
                            f"the notice says the sum became due {notice.sum_due_since}, after it was delivered", "correct the notice"))
-    if snap is not None and date.fromisoformat(snap["observed_on"]) > delivered_on:
+    if snap is not None and date.fromisoformat(snap["observed_on"]) >= delivered_on:
         out.append(Finding("claim at notice time", "policy", "review",
-                           f"the ledger snapshot is from {snap['observed_on']}, after the notice was delivered", "name a snapshot from before delivery"))
+                           f"the ledger snapshot is from {snap['observed_on']}, not before the notice was delivered on {delivered_on}",
+                           "name a snapshot from before the delivery day"))
 
     # posting at the facility or on the unit
     postings = [Posting.model_validate(e["facts"]) for e in for_notice("posting")]
@@ -451,7 +495,7 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
                                f"the {p.published_on} advertisement lacks: {', '.join(lacking)}", "correct and republish; send to review"))
 
     sale_threshold = plus_days(first.published_on, 15)
-    timing["calculated sale threshold under this policy"] = sale_threshold.isoformat()
+    timing["earliest sale under the statute (15 days after first publication)"] = sale_threshold.isoformat()
     stated = {(notice.sale_date, notice.sale_time.strip().lower(), notice.sale_place.strip().lower())} | {
         (p.sale_date, p.sale_time.strip().lower(), p.sale_place.strip().lower()) for p in pubs[:2]}
     if len(stated) > 1:

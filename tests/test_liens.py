@@ -62,7 +62,8 @@ DOC = "a" * 64   # a kept document's hash
 
 def legal(**overrides):
     answers = {"military_disclosure_provision": "yes", "military_service": "no", "bankruptcy": "no",
-               "vehicle_or_watercraft": "no", "dispute": "no", "secured_party": "no"} | overrides
+               "vehicle_or_watercraft": "no", "dispute": "no", "secured_party": "no", "document_of_title_issued": "no",
+               "fees_authorized_by_rental_agreement": "yes", "no_newspaper_in_area": "no"} | overrides
     return [{"id": i, "kind": "legal_check", "document_sha256": None,
              "facts": {"check": k, "answer": v, "source": "rental agreement and PACER search", "observed_on": "2026-11-05"}}
             for i, (k, v) in enumerate(answers.items(), 100)]
@@ -104,8 +105,9 @@ def complete():
 
 def facts(evidence, today=date(2026, 12, 1), jurisdiction="FL", zone="America/New_York", due=24000, payments=(), changes=(),
           snapshot_total=24000):
+    charges = [{"name": "october rent", "open_cents": 21500}, {"name": "late fee", "open_cents": 2500}]
     return CaseFacts(jurisdiction, zone, due, None if payments is None else list(payments), today.isoformat(), evidence,
-                     {"7": {"total_due": snapshot_total, "observed_on": "2026-11-05"}}, list(changes))
+                     {"7": {"total_due": snapshot_total, "observed_on": "2026-11-05", "open_charges": charges}}, list(changes))
 
 
 def by(evaluation, requirement):
@@ -115,9 +117,9 @@ def by(evaluation, requirement):
 def test_a_complete_file_is_a_review_packet_and_never_a_sale_approval():
     e = evaluate(facts(complete()))
     assert e.state == "Review packet assembled"
-    assert e.summary == "Listed evidence checks completed; sale authorization is outside this desk."
+    assert "A person still has to check the documents themselves; sale authorization is outside this desk." in e.summary
     assert e.timing["payment deadline in the notice"] == "2026-11-20"
-    assert e.timing["calculated sale threshold under this policy"] == "2026-12-06"
+    assert e.timing["earliest sale under the statute (15 days after first publication)"] == "2026-12-06"
     assert all(f.basis.startswith(("statute", "policy")) for f in e.findings)
 
 
@@ -262,3 +264,42 @@ def test_ledger_changes_cope_with_missing_lists_and_ids():
     assert ledger_changes({"bookEntries": None}, {"bookEntries": None}) == []
     then = {"bookEntries": [{"type": "CHARGE", "amount": 2500, "amountPaid": 0, "details": {"description": "Late fee"}}]}
     assert "no entry id" in ledger_changes(then, {"bookEntries": []})[0]
+
+
+def test_a_later_no_does_not_erase_an_earlier_yes():
+    evidence = complete() + [{"id": 200, "kind": "legal_check", "document_sha256": None,
+                              "facts": {"check": "secured_party", "answer": "yes", "source": "UCC filing 2026-123", "observed_on": "2026-11-04"}}]
+    f = by(evaluate(facts(evidence)), "secured party")
+    assert f.status == "review" and "conflicting" in f.detail
+
+
+def test_a_credit_balance_is_not_a_debt_to_enforce():
+    assert evaluate(facts(complete(), due=-1000)).state == "FMS reports paid"
+
+
+def test_a_document_of_title_or_unauthorized_fees_go_to_counsel():
+    assert evaluate(facts(complete()[:5] + legal(document_of_title_issued="unknown"))).state == "Counsel review required"
+    assert evaluate(facts(complete()[:5] + legal(fees_authorized_by_rental_agreement="no"))).state == "Counsel review required"
+
+
+def test_each_itemized_charge_must_be_open_on_the_snapshot():
+    # the same $240 total, but claimed as one late fee: the snapshot has no such charge
+    wrong = [notice(itemized_charges=[{"description": "Late fee", "amount_cents": 24000, "due_on": "2026-10-06"}])] + complete()[1:]
+    assert by(evaluate(facts(wrong)), "itemized charge on the ledger").status == "review"
+
+
+@pytest.mark.parametrize("sale_time", ["TBD", "2:30 AM"])
+def test_a_sale_time_must_exist_at_the_facility(sale_time):
+    sale = date(2026, 3, 8) if sale_time == "2:30 AM" else date(2026, 12, 6)
+    evidence = [notice(sale=sale, sale_time=sale_time)] + complete()[1:]
+    assert by(evaluate(facts(evidence)), "sale time").status == "review"
+
+
+def test_one_document_cannot_serve_two_notices():
+    second = notice(nid=60)
+    reused = dict(mailed(nid=60), id=61)   # the same certificate (same hash) filed for the second notice
+    assert by(evaluate(facts(complete() + [second, reused])), "document reuse").status == "review"
+
+
+def test_the_no_newspaper_route_goes_to_counsel():
+    assert evaluate(facts(complete()[:5] + legal(no_newspaper_in_area="yes"))).state == "Counsel review required"

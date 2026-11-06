@@ -61,7 +61,8 @@ def file_for(client, cid, delivered: date, newspaper_ok="yes"):  # noqa: F811
                             "includes_property_description": True, "includes_facility_address": True,
                             "includes_tenant_name": True, "includes_sale_time_place_manner": True})
     for check, answer in (("military_disclosure_provision", "yes"), ("military_service", "no"), ("bankruptcy", "no"),
-                          ("vehicle_or_watercraft", "no"), ("dispute", "no"), ("secured_party", "no")):
+                          ("vehicle_or_watercraft", "no"), ("dispute", "no"), ("secured_party", "no"), ("document_of_title_issued", "no"),
+                          ("fees_authorized_by_rental_agreement", "yes"), ("no_newspaper_in_area", "no")):
         add("legal_check", {"check": check, "answer": answer, "source": "rental agreement, PACER, UCC search",
                             "observed_on": delivered.isoformat()})
     return nid
@@ -72,7 +73,7 @@ def test_a_complete_florida_file_is_a_review_packet_with_its_basis_and_attributi
     file_for(client, cid, today_in_orlando() - timedelta(days=40))
     lien = client.get(f"/api/cases/{cid}/lien").json()
     assert lien["state"] == "Review packet assembled", [f for f in lien["findings"] if f["status"] != "met"]
-    assert lien["summary"] == "Listed evidence checks completed; sale authorization is outside this desk."
+    assert "sale authorization is outside this desk" in lien["summary"]
     assert lien["rule_version"]["label"] == "FL-r1" and "Not legal review" in lien["rule_version"]["review_note"]
     assert "CC BY 4.0" in lien["reference"]["attribution"] and lien["reference"]["published_summary"]["earliest_sale"] == "Day 29"
     assert client.get(f"/api/lien/evaluations/{lien['evaluation_id']}/replay").json()["same_result"] is True

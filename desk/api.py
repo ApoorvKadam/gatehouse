@@ -18,7 +18,7 @@ from .adapter.cubby import CubbyAdapter
 from .cases import queue, sync_facility
 from .config import Settings
 from .conversation import Conversation
-from .lien_files import evaluate_case, record_evidence, replay
+from .lien_files import ensure_append_only, evaluate_case, record_evidence, replay
 from .liens import FL_R1, ValidationError
 from .db import bind_to_fms, make_session_factory
 from .models import CaseEvent, DelinquencyCase, DeskBinding, Facility, Lease, LedgerSnapshot, LienEvaluation, PaymentCommand
@@ -83,6 +83,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
     factory = make_session_factory(settings.database_url)
     adapter = adapter or CubbyAdapter(settings.fms_base_url, settings.fms_api_key, settings.fms_timeout_seconds)
     bind_to_fms(factory, adapter, settings.fms_base_url)
+    ensure_append_only(factory.kw["bind"])
     with factory() as session:
         import_stitch(session)   # published lien-law reference data, stored once per file
     worker = Worker(factory, adapter, settings.reconcile_every_seconds)

@@ -29,11 +29,22 @@ def _evidence_is_never_deleted(mapper, connection, target):
 
 
 # the same rule in the database itself, so a bulk statement or another client cannot rewrite the record either
-for _table in ("lien_evidence", "rule_source_rows"):
+for _table in ("lien_evidence", "rule_source_rows", "lien_evaluations"):
     for _op in ("UPDATE", "DELETE"):
         event.listen(LienEvidence.metadata.tables[_table], "after_create", DDL(
             f"CREATE TRIGGER IF NOT EXISTS {_table}_no_{_op.lower()} BEFORE {_op} ON {_table} "
             f"BEGIN SELECT RAISE(ABORT, '{_table} is append-only'); END").execute_if(dialect="sqlite"))
+
+def ensure_append_only(engine) -> None:
+    """Install the append-only triggers on a database whose tables already existed (create_all does not)."""
+    if engine.dialect.name != "sqlite":
+        return
+    with engine.begin() as conn:
+        for table in ("lien_evidence", "rule_source_rows", "lien_evaluations"):
+            for op in ("UPDATE", "DELETE"):
+                conn.exec_driver_sql(f"CREATE TRIGGER IF NOT EXISTS {table}_no_{op.lower()} BEFORE {op} ON {table} "
+                                     f"BEGIN SELECT RAISE(ABORT, '{table} is append-only'); END")
+
 
 EVALUATORS = {"FL-r1": evaluate}   # rule version -> the evaluator that implements it; replay refuses anything else
 
@@ -103,7 +114,11 @@ def case_facts(session: Session, adapter: FMSAdapter, case: DelinquencyCase) -> 
             observed = local_date(snap.observed_at, facility_zone(zone_name)).isoformat()
         except DateProblem:
             continue
-        snapshots[str(sid)] = {"total_due": snap.total_due, "observed_on": observed}
+        open_charges = [{"name": ((e.get("details") or {}).get("description") or (e.get("details") or {}).get("category") or "").lower(),
+                         "open_cents": e.get("amount", 0) - e.get("amountPaid", 0)}
+                        for e in (snap.raw.get("bookEntries") or []) if isinstance(e, dict) and e.get("type") == "CHARGE"
+                        and e.get("amount", 0) > e.get("amountPaid", 0)]
+        snapshots[str(sid)] = {"total_due": snap.total_due, "observed_on": observed, "open_charges": open_charges}
         if ledger is not None and r is latest_notice:   # only the notice the evaluation uses
             changes = ledger_changes(snap.raw, ledger.raw)
     try:
@@ -136,6 +151,10 @@ def ledger_changes(then: dict, now: dict) -> list[str]:
                 out.append(f"the {name} charge's {label} changed from {e.get(key, 0)} to {later.get(key, 0)} cents")
         if bool((later.get("details") or {}).get("waive")) != bool((e.get("details") or {}).get("waive")):
             out.append(f"the {name} charge was waived" if (later.get("details") or {}).get("waive") else f"the waiver on the {name} charge was removed")
+    known = {e.get("bookEntryId") for e in then_entries if isinstance(e, dict)}
+    for e in now_entries:
+        if isinstance(e, dict) and e.get("bookEntryId") not in known and e.get("type") not in (None, "CHARGE"):
+            out.append(f"a {str(e.get('type')).lower()} of {e.get('amount', 0)} cents was posted after the notice")
     return out
 
 
@@ -144,7 +163,7 @@ def evaluate_case(session: Session, adapter: FMSAdapter, case: DelinquencyCase) 
     facts = case_facts(session, adapter, case)
     digest = facts.digest()
     last = session.scalar(select(LienEvaluation).where(LienEvaluation.case_id == case.id).order_by(LienEvaluation.id.desc()).limit(1))
-    if last is not None and last.facts_digest == digest:
+    if last is not None and last.facts_digest == digest and replay(last):
         return last
     result = EVALUATORS[facts.rules](facts)
     row = LienEvaluation(case_id=case.id, rule_version=result.rule_version, state=result.state, summary=result.summary, facts=asdict(facts),
@@ -163,4 +182,5 @@ def replay(row: LienEvaluation) -> bool:
     if facts.rules not in EVALUATORS:
         return False
     again = EVALUATORS[facts.rules](facts)
-    return again.state == row.state and [asdict(f) for f in again.findings] == row.findings and again.timing == row.timing
+    return (facts.digest() == row.facts_digest and again.rule_version == row.rule_version and again.state == row.state
+            and again.summary == row.summary and [asdict(f) for f in again.findings] == row.findings and again.timing == row.timing)
