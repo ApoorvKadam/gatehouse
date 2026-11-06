@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base, utcnow
@@ -118,3 +118,14 @@ class CaseEvent(Base):
     detail: Mapped[dict] = mapped_column(JSON, default=dict)
     occurred_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     observed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class IdentityCheck(Base):
+    """A caller proved who they are for one case. Payments cite it; a check expires after a short while."""
+
+    __tablename__ = "identity_checks"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    case_id: Mapped[int] = mapped_column(ForeignKey("cases.id"))
+    verified: Mapped[bool] = mapped_column(Boolean)
+    reason: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
