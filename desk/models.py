@@ -1,0 +1,197 @@
+"""The desk's own records. Three kinds of fact are kept apart on purpose:
+
+- what the FMS reports (ledger snapshots, provider payment status), copied with the time it was observed;
+- what the desk itself did or saw (payment commands, case events);
+- what the desk concludes from those (a case's state and hold reasons).
+
+The desk never keeps a balance of its own. A balance always comes from the latest FMS snapshot."""
+from __future__ import annotations
+
+from datetime import datetime
+
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, text
+from sqlalchemy.orm import Mapped, mapped_column
+
+from .db import Base, utcnow
+
+
+class Facility(Base):
+    __tablename__ = "facilities"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider: Mapped[str] = mapped_column(String)
+    provider_id: Mapped[str] = mapped_column(String)
+    name: Mapped[str] = mapped_column(String)
+    jurisdiction: Mapped[str] = mapped_column(String)
+    time_zone: Mapped[str] = mapped_column(String)
+    __table_args__ = (UniqueConstraint("provider", "provider_id"),)
+
+
+class Lease(Base):
+    __tablename__ = "leases"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    facility_id: Mapped[int] = mapped_column(ForeignKey("facilities.id"))
+    provider: Mapped[str] = mapped_column(String)
+    provider_id: Mapped[str] = mapped_column(String)
+    provider_customer_id: Mapped[str] = mapped_column(String)
+    unit_name: Mapped[str] = mapped_column(String)
+    billing_cycle: Mapped[str] = mapped_column(String)
+    __table_args__ = (UniqueConstraint("provider", "provider_id"),)
+
+
+class LedgerSnapshot(Base):
+    """One read of a lease's ledger, exactly as the FMS answered."""
+
+    __tablename__ = "ledger_snapshots"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    lease_id: Mapped[int] = mapped_column(ForeignKey("leases.id"))
+    total_due: Mapped[int] = mapped_column(Integer)
+    prepaid: Mapped[int] = mapped_column(Integer)
+    observed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    raw: Mapped[dict] = mapped_column(JSON)
+
+
+class DelinquencyCase(Base):
+    """One delinquency episode on one lease, from the first missed charge until it is paid off."""
+
+    __tablename__ = "cases"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    lease_id: Mapped[int] = mapped_column(ForeignKey("leases.id"))
+    state: Mapped[str] = mapped_column(String, default="open")
+    hold_reasons: Mapped[list] = mapped_column(JSON, default=list)
+    owner: Mapped[str] = mapped_column(String, default="front desk")
+    last_snapshot_id: Mapped[int | None] = mapped_column(ForeignKey("ledger_snapshots.id"), nullable=True)
+    opened_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # a refresh that read the FMS before another one committed must not publish its older picture
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    __mapper_args__ = {"version_id_col": version}
+
+
+# a payment in one of these states still holds the account: no second payment may start until it settles
+HOLDING_STATES = ("SUBMITTING", "AWAITING_APPLICATION", "PENDING_AT_FMS", "OUTCOME_UNKNOWN", "NEEDS_STAFF")
+# what the FMS can later report about a payment that had succeeded
+FMS_REVERSAL_STATUSES = ("DIRECT_DEBIT_RETURN", "REFUNDED", "REFUND_INITIATED", "DISPUTED")
+_HOLDING_SQL = text("state IN (" + ", ".join(f"'{s}'" for s in HOLDING_STATES) + ")")
+
+
+class PaymentCommand(Base):
+    """An authorized intent to take one payment, and everything learned about it afterwards.
+
+    The row is written before the FMS is called, so a crash or a lost response leaves a record of what
+    was attempted instead of nothing."""
+
+    __tablename__ = "payment_commands"
+    # the database, not a read before the insert, keeps two requests from charging the same lease at once, even
+    # through two cases of that lease
+    __table_args__ = (Index("one_holding_payment_per_lease", "lease_id", unique=True,
+                            sqlite_where=_HOLDING_SQL, postgresql_where=_HOLDING_SQL),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # every update checks the version it read, so two passes that read the same state cannot both write
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    __mapper_args__ = {"version_id_col": version}
+    case_id: Mapped[int] = mapped_column(ForeignKey("cases.id"))
+    lease_id: Mapped[int] = mapped_column(ForeignKey("leases.id"))
+    idempotency_key: Mapped[str] = mapped_column(String, unique=True)
+    amount: Mapped[int] = mapped_column(Integer)
+    payment_method_id: Mapped[str] = mapped_column(String)
+    authorization: Mapped[dict] = mapped_column(JSON)
+    state: Mapped[str] = mapped_column(String)
+    balance_before: Mapped[int] = mapped_column(Integer)
+    prepaid_before: Mapped[int] = mapped_column(Integer)
+    method_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    # amountPaid of each ledger entry when the tenant agreed; only money landing on these counts as this payment
+    entries_paid_before: Mapped[dict] = mapped_column(JSON, default=dict)
+    # every payment the FMS already showed on the lease, with its status, just before this one was sent
+    fms_payments_before: Mapped[dict] = mapped_column(JSON, default=dict)
+    # an FMS payment that may be this lost submission; only staff can confirm that it is
+    suggested_payment_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    # when the FMS reported this payment returned, refunded or disputed
+    reversed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # staff named this FMS payment as this attempt; that says which payment it is, not that it posted
+    identified_by_staff: Mapped[bool] = mapped_column(Boolean, default=False)
+    provider_payment_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    provider_status: Mapped[str | None] = mapped_column(String, nullable=True)
+    provider_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    checks: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class ObservedPayment(Base):
+    """A payment as the FMS reports it, once per provider payment, however many leases it touched."""
+
+    __tablename__ = "observed_payments"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider: Mapped[str] = mapped_column(String)
+    provider_payment_id: Mapped[str] = mapped_column(String)
+    amount: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String)
+    lease_provider_ids: Mapped[list] = mapped_column(JSON, default=list)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    # when the desk saw the status change; None when the payment was already reversed the first time the desk saw it
+    status_changed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    __table_args__ = (UniqueConstraint("provider", "provider_payment_id"),)
+
+
+class CaseEvent(Base):
+    """An append-only history: who did what, where it came from, when it happened and when we saw it."""
+
+    __tablename__ = "case_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    case_id: Mapped[int] = mapped_column(ForeignKey("cases.id"))
+    kind: Mapped[str] = mapped_column(String)
+    actor: Mapped[str] = mapped_column(String)
+    source: Mapped[str] = mapped_column(String)
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    observed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class IdentityCheck(Base):
+    """A caller proved who they are for one case. Payments cite it; a check expires after a short while."""
+
+    __tablename__ = "identity_checks"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    case_id: Mapped[int] = mapped_column(ForeignKey("cases.id"))
+    verified: Mapped[bool] = mapped_column(Boolean)
+    reason: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class PaymentProposal(Base):
+    """An amount and a card read back to a verified tenant, waiting for their yes.
+
+    The desk builds it from the FMS's own balance and the tenant's saved cards, never from what a client sends,
+    and a payment can only be taken by confirming one. Its id is the payment's idempotency key, so a second yes
+    or a double click returns the same payment."""
+
+    __tablename__ = "payment_proposals"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    case_id: Mapped[int] = mapped_column(ForeignKey("cases.id"))
+    identity_check_id: Mapped[str] = mapped_column(ForeignKey("identity_checks.id"))
+    channel: Mapped[str] = mapped_column(String)
+    amount: Mapped[int] = mapped_column(Integer)
+    balance_seen: Mapped[int] = mapped_column(Integer)
+    payment_method_id: Mapped[str] = mapped_column(String)
+    card_last4: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    # who reported the tenant's yes, and the tenant's words: the chat itself, or a named person at the desk
+    confirmed_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    tenant_answer: Mapped[str | None] = mapped_column(String, nullable=True)
+    command_id: Mapped[int | None] = mapped_column(ForeignKey("payment_commands.id"), nullable=True)
+
+
+class DeskBinding(Base):
+    """The FMS account this database belongs to. One deployment serves one operator; pointing a database at another
+    operator's FMS key would mix their accounts, so the desk refuses to start."""
+
+    __tablename__ = "desk_binding"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    fms_base_url: Mapped[str] = mapped_column(String, default="")
+    facility_ids: Mapped[list] = mapped_column(JSON, default=list)
+    fms_fingerprint: Mapped[str] = mapped_column(String, default="")
+    bound_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

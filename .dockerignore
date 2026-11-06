@@ -1,0 +1,8 @@
+.env
+data/
+.git
+.claude
+.playwright-mcp
+__pycache__
+*.pyc
+tests/
