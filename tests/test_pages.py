@@ -132,3 +132,13 @@ def test_the_front_page_shows_every_built_feature_with_a_link_into_it(fms_url, s
         for link in ("/today", "/payments/1", "/payments/2", "/accounts/2/lien", "/accounts/6/lien"):
             assert f'href="{link}"' in page and visitor.get(link).status_code == 200
         assert "cents" not in page   # amounts read as dollars
+
+
+def test_findings_read_in_dollars_and_dates_without_changing_their_meaning():
+    from desk.web import readable
+    assert readable("the notice claims 16500 cents; the FMS ledger then showed 11500") == \
+        "the notice claims $165.00; the FMS ledger then showed $115.00"
+    assert readable("the rent charge's amount paid changed from 0 to 5000 cents") == \
+        "the rent charge's amount paid changed from $0.00 to $50.00"
+    assert readable("a payment on 2026-11-06, after the notice") == "a payment on Nov 6, 2026, after the notice"
+    assert readable("\"2026-02-30 rent\" is not an open charge") == "\"2026-02-30 rent\" is not an open charge"

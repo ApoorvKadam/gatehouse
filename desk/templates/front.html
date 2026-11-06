@@ -26,15 +26,15 @@
     </table>
   </div>
 </section>
-<div class="stripe" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+<div class="stripe" id="built" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
 
 {% if held %}
-<section class="feature" id="built">
+<section class="feature">
   <div class="wrap">
     <div>
       <span class="marker"><i style="background:var(--brick)"></i>Payments</span>
       <h2>A payment whose answer was lost is held, not retried.</h2>
-      <p>The tenant agreed to {{ money(held.amount) }} by phone. The FMS took a payment, and the connection broke before its answer arrived. Gatehouse does not charge again and does not tell the tenant it worked. It points to the FMS payment that may be this one and waits for a person.</p>
+      <p>The tenant agreed to {{ money(held.amount) }} {{ "by phone" if (held.authorization or {}).get("channel") == "desk" else "in the tenant chat" }}. The FMS took a payment, and the connection broke before its answer arrived. Gatehouse does not charge again and does not tell the tenant it worked. It points to the FMS payment that may be this one and waits for a person.</p>
       <a class="open" href="/payments/{{ held.id }}">Open this payment &rarr;</a>
     </div>
     <div class="frame">
@@ -63,7 +63,7 @@
       <a class="open" href="/accounts/{{ record_case }}">Open the account record &rarr;</a>
     </div>
     <div class="frame">
-      <div class="frame-bar"><span><b>Account record</b> &middot; unit {{ held_unit }}</span></div>
+      <div class="frame-bar"><span><b>Account record</b> &middot; unit {{ record_unit }}</span></div>
       <div class="mini-lanes">
         {% for key, label in lane_names %}
         <div>
@@ -130,11 +130,11 @@
     <div>
       <span class="marker"><i style="background:var(--lilac)"></i>Other states</span>
       <h2>Where no rules are reviewed, the file goes to counsel.</h2>
-      <p>Florida is the one reviewed rule set. A New York file, or any other state's, is not evaluated: it goes to counsel instead of getting a confident answer nobody checked.</p>
+      <p>Florida is the one reviewed rule set. A file from any other state ({{ counsel_state }} here) is not evaluated: it goes to counsel instead of getting a confident answer nobody checked.</p>
       <a class="open" href="/accounts/{{ counsel.case_id }}/lien">Open this file &rarr;</a>
     </div>
     <div class="frame">
-      <div class="frame-bar"><span><b>Lien file</b> &middot; New York</span><span class="chip wait">Counsel review required</span></div>
+      <div class="frame-bar"><span><b>Lien file</b> &middot; {{ counsel_state }}</span><span class="chip wait">Counsel review required</span></div>
       <div class="frame-body"><p class="muted">{{ counsel.summary }}</p></div>
     </div>
   </div>

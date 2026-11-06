@@ -76,10 +76,20 @@ def local(when: datetime | None, zone: str = "America/New_York") -> str:
 
 
 def readable(text: str) -> str:
-    """Finding details come from the rules engine in cents and ISO dates; operators read dollars and dates."""
+    """Finding details come from the rules engine in cents and ISO dates; operators read dollars and dates.
+    Only the engine's own amount phrasings are converted, and a date-shaped string that is not a real date is left
+    as it is, so free text inside a finding (a charge description) cannot be misread or break the page."""
+    text = re.sub(r"claims (\d+) cents; the FMS ledger then showed (\d+)",
+                  lambda m: f"claims {money(int(m.group(1)))}; the FMS ledger then showed {money(int(m.group(2)))}", text)
     text = re.sub(r"from (\d+) to (\d+) cents", lambda m: f"from {money(int(m.group(1)))} to {money(int(m.group(2)))}", text)
     text = re.sub(r"(\d+) cents", lambda m: money(int(m.group(1))), text)
-    return re.sub(r"\b(20\d\d-\d\d-\d\d)\b", lambda m: day(m.group(1)), text)
+
+    def as_day(m: re.Match) -> str:
+        try:
+            return day(m.group(1))
+        except ValueError:
+            return m.group(1)
+    return re.sub(r"\b(20\d\d-\d\d-\d\d)\b", as_day, text)
 
 
 def sentence(text: str) -> str:
@@ -292,13 +302,26 @@ def router(pages: Pages) -> APIRouter:
                 raise HTTPException(503, "No facility has been read from the FMS yet")
             home = facilities[0]
             items = pages.today(s, home)
-            commands = s.scalars(select(PaymentCommand).order_by(PaymentCommand.id)).all()
-            held = next((c for c in commands if c.state == "NEEDS_STAFF"), None)
-            returned = next((c for c in commands if c.state in REVERSED), None)
-            evaluations = s.scalars(select(LienEvaluation).order_by(LienEvaluation.id.desc())).all()
-            changed = next((e for e in evaluations if e.state == "Account changed: re-review"), None)
-            counsel = next((e for e in evaluations if e.state == "Counsel review required"), None)
+            # only accounts at the facilities this deployment is bound to, the same rule every other page applies
+            mine = select(DelinquencyCase.id).join(Lease, Lease.id == DelinquencyCase.lease_id).where(
+                Lease.facility_id.in_([f.id for f in facilities]))
+            commands = s.scalars(select(PaymentCommand).where(PaymentCommand.case_id.in_(mine)).order_by(PaymentCommand.id)).all()
+            lost = {e.detail.get("command") for e in s.scalars(select(CaseEvent).where(
+                CaseEvent.kind == "payment submitted", CaseEvent.case_id.in_(mine))).all() if (e.detail or {}).get("fms_said") == "lost"}
+            # the example has to be what the overview says it is: held after a lost answer, with a possible FMS match
+            held = next((c for c in commands if c.state == "NEEDS_STAFF" and c.id in lost and c.provider_payment_id is None
+                         and c.suggested_payment_id), None)
+            returned = next((c for c in commands if c.state == "RETURNED"
+                             and s.get(DelinquencyCase, c.case_id).state != "paid"), None)
+            latest = {}
+            for e in s.scalars(select(LienEvaluation).where(LienEvaluation.case_id.in_(mine)).order_by(LienEvaluation.id)).all():
+                latest[e.case_id] = e   # the newest evaluation of each file, never an older one
+            changed = next((e for e in latest.values() if e.state == "Account changed: re-review"), None)
+            counsel = next((e for e in latest.values() if e.state == "Counsel review required" and not e.rule_version), None)
+            counsel_state = (s.get(Facility, s.get(Lease, s.get(DelinquencyCase, counsel.case_id).lease_id).facility_id).jurisdiction
+                             if counsel else None)
             record_case = held.case_id if held else (items[0].case_id if items else None)
+            record_unit = s.get(Lease, s.get(DelinquencyCase, record_case).lease_id).unit_name if record_case is not None else None
             lanes = {}
             if record_case is not None:
                 for e in pages.record(s, s.get(DelinquencyCase, record_case)):
@@ -307,7 +330,8 @@ def router(pages: Pages) -> APIRouter:
                 "facility": home, "facilities": facilities, "items": items[:4], "open_count": len(items),
                 "held": held, "held_unit": s.get(Lease, held.lease_id).unit_name if held else None,
                 "returned": returned, "returned_unit": s.get(Lease, returned.lease_id).unit_name if returned else None,
-                "changed": changed, "counsel": counsel, "record_case": record_case, "lanes": lanes, "lane_names": LANES,
+                "changed": changed, "counsel": counsel, "counsel_state": counsel_state, "record_case": record_case,
+                "record_unit": record_unit, "lanes": lanes, "lane_names": LANES,
                 "truth": pages.trace.get(s.get(Lease, held.lease_id).provider_id) if held else None,
                 "money": money, "local": local, "nav": "front"})
 

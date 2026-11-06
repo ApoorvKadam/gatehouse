@@ -138,7 +138,7 @@ td.num, th.num { text-align: right; }
 
 /* the record: four lanes, one row per moment */
 .docket { table-layout: fixed; border: 1px solid var(--frame); border-radius: 10px; border-collapse: separate; border-spacing: 0; overflow: hidden; }
-.docket th { position: sticky; top: 60px; background: #fafaf8; z-index: 1; color: var(--ink); font-size: var(--t-xs); padding: var(--s3); border-bottom: 1px solid var(--frame); }
+.docket th { background: #fafaf8; color: var(--ink); font-size: var(--t-xs); padding: var(--s3); border-bottom: 1px solid var(--frame); }
 .docket th .lane-dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; vertical-align: 0; }
 .docket th.when, .docket td.when { width: 8.5rem; }
 .docket td { border-left: 1px solid var(--rule); font-size: var(--t-sm); }
