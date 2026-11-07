@@ -356,48 +356,53 @@ def _marker(item: WorkItem) -> str:
 
 
 def _tasks(session: Session, adapter: FMSAdapter, facility: Facility, run_id: str, found: list[Discrepancy], result: AccessPass) -> None:
-    """One FMS task per open item that asks a person to act. Before the call the item is claimed and marked as sending,
-    in its own committed write, so a crash, a lost answer or a second worker can only ever look the task up by its
-    marker; nothing creates a second one."""
     wanted = {(d.kind, d.subject_type, d.subject_id): d.task for d in found if d.task}
     items = session.scalars(select(WorkItem).where(WorkItem.run_id == run_id, WorkItem.facility_id == facility.id,
                                                    WorkItem.kind.in_((NOT_RESTORED, MISSING)), WorkItem.state == "open")).all()
     for item in items:
-        task = wanted.get((item.kind, item.subject_type, item.subject_id))
-        try:
-            if item.task_state == "none" and task:
-                claimed = session.execute(update(WorkItem).where(WorkItem.id == item.id, WorkItem.task_state == "none")
-                                          .values(task_state="sending", task_marker=_marker(item), task_intent_at=utcnow()))
-                session.commit()
-                session.refresh(item)
-                if claimed.rowcount != 1:
-                    continue   # someone else claimed it; they own the call
-                title, description, unit_id, customer = task
-                outcome = adapter.create_task(facility.provider_id, title, f"{description}\n\n{item.task_marker}",
-                                              unit_id=unit_id, customer_provider_id=customer)
-                if outcome.kind == "created":
-                    item.task_state, item.task_id = "created", outcome.task_id
-                elif outcome.kind == "rejected":
-                    item.task_state, item.note = "rejected", f"The FMS refused the task ({outcome.detail}). Nothing was created."
-                else:
-                    item.task_state = "outcome_unknown"
-                session.commit()   # the id, or the unknown outcome, is saved before anything else is read
-            if item.task_state in ("sending", "outcome_unknown") and task:
-                # a call that may have reached the FMS: only ever looked up, never repeated
-                _find_by_marker(adapter, item, task)
-            if item.task_state == "created" and item.task_id:
-                rows = adapter.tasks_for("taskId", item.task_id)
-                item.task_status = rows[0].status if rows else "not found"
-                if item.task_status == "COMPLETED":
-                    item.note = ("The FMS task was marked completed, but the FMS still shows the problem on a complete "
-                                 "reading. A completed task does not close this item.")
-                elif item.task_status in ("ARCHIVED", "not found"):
-                    item.note = (f"The FMS task is {item.task_status.lower()}, and the problem is still there. Gatehouse does not "
-                                 "create another task for the same episode.")
+        ensure_task(session, adapter, facility, item, wanted.get((item.kind, item.subject_type, item.subject_id)), result.failures)
+
+
+def ensure_task(session: Session, adapter: FMSAdapter, facility: Facility, item: WorkItem, task: tuple | None,
+                failures: list[str]) -> None:
+    """One FMS task for an open item that asks a person to act; `task` is (title, description, unit_id, customer id), or
+    None when nothing is wanted this pass. Before the call the item is claimed and marked as sending, in its own
+    committed write, so a crash, a lost answer or a second worker can only ever look the task up by its marker; nothing
+    creates a second one."""
+    try:
+        if item.task_state == "none" and task:
+            claimed = session.execute(update(WorkItem).where(WorkItem.id == item.id, WorkItem.task_state == "none")
+                                      .values(task_state="sending", task_marker=_marker(item), task_intent_at=utcnow()))
             session.commit()
-        except FMSError as exc:
-            session.rollback()
-            result.failures.append(f"task for item {item.id}: {exc}")
+            session.refresh(item)
+            if claimed.rowcount != 1:
+                return   # someone else claimed it; they own the call
+            title, description, unit_id, customer = task
+            outcome = adapter.create_task(facility.provider_id, title, f"{description}\n\n{item.task_marker}",
+                                          unit_id=unit_id, customer_provider_id=customer)
+            if outcome.kind == "created":
+                item.task_state, item.task_id = "created", outcome.task_id
+            elif outcome.kind == "rejected":
+                item.task_state, item.note = "rejected", f"The FMS refused the task ({outcome.detail}). Nothing was created."
+            else:
+                item.task_state = "outcome_unknown"
+            session.commit()   # the id, or the unknown outcome, is saved before anything else is read
+        if item.task_state in ("sending", "outcome_unknown") and task:
+            # a call that may have reached the FMS: only ever looked up, never repeated
+            _find_by_marker(adapter, item, task)
+        if item.task_state == "created" and item.task_id:
+            rows = adapter.tasks_for("taskId", item.task_id)
+            item.task_status = rows[0].status if rows else "not found"
+            if item.task_status == "COMPLETED":
+                item.note = ("The FMS task was marked completed, but the FMS still shows the problem on a complete "
+                             "reading. A completed task does not close this item.")
+            elif item.task_status in ("ARCHIVED", "not found"):
+                item.note = (f"The FMS task is {item.task_status.lower()}, and the problem is still there. Gatehouse does not "
+                             "create another task for the same episode.")
+        session.commit()
+    except FMSError as exc:
+        session.rollback()
+        failures.append(f"task for item {item.id}: {exc}")
 
 
 def _find_by_marker(adapter: FMSAdapter, item: WorkItem, task: tuple) -> None:

@@ -23,6 +23,8 @@ class Settings:
     demo_seed: bool = False
     # names this database's work items, so a reset under a new run never collides with kept history
     run_id: str = "local"
+    # an outside auction site's listing feed; unset, an outside listing's status is reported as unknown
+    marketplace_url: str | None = None
 
     @staticmethod
     def from_env() -> "Settings":
@@ -39,4 +41,5 @@ class Settings:
             public_view=os.environ.get("DESK_PUBLIC_VIEW") == "1",
             demo_seed=os.environ.get("DESK_DEMO_SEED") == "1",
             run_id=os.environ.get("DESK_RUN_ID", "local"),
+            marketplace_url=os.environ.get("DESK_MARKETPLACE_URL") or None,
         )

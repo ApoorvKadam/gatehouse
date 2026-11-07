@@ -21,6 +21,7 @@ from .cases import current_case, sync_facility
 from .lien_files import evaluate_case, record_evidence
 from .models import AccessPolicy, DelinquencyCase, DemoSeed, Facility, Lease, LedgerSnapshot
 from .payments import IdentityClaim, PaymentService, check_identity, confirm, propose
+from .sales import reconcile_sales
 
 log = logging.getLogger("desk.demo")
 
@@ -30,7 +31,8 @@ DESK = "front desk (synthetic)"
 ID_SEED = "gatehouse-preview"
 
 
-def build(factory: sessionmaker[Session], adapter: FMSAdapter, fms_base_url: str, run_id: str = "local") -> bool:
+def build(factory: sessionmaker[Session], adapter: FMSAdapter, fms_base_url: str, run_id: str = "local",
+          feed_url: str | None = None) -> bool:
     """Build the world if this database is empty. Returns False when the world is already built, and refuses a
     database where an earlier build stopped part-way."""
     with factory() as session:
@@ -43,6 +45,7 @@ def build(factory: sessionmaker[Session], adapter: FMSAdapter, fms_base_url: str
     with factory() as session:
         sync_facility(session, adapter, ORLANDO)
         sync_facility(session, adapter, ALBANY)
+        schedule_sale(sim)
         lost_response(session, adapter, sim)
         returned_payment(session, adapter, sim)
         changed_lien_file(session, adapter, sim)
@@ -51,11 +54,22 @@ def build(factory: sessionmaker[Session], adapter: FMSAdapter, fms_base_url: str
         # world is opened: the worker then finds nothing new to record
         settle(session, adapter, passes=2)
         access_world(session, adapter, sim, run_id)
+        for facility in session.scalars(select(Facility).where(Facility.provider_id.in_((ORLANDO, ALBANY))).order_by(Facility.id)):
+            reconcile_sales(session, adapter, facility, run_id, feed_url)
         session.add(DemoSeed(id=1))
         session.commit()
     sim.close()
     log.info("synthetic world built")
     return True
+
+
+def schedule_sale(sim: httpx.Client) -> None:
+    """Orlando's next lien sale, two days out at 10 AM, with Dana's B-1042 and Gina's E-505 in it, advertised on an
+    outside auction site. The notices went out 28 days ago; Gina's lien file below records hers."""
+    today = datetime.now(ZoneInfo("America/New_York")).date()
+    sim.post("/sim/auctions/schedule", json={
+        "facilityId": ORLANDO, "auctionTime": f"{today + timedelta(days=2)}T10:00:00", "leaseIds": ["lease_WhitB1042", "lease_OkfrE0505"],
+        "lienStartDate": (today - timedelta(days=28)).isoformat(), "marketplace": "Online auction site (synthetic)"}).raise_for_status()
 
 
 def trace(fms_base_url: str) -> dict:
