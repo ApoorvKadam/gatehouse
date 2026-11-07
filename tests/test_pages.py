@@ -134,22 +134,15 @@ def test_the_front_page_shows_every_built_feature_with_a_link_into_it(fms_url, s
         assert "cents" not in page   # amounts read as dollars
 
 
-def test_findings_read_in_dollars_and_dates_without_changing_their_meaning():
-    from desk.web import readable
-    assert readable("the notice claims 16500 cents; the FMS ledger then showed 11500") == \
-        "the notice claims $165.00; the FMS ledger then showed $115.00"
-    assert readable("the rent charge's amount paid changed from 0 to 5000 cents") == \
-        "the rent charge's amount paid changed from $0.00 to $50.00"
-    assert readable("a payment on 2026-11-06, after the notice") == "a payment on Nov 6, 2026, after the notice"
-    assert readable("\"2026-02-30 rent\" is not an open charge") == "\"2026-02-30 rent\" is not an open charge"
-    # text a finding quotes from a record stays exactly as written, quotes and figures included
-    quoted = 'Fee "5000 cents 2026-10-06" late'
-    assert readable(f'"{quoted}" for 5000 cents is not an open charge', [quoted]) == \
-        f'"{quoted}" for $50.00 is not an open charge'
-    # a short quoted value never splits a figure in the engine's own words
-    assert readable("published 2026-10-24 in 50, for 5000 cents", ["50"]) == "published Oct 24, 2026 in 50, for 5000 cents"
-
-
-def test_lien_findings_carry_the_text_they_quote():
-    from desk.liens import Finding
-    assert Finding("r", "policy", "met", "detail").verbatim == []
+def test_findings_are_written_in_dollars_and_dates_and_quote_records_as_they_are():
+    from desk.lien_files import ledger_changes
+    from desk.liens import dollars, on
+    assert dollars(16500) == "$165.00" and on("2026-11-06") == "Nov 6, 2026" and on("2026-02-30 rent") == "2026-02-30 rent"
+    then = {"bookEntries": [{"bookEntryId": "be1", "type": "CHARGE", "amount": 5000, "amountPaid": 0,
+                             "details": {"description": 'Fee "5000 cents 2026-10-06" late', "accruesOn": "2026-10-06"}}]}
+    now = {"bookEntries": [{"bookEntryId": "be1", "type": "CHARGE", "amount": 5000, "amountPaid": 5000,
+                            "details": {"description": 'Fee "5000 cents 2026-10-06" late', "accruesOn": "2026-10-07"}}]}
+    changes = ledger_changes(then, now)
+    # the description is quoted from the ledger exactly; only Gatehouse's own words carry dollars and dates
+    assert 'the fee "5000 cents 2026-10-06" late charge\'s amount paid changed from $0.00 to $50.00' in changes
+    assert 'the fee "5000 cents 2026-10-06" late charge\'s due date changed from Oct 6, 2026 to Oct 7, 2026' in changes
