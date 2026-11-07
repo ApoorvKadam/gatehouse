@@ -1,6 +1,6 @@
 """Access and overlocks: does what the FMS has configured, at the gate and on each unit, match what the tenant is
 entitled to under the facility's recorded rule? Both directions are work: a paying tenant still shut out, and an
-account past the rule whose code still opens the gate.
+account past the rule whose code the FMS still allows.
 
 What Gatehouse knows, and from where:
 - the rule (days overdue before lockout, and what one shared gate code does when only some of a customer's units are
@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from .adapter import FMSAdapter
@@ -89,25 +89,34 @@ def ensure_lease(session: Session, facility: Facility, pl: ProviderLease, provid
 
 
 def assess_customer(adapter: FMSAdapter, facility: Facility, policy: AccessPolicy, customer: str,
-                    leases: list[ProviderLease], today: date) -> tuple[list[Discrepancy], dict[str, dict]]:
+                    leases: list[ProviderLease], today: date) -> tuple[list[Discrepancy], dict[str, dict], dict[tuple[str, str], dict]]:
     """Read everything about one customer at one facility, then judge each unit and the shared gate code.
-    Raises FMSError if any read fails: a partial picture is never judged."""
+    Returns the discrepancies, a view per lease for the pages, and per subject the facts an open item needs before it
+    can close (None where the reading could not decide). Raises FMSError if any read fails: a partial picture is
+    never judged."""
     codes = adapter.access_codes(facility.provider_id, customer)
     checks = {c.code: adapter.check_code(facility.provider_id, c.code) for c in codes}
     exemptions = {e.lease_provider_id: e for e in adapter.exemptions_for_customer(customer)}
     locks = {pl.provider_id: adapter.locks_for_lease(pl.provider_id) for pl in leases}
     out: list[Discrepancy] = []
     views: dict[str, dict] = {}
+    facts: dict[tuple[str, str], dict] = {}
     restricted: dict[str, bool | None] = {}
     for pl in leases:
         unit = pl.unit_name or pl.provider_id
         ex = exemptions.get(pl.provider_id)
         exempt = bool(ex and ex.pause_overlock and (not ex.end_date or ex.end_date[:10] >= today.isoformat()))
         operator_locks = [k for k in locks[pl.provider_id] if k.status == "OPERATOR_USE"]
+        # what the pages may show: no free text from the FMS, which could carry a code or a combination
+        view = {"operator_locks": [{"serial": k.serial} for k in operator_locks], "overlock_needed": pl.overlock_needed,
+                "exemption": ({"reason": ex.reason, "end_date": ex.end_date, "pause_overlock": ex.pause_overlock} if ex else None)}
         try:
             overdue = days_overdue(pl, today)
         except ValueError:
             restricted[pl.provider_id] = None
+            views[pl.provider_id] = {**view, "standing": "unknown: the FMS sent a delinquency date that cannot be read",
+                                     "overdue_days": None, "should_restrict": None}
+            facts[("lease", pl.provider_id)] = {"locked": bool(operator_locks), "should_restrict": None}
             out.append(Discrepancy(REVIEW, "lease", pl.provider_id,
                                    f"Unit {unit}: the FMS sent a delinquency date Gatehouse cannot read ({pl.delinquent_since!r}), "
                                    "so whether the unit should be restricted is unknown.",
@@ -119,15 +128,24 @@ def assess_customer(adapter: FMSAdapter, facility: Facility, policy: AccessPolic
         # always from the FMS's side: Gatehouse may still be checking a payment the FMS already shows
         standing = ("no balance due, per the FMS" if overdue is None else f"{overdue} days overdue, per the FMS")
         why_not = ("the FMS shows no balance due" if overdue is None
-                   else f"its delinquency is paused by a {ex.reason.replace('_', ' ').lower()} exemption until {ex.end_date}" if exempt
+                   else f"its delinquency is paused by a {ex.reason.replace('_', ' ').lower()} exemption until {ex.end_date}" if exempt and ex
                    else f"it is {overdue} days overdue, under the {policy.lockout_days}-day rule")
-        views[pl.provider_id] = {
-            "standing": standing, "overdue_days": overdue, "should_restrict": should_restrict,
-            "operator_locks": [{"serial": k.serial} for k in operator_locks], "overlock_needed": pl.overlock_needed,
-            "exemption": ({"reason": ex.reason, "end_date": ex.end_date, "pause_overlock": ex.pause_overlock, "note": ex.note} if ex else None),
-        }
+        views[pl.provider_id] = {**view, "standing": standing, "overdue_days": overdue, "should_restrict": should_restrict}
+        disagree = pl.overlock_needed is not None and pl.overlock_needed != should_restrict
+        if disagree:
+            restricted[pl.provider_id] = None   # unsettled: the shared gate code is not judged on it either
+        facts[("lease", pl.provider_id)] = {"locked": bool(operator_locks), "should_restrict": None if disagree else should_restrict}
         observed = {"standing": standing, "operator_locks": [k.serial for k in operator_locks], "overlock_needed": pl.overlock_needed,
                     "exempt": exempt, "rule_days": policy.lockout_days, "policy": policy.version}
+        if disagree:
+            # two authorities disagree about this unit: a person settles the rule before anyone is asked to act
+            out.append(Discrepancy(
+                REVIEW, "lease", pl.provider_id,
+                f"Unit {unit}: the recorded rule says the unit should {'be' if should_restrict else 'not be'} restricted, but the FMS "
+                f"says an overlock is {'needed' if pl.overlock_needed else 'not needed'}. One of the two rules is out of date, so "
+                "Gatehouse asks no one to change the unit until a person settles it.",
+                "leases/search overlockNeeded", "The FMS and the recorded rule agree on this unit.", "Operations manager", observed))
+            continue
         if not should_restrict and operator_locks:
             out.append(Discrepancy(
                 NOT_RESTORED, "lease", pl.provider_id,
@@ -140,26 +158,19 @@ def assess_customer(adapter: FMSAdapter, facility: Facility, policy: AccessPolic
                  "If it was put on for non-payment, take it off and return it in the FMS. If it is there for another reason, "
                  "leave it and note why.", pl.unit_id, None)))
         if should_restrict and not operator_locks:
-            fms_says = (" The FMS itself calls for an overlock." if pl.overlock_needed
-                        else " The FMS does not call for one either, so its own rule may differ." if pl.overlock_needed is False else "")
             out.append(Discrepancy(
                 MISSING, "lease", pl.provider_id,
                 f"Unit {unit} is {overdue} days overdue, past the facility's {policy.lockout_days}-day rule, and the FMS records "
-                f"no operator lock on it.{fms_says} Gatehouse does not lock anyone out; a person decides.",
+                "no operator lock on it. The FMS itself calls for an overlock. Gatehouse does not lock anyone out; a person decides.",
                 "locks/search by lease", "Locks Search shows an operator lock on the unit, or the account is no longer past the rule.",
                 "Facility manager", observed,
                 (f"Decide on an overlock for unit {unit}",
                  f"Unit {unit} is {overdue} days overdue under the facility's {policy.lockout_days}-day rule and no operator lock is "
                  "recorded. Decide whether to overlock it; record the lock in the FMS if you do.", pl.unit_id, None)))
-        if pl.overlock_needed is not None and pl.overlock_needed != should_restrict:
-            out.append(Discrepancy(
-                REVIEW, "lease", pl.provider_id,
-                f"Unit {unit}: the recorded rule says the unit should {'be' if should_restrict else 'not be'} restricted, but the FMS "
-                f"says an overlock is {'needed' if pl.overlock_needed else 'not needed'}. One of the two rules is out of date.",
-                "leases/search overlockNeeded", "The FMS and the recorded rule agree on this unit.", "Operations manager", observed))
     # the shared gate code
     judged = [v for v in restricted.values() if v is not None]
-    gate = {"codes": len(codes)}
+    gate: dict = {"codes": len(codes)}
+    facts[("customer", customer)] = {"allowed": None, "expected": None}
     if len(codes) != 1:
         out.append(Discrepancy(
             REVIEW, "customer", customer,
@@ -168,41 +179,43 @@ def assess_customer(adapter: FMSAdapter, facility: Facility, policy: AccessPolic
             "access-codes/search", "Exactly one gate code on file for the customer.", "Facility manager", {"codes": len(codes)}))
     elif len(judged) == len(restricted):
         check = checks[codes[0].code]
-        if policy.gate_rule == "deny_if_any_unit_restricted":
-            expected = not any(judged)
-        elif policy.gate_rule == "allow_if_any_unit_in_good_standing":
-            expected = not all(judged)
-        else:
-            expected = None
+        expected = {"deny_if_any_unit_restricted": not any(judged),
+                    "allow_if_any_unit_in_good_standing": not all(judged)}.get(policy.gate_rule)
         gate.update({"allowed": check.allowed, "message": check.message, "expected_allowed": expected})
-        units = ", ".join(pl.unit_name for pl in leases if restricted.get(pl.provider_id)) or "none"
+        facts[("customer", customer)] = {"allowed": check.allowed, "expected": expected}
+        past = [pl.unit_name for pl in leases if restricted.get(pl.provider_id)]
+        good = [pl.unit_name for pl in leases if restricted.get(pl.provider_id) is False]
+        units_past = ", ".join(past) or "none"
+        rule = GATE_RULES.get(policy.gate_rule, policy.gate_rule)
         observed = {"check": check.message, "allowed": check.allowed, "expected_allowed": expected,
-                    "restricted_units": units, "gate_rule": policy.gate_rule, "policy": policy.version}
+                    "restricted_units": units_past, "gate_rule": policy.gate_rule, "policy": policy.version}
         if expected is None:
             out.append(Discrepancy(REVIEW, "customer", customer, f"The recorded gate rule {policy.gate_rule!r} is not one Gatehouse knows.",
                                    "access policy", "A known gate rule recorded for the facility.", "Operations manager", observed))
         elif expected and not check.allowed:
+            reason = (f"unit(s) {', '.join(good)} are in good standing and unit(s) {units_past} are past the rule" if past
+                      else "none of the customer's units here is past the rule")
             out.append(Discrepancy(
                 NOT_RESTORED, "customer", customer,
-                f"The customer's gate code answers \"{check.message}\" at the FMS, but under the recorded rule "
-                f"({GATE_RULES[policy.gate_rule]}) it should open the gate.",
+                f"The FMS reports the customer's gate code as \"{check.message}\", but under the recorded rule ({rule}) the FMS "
+                f"should allow it: {reason}.",
                 "access-codes/check", "Check Access Code answers Access allowed, on a later complete reading.", "Facility manager", observed,
-                ("Restore this customer's gate code",
-                 f"The gate code answers \"{check.message}\" at the FMS, but none of the customer's units here is past the "
-                 "facility's rule. Re-enable the code in the FMS.", None, customer)))
+                ("Check this customer's gate code",
+                 f"The FMS reports the gate code as \"{check.message}\". Under the facility's recorded rule ({rule}) it should be "
+                 f"allowed, because {reason}. Re-enable it in the FMS if that is right.", None, customer)))
         elif not expected and check.allowed:
             out.append(Discrepancy(
                 MISSING, "customer", customer,
-                f"The customer's gate code still opens the gate, but unit(s) {units} are past the facility's rule "
-                f"({GATE_RULES[policy.gate_rule]}). Gatehouse does not lock anyone out; a person decides.",
+                f"The FMS reports the customer's gate code as allowed, but unit(s) {units_past} are past the facility's rule "
+                f"({rule}). Gatehouse does not lock anyone out; a person decides.",
                 "access-codes/check", "Check Access Code answers that access is not allowed, or no unit is past the rule.",
                 "Facility manager", observed,
                 ("Decide on gate access for this customer",
-                 f"The gate code still opens the gate while unit(s) {units} are past the facility's rule. Decide whether to "
-                 "disable it in the FMS.", None, customer)))
+                 f"The FMS reports the gate code as allowed while unit(s) {units_past} are past the facility's rule ({rule}). "
+                 "Decide whether to disable it in the FMS.", None, customer)))
     for v in views.values():
         v["gate"] = gate
-    return out, views
+    return out, views, facts
 
 
 def reconcile_access(session: Session, adapter: FMSAdapter, facility: Facility, run_id: str) -> AccessPass:
@@ -211,7 +224,8 @@ def reconcile_access(session: Session, adapter: FMSAdapter, facility: Facility, 
     today = facility_today(facility)
     policy = policy_for(session, facility, today)
     found: list[Discrepancy] = []
-    complete: set[tuple[str, str]] = {("facility", facility.provider_id)}
+    # per subject, what a complete reading established; a subject missing here was not read and nothing about it closes
+    facts: dict[tuple[str, str], dict] = {("facility", facility.provider_id): {"policy": policy is not None}}
     if policy is None:
         found.append(Discrepancy(
             REVIEW, "facility", facility.provider_id,
@@ -223,33 +237,69 @@ def reconcile_access(session: Session, adapter: FMSAdapter, facility: Facility, 
             leases = adapter.leases(facility.provider_id)
         except FMSError as exc:
             result.failures.append(f"leases: {exc}")
-            complete.clear()
             leases = []
         by_customer: dict[str, list[ProviderLease]] = {}
         for pl in leases:
             by_customer.setdefault(pl.customer_provider_id, []).append(pl)
         for customer, cleases in sorted(by_customer.items()):
             try:
-                items, views = assess_customer(adapter, facility, policy, customer, cleases, today)
+                items, views, subject_facts = assess_customer(adapter, facility, policy, customer, cleases, today)
             except FMSError as exc:
                 result.failures.append(f"{customer}: {exc}")
                 continue
-            complete.add(("customer", customer))
-            complete.update(("lease", pl.provider_id) for pl in cleases)
+            facts.update(subject_facts)
             found.extend(items)
             for pl in cleases:
                 lease = ensure_lease(session, facility, pl, adapter.provider)
                 view = session.get(AccessView, lease.id) or AccessView(lease_id=lease.id)
-                view.observed_at, view.data = utcnow(), {**views.get(pl.provider_id, {}), "policy": policy.version,
+                view.observed_at, view.data = utcnow(), {**views[pl.provider_id], "policy": policy.version,
                                                          "rule_days": policy.lockout_days, "gate_rule": policy.gate_rule}
                 session.merge(view)
-    _apply(session, facility, run_id, found, complete, result)
+    _apply(session, facility, run_id, found, facts, result)
     session.commit()
     _tasks(session, adapter, facility, run_id, found, result)
     return result
 
 
-def _apply(session: Session, facility: Facility, run_id: str, found: list[Discrepancy], complete: set, result: AccessPass) -> None:
+def closing(item: WorkItem, facts: dict[tuple[str, str], dict]) -> tuple[str, str] | None:
+    """Whether a complete reading now shows what closes this item: (verification, note), or None to keep it open.
+    Each kind checks its own closing evidence; a subject the pass could not decide stays open."""
+    f = facts.get((item.subject_type, item.subject_id))
+    if f is None:
+        return None
+    if item.subject_type == "facility":
+        return (CLOSED_BY, "Closed: an access rule is now recorded for the facility.") if f.get("policy") else None
+    if item.subject_type == "lease":
+        locked, restrict = f.get("locked"), f.get("should_restrict")
+        if item.kind == NOT_RESTORED:
+            if not locked:
+                return CLOSED_BY, f"Closed: Locks Search shows no operator lock on the unit. {PHYSICAL}"
+            if restrict:
+                return ("No longer applies", "Closed without the lock coming off: the FMS now shows the unit past the rule, so the "
+                        "recorded lock is what the rule expects.")
+            return None
+        if item.kind == MISSING:
+            if locked:
+                return CLOSED_BY, f"Closed: Locks Search shows an operator lock on the unit. {PHYSICAL}"
+            if restrict is False:
+                return "No longer applies", "Closed: the FMS no longer shows the unit past the rule."
+            return None
+        return (CLOSED_BY, "Closed: the FMS and the recorded rule now agree on this unit.") if restrict is not None else None
+    allowed, expected = f.get("allowed"), f.get("expected")
+    if allowed is None or expected is None:
+        return None
+    if item.kind == NOT_RESTORED:
+        if allowed:
+            return CLOSED_BY, f"Closed: the FMS reports the gate code as allowed. {PHYSICAL}"
+        return ("No longer applies", "Closed: under the recorded rule the code is now expected to be off.") if not expected else None
+    if item.kind == MISSING:
+        if not allowed:
+            return CLOSED_BY, f"Closed: the FMS reports the gate code as not allowed. {PHYSICAL}"
+        return ("No longer applies", "Closed: under the recorded rule the code is now expected to work.") if expected else None
+    return CLOSED_BY, "Closed: the customer has exactly one gate code and the rule could be applied."
+
+
+def _apply(session: Session, facility: Facility, run_id: str, found: list[Discrepancy], facts: dict, result: AccessPass) -> None:
     now = utcnow()
     open_items = session.scalars(select(WorkItem).where(WorkItem.run_id == run_id, WorkItem.facility_id == facility.id,
                                                         WorkItem.kind.in_(KIND_NAMES), WorkItem.state == "open")).all()
@@ -273,11 +323,13 @@ def _apply(session: Session, facility: Facility, run_id: str, found: list[Discre
             result.opened += 1
         else:
             item.problem, item.observed, item.updated_at = d.problem, d.observed, now
-    for (kind, stype, sid), item in by_key.items():
-        if (kind, stype, sid) not in seen and (stype, sid) in complete:
-            # the condition is gone on a complete reading of the subject: the FMS now shows what was expected
-            item.state, item.closed_at, item.updated_at, item.verification = "closed", now, now, CLOSED_BY
-            item.note = f"Closed: a complete FMS reading no longer shows this. {PHYSICAL}"
+    for key, item in by_key.items():
+        if key in seen:
+            continue
+        verdict = closing(item, facts)
+        if verdict is not None:
+            item.state, item.closed_at, item.updated_at = "closed", now, now
+            item.verification, item.note = verdict
             result.closed += 1
     session.flush()
 
@@ -287,8 +339,9 @@ def _marker(item: WorkItem) -> str:
 
 
 def _tasks(session: Session, adapter: FMSAdapter, facility: Facility, run_id: str, found: list[Discrepancy], result: AccessPass) -> None:
-    """One FMS task per open item that asks a person to act. The intent and its marker are saved before the call; a
-    call whose answer is lost is looked up by its marker, and never sent again while its outcome is unknown."""
+    """One FMS task per open item that asks a person to act. Before the call the item is claimed and marked as sending,
+    in its own committed write, so a crash, a lost answer or a second worker can only ever look the task up by its
+    marker; nothing creates a second one."""
     wanted = {(d.kind, d.subject_type, d.subject_id): d.task for d in found if d.task}
     items = session.scalars(select(WorkItem).where(WorkItem.run_id == run_id, WorkItem.facility_id == facility.id,
                                                    WorkItem.kind.in_((NOT_RESTORED, MISSING)), WorkItem.state == "open")).all()
@@ -296,9 +349,12 @@ def _tasks(session: Session, adapter: FMSAdapter, facility: Facility, run_id: st
         task = wanted.get((item.kind, item.subject_type, item.subject_id))
         try:
             if item.task_state == "none" and task:
-                item.task_state, item.task_marker, item.task_intent_at = "intent", _marker(item), utcnow()
+                claimed = session.execute(update(WorkItem).where(WorkItem.id == item.id, WorkItem.task_state == "none")
+                                          .values(task_state="sending", task_marker=_marker(item), task_intent_at=utcnow()))
                 session.commit()
-            if item.task_state == "intent" and task:
+                session.refresh(item)
+                if claimed.rowcount != 1:
+                    continue   # someone else claimed it; they own the call
                 title, description, unit_id, customer = task
                 outcome = adapter.create_task(facility.provider_id, title, f"{description}\n\n{item.task_marker}",
                                               unit_id=unit_id, customer_provider_id=customer)
@@ -307,8 +363,10 @@ def _tasks(session: Session, adapter: FMSAdapter, facility: Facility, run_id: st
                 elif outcome.kind == "rejected":
                     item.task_state, item.note = "rejected", f"The FMS refused the task ({outcome.detail}). Nothing was created."
                 else:
-                    _find_by_marker(adapter, item, task)
-            elif item.task_state == "outcome_unknown" and task:
+                    item.task_state = "outcome_unknown"
+                session.commit()   # the id, or the unknown outcome, is saved before anything else is read
+            if item.task_state in ("sending", "outcome_unknown") and task:
+                # a call that may have reached the FMS: only ever looked up, never repeated
                 _find_by_marker(adapter, item, task)
             if item.task_state == "created" and item.task_id:
                 rows = adapter.tasks_for("taskId", item.task_id)

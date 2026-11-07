@@ -41,7 +41,7 @@
   <h2><span class="lane-dot lane-fms"></span>Access, as the FMS records it</h2>
   <dl class="kv">
     <dt>Standing</dt><dd>{{ d.get('standing', 'not read') }}{% if d.get('rule_days') is not none %}, under the facility's {{ d.rule_days }}-day rule{% endif %}</dd>
-    <dt>Should be restricted</dt><dd>{{ 'Yes' if d.get('should_restrict') else 'No' }}</dd>
+    <dt>Should be restricted</dt><dd>{{ {True: 'Yes', False: 'No'}.get(d.get('should_restrict'), 'Unknown') }}</dd>
     <dt>Operator lock</dt><dd>{% if d.get('operator_locks') %}{% for k in d.operator_locks %}{{ k.serial }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}None recorded{% endif %}</dd>
     <dt>FMS says overlock needed</dt><dd>{{ {True: 'Yes', False: 'No'}.get(d.get('overlock_needed'), 'Not said') }}</dd>
     <dt>Exemption</dt><dd>{% if d.get('exemption') %}{{ d.exemption.reason|replace('_', ' ')|lower }} until {{ d.exemption.end_date }}{% if d.exemption.pause_overlock %}, overlock paused{% endif %}{% else %}None{% endif %}</dd>

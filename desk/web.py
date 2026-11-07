@@ -275,7 +275,7 @@ class Pages:
             unit, label = self.subject_label(s, w)
             rank = {NOT_RESTORED: 1, MISSING: 2}.get(w.kind, 3)
             task = {"created": f" FMS task: {(w.task_status or 'open').lower()}.", "outcome_unknown": " FMS task: outcome unknown.",
-                    "intent": " FMS task: being created.", "rejected": " FMS task: refused by the FMS."}.get(w.task_state, "")
+                    "sending": " FMS task: being created.", "rejected": " FMS task: refused by the FMS."}.get(w.task_state, "")
             out.append(Item(rank, KIND_NAMES[w.kind], unit or "", 0, w.opened_at, w.problem + task + (f" {w.note}" if w.note else ""),
                             w.closing_evidence + " " + PHYSICAL, w.who_acts, f"/access/{w.id}", "", label=label))
         return out

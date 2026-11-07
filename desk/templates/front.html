@@ -140,7 +140,7 @@
     <div data-reveal>
       <p class="kicker" style="--c:var(--blue)">{% include "icons/door-open.svg" %}Access and overlocks</p>
       <h2>A tenant who paid gets their unit back, and a task marked done is not proof.</h2>
-      <p>Gatehouse reads the gate code, the locks on each unit and any exemption from the FMS, and compares them with the facility's recorded lockout rule in both directions. A paying tenant still locked out, or an account past the rule whose code still opens the gate, becomes an item and one FMS task for a person. The item closes only when the FMS shows the expected state. Gatehouse never changes access itself, and the FMS's records are not proof the gate opened or a lock came off.</p>
+      <p>Gatehouse reads the gate code, the locks on each unit and any exemption from the FMS, and compares them with the facility's recorded lockout rule in both directions. A paying tenant still locked out, or an account past the rule whose code the FMS still allows, becomes an item and one FMS task for a person. The item closes only when the FMS shows the expected state. Gatehouse never changes access itself, and the FMS's records are not proof the gate opened or a lock came off.</p>
       <a class="open" href="/access/{{ access.id }}">Open this access item {% include "icons/arrow-right.svg" %}</a>
     </div>
     <div class="frame" data-reveal>

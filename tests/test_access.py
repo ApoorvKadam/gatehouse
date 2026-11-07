@@ -56,8 +56,9 @@ def tasks_for_unit(fms_url, lease_id):
 def assert_no_red_lines(session, adapter):
     """The plan's access red lines, checked against the FMS itself after a pass:
     a closed lock item while the lock is still attached; a physical outcome claimed; a mismatch with no open item."""
+    # closing as reconciled claims the lock is gone; closing because the rule now expects the lock claims nothing of the kind
     for w in session.scalars(select(WorkItem).where(WorkItem.state == "closed", WorkItem.kind == NOT_RESTORED,
-                                                    WorkItem.subject_type == "lease")):
+                                                    WorkItem.subject_type == "lease", WorkItem.verification == access.CLOSED_BY)):
         assert not [k for k in adapter.locks_for_lease(w.subject_id) if k.status == "OPERATOR_USE"], \
             f"item {w.id} closed while the FMS still records an operator lock"
     for w in session.scalars(select(WorkItem)):
@@ -234,3 +235,92 @@ def test_simulator_scopes_and_task_rules_follow_cubby(sim):
     assert sim.post("/v1/tasks/update", {"taskId": task, "status": "ARCHIVED"}).status_code == 400   # terminal to terminal
     assert sim.post("/v1/tasks/update", {"taskId": task, "title": "edited"}).status_code == 400       # only OPEN is edited
     assert sim.post("/v1/access-codes/check", {"facilityId": ORLANDO, "code": "0000"}).json()["data"]["message"] == "Code not found"
+
+
+def test_a_crash_after_sending_is_recovered_by_lookup_not_a_second_task(session, adapter, sim, fms_url, monkeypatch):
+    pay_in_full(sim, "lease_WhitB1042", 24000)
+    facility = orlando(session, adapter)
+    real = adapter.create_task
+
+    def made_then_crashed(*a, **k):
+        real(*a, **k)                       # the FMS makes the task...
+        raise KeyboardInterrupt             # ...and the worker dies before it hears back
+    monkeypatch.setattr(adapter, "create_task", made_then_crashed)
+    with pytest.raises(KeyboardInterrupt):
+        reconcile_access(session, adapter, facility, RUN)
+    session.rollback()
+    monkeypatch.setattr(adapter, "create_task", real)
+    for _ in range(2):
+        reconcile_access(session, adapter, facility, RUN)
+    (item,) = open_items(session)
+    assert item.task_state == "created" and len(tasks_for_unit(fms_url, "lease_WhitB1042")) == 1
+
+
+def test_a_lock_item_never_closes_as_reconciled_while_the_lock_is_recorded(session, adapter, sim, fms_url):
+    paid = sim.post("/sim/payments/offline", {"allocations": {"lease_WhitB1042": 24000}}).json()["data"]["payment"]
+    facility = orlando(session, adapter)
+    reconcile_access(session, adapter, facility, RUN)
+    sim.post("/sim/payments/return", {"paymentId": paid["paymentId"]})     # past the rule again: the lock is expected
+    reconcile_access(session, adapter, facility, RUN)
+    item = session.scalar(select(WorkItem).where(WorkItem.subject_id == "lease_WhitB1042"))
+    assert item.state == "closed" and item.verification == "No longer applies" and locks_on(fms_url, "lease_WhitB1042")
+    assert_no_red_lines(session, adapter)
+
+
+class NoCodes(CubbyAdapter):
+    def access_codes(self, facility_provider_id, customer_provider_id):
+        return []
+
+
+def test_a_gate_item_stays_open_when_the_code_cannot_be_judged(session, adapter, sim, fms_url):
+    pay_in_full(sim, "lease_RamnA0012", 9500)
+    facility = orlando(session, adapter, gate_rule="allow_if_any_unit_in_good_standing")
+    reconcile_access(session, adapter, facility, RUN)
+    assert [(w.kind, w.subject_type) for w in open_items(session)] == [(NOT_RESTORED, "customer")]
+    blind = NoCodes(fms_url, FULL_KEY, 5.0)
+    reconcile_access(session, blind, facility, RUN)
+    blind.close()
+    priya = [(w.kind, w.subject_type) for w in open_items(session) if w.subject_id == "cust_PriyaRmn01"]
+    assert sorted(priya) == [(NOT_RESTORED, "customer"), (REVIEW, "customer")]   # not closed on a reading that could not decide
+    task = tasks_for_unit_or_customer(fms_url, "cust_PriyaRmn01")
+    assert len(task) == 1 and "A-013 are past the rule" in task[0]["description"]
+
+
+def tasks_for_unit_or_customer(fms_url, customer):
+    return [t for t in access_truth(fms_url)["tasks"] if t["customerId"] == customer]
+
+
+def test_when_the_fms_and_the_rule_disagree_a_person_settles_it_first(session, adapter, sim, fms_url):
+    sim.post("/sim/access/rule", {"facilityId": ORLANDO, "lockoutDays": 60})
+    sim.post("/sim/access/run", {"facilityId": ORLANDO})                  # the FMS now says no overlock is needed
+    facility = orlando(session, adapter)                                   # Gatehouse's recorded rule still says 30 days
+    reconcile_access(session, adapter, facility, RUN)
+    assert {w.kind for w in open_items(session)} == {REVIEW}
+    assert access_truth(fms_url)["tasks"] == []
+
+
+def test_stored_views_keep_no_free_text_from_the_fms(session, adapter, sim):
+    from desk.models import AccessView
+    facility = orlando(session, adapter)
+    reconcile_access(session, adapter, facility, RUN)
+    views = [v.data for v in session.scalars(select(AccessView))]
+    assert views and all("note" not in (v.get("exemption") or {}) for v in views)
+
+
+class OddDate(CubbyAdapter):
+    def leases(self, facility_provider_id):
+        from dataclasses import replace
+        return [replace(pl, delinquent_since="not a date") if pl.provider_id == "lease_RamnA0013" else pl
+                for pl in super().leases(facility_provider_id)]
+
+
+def test_an_unreadable_date_is_shown_as_unknown_not_as_unrestricted(session, adapter, sim, fms_url):
+    from desk.models import AccessView, Lease
+    facility = orlando(session, adapter)
+    odd = OddDate(fms_url, FULL_KEY, 5.0)
+    reconcile_access(session, odd, facility, RUN)
+    odd.close()
+    lease = session.scalar(select(Lease).where(Lease.provider_id == "lease_RamnA0013"))
+    view = session.get(AccessView, lease.id).data
+    assert view["should_restrict"] is None and view["standing"].startswith("unknown") and view["operator_locks"]
+    assert ("access_review_required", "lease_RamnA0013") in {(w.kind, w.subject_id) for w in open_items(session)}
