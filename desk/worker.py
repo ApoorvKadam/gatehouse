@@ -58,6 +58,16 @@ class Worker:
             return False
         return time.monotonic() - self.last_ok < self.stale_after
 
+    def state(self) -> str:
+        """In words, for the operations page. Only a latest pass that did its whole job, recently, is "Passing";
+        an earlier good pass never covers a later failure."""
+        if not self.passes:
+            return "No pass finished yet"
+        last = self.passes[-1]
+        if last["error"] or last["failures"]:
+            return "Last pass failed"
+        return "Passing" if self.alive() else "Not passing"
+
     def stop(self) -> None:
         self._stop.set()
         self._thread.join(timeout=self.every + 5)

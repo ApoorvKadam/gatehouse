@@ -6,9 +6,9 @@
   <h1>Operations</h1>
   <p>From this service's own records; this page never calls the FMS</p>
 </div>
-<p class="lede">How the running preview is doing: whether the worker is passing, how fresh its readings of the FMS are, and the oldest open item in each part. Health checks for a load balancer are at <a href="/health/live">/health/live</a> and <a href="/health/ready">/health/ready</a>.</p>
+<p class="lede">How the running preview is doing: whether the worker is passing, when readings from the FMS were last stored, and the oldest open item of each kind on Today. Health checks for a load balancer are at <a href="/health/live">/health/live</a> and <a href="/health/ready">/health/ready</a>.</p>
 <dl class="facts">
-  <div><dt>Worker</dt><dd>{% if not worker %}Not running in this process{% elif worker.alive %}Passing{% else %}Not passing{% endif %}</dd></div>
+  <div><dt>Worker</dt><dd>{{ worker.state if worker else 'Not running in this process' }}</dd></div>
   <div><dt>Last good pass</dt><dd>{% if worker and worker.last_ok_ago is not none %}{{ worker.last_ok_ago|round|int }} s ago{% else %}None yet{% endif %}</dd></div>
   <div><dt>Passes every</dt><dd>{% if worker %}{{ worker.every|round|int }} s{% else %}n/a{% endif %}</dd></div>
   <div><dt>Last error</dt><dd>{{ worker.last_error if worker and worker.last_error else 'None' }}</dd></div>
@@ -25,9 +25,9 @@
     {% else %}<p class="muted">Nothing open.</p>{% endif %}
   </section>
   <section class="panel">
-    <h2><span class="lane-dot lane-fms"></span>Latest readings</h2>
+    <h2><span class="lane-dot lane-fms"></span>FMS readings last stored</h2>
     <dl class="kv">{% for name, at in readings.items() %}<dt>{{ name }}</dt><dd>{{ local(at) if at else 'None yet' }}</dd>{% endfor %}</dl>
-    <p class="note">A reading is what the worker last saw at the FMS. A failed read leaves the last good one in place and is counted in the pass that failed.</p>
+    <p class="note">When this service last stored what the FMS returned, by any path: a worker pass, a person's action, or building the preview world. A failed read stores nothing and is counted in the pass that failed.</p>
   </section>
 </div>
 
