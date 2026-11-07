@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy import select
 
 from desk import access
-from desk.access import MISSING, NOT_RESTORED, REVIEW, reconcile_access
+from desk.access import DISAGREE, MISSING, NOT_RESTORED, REVIEW, reconcile_access
 from desk.adapter.base import FMSError, TaskCreateOutcome
 from desk.adapter.cubby import CubbyAdapter
 from desk.cases import sync_facility
@@ -295,7 +295,7 @@ def test_when_the_fms_and_the_rule_disagree_a_person_settles_it_first(session, a
     sim.post("/sim/access/run", {"facilityId": ORLANDO})                  # the FMS now says no overlock is needed
     facility = orlando(session, adapter)                                   # Gatehouse's recorded rule still says 30 days
     reconcile_access(session, adapter, facility, RUN)
-    assert {w.kind for w in open_items(session)} == {REVIEW}
+    assert {w.kind for w in open_items(session)} == {DISAGREE}
     assert access_truth(fms_url)["tasks"] == []
 
 
@@ -374,3 +374,19 @@ def test_a_date_review_closes_on_a_readable_date_even_when_the_fms_says_nothing_
     silent.close()
     review = session.scalar(select(WorkItem).where(WorkItem.subject_id == "lease_RamnA0013", WorkItem.kind == REVIEW))
     assert review.state == "closed" and "readable delinquency date" in review.note
+
+
+
+def test_a_disagreement_never_closes_on_a_date_that_became_readable(session, adapter, sim, fms_url):
+    sim.post("/sim/access/rule", {"facilityId": ORLANDO, "lockoutDays": 60})
+    sim.post("/sim/access/run", {"facilityId": ORLANDO})
+    facility = orlando(session, adapter)
+    reconcile_access(session, adapter, facility, RUN)                    # disagreement on A-013
+    odd = OddDate(fms_url, FULL_KEY, 5.0)
+    reconcile_access(session, odd, facility, RUN)                        # then its date cannot be read
+    odd.close()
+    silent = SilentOverlock(fms_url, FULL_KEY, 5.0)
+    reconcile_access(session, silent, facility, RUN)                     # the date reads again; the FMS says nothing of overlocks
+    silent.close()
+    disagreement = session.scalar(select(WorkItem).where(WorkItem.subject_id == "lease_RamnA0013", WorkItem.kind == DISAGREE))
+    assert disagreement.state == "open"

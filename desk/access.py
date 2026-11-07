@@ -31,7 +31,10 @@ from .models import AccessPolicy, AccessView, Facility, Lease, WorkItem
 log = logging.getLogger("desk.access")
 
 NOT_RESTORED, MISSING, REVIEW = "access_not_restored", "access_restriction_missing", "access_review_required"
-KIND_NAMES = {NOT_RESTORED: "Access not restored", MISSING: "Restriction not in place", REVIEW: "Access needs a person"}
+# the FMS and the recorded rule disagree about a unit: its own kind, so it never closes on another review's evidence
+DISAGREE = "access_rule_disagreement"
+KIND_NAMES = {NOT_RESTORED: "Access not restored", MISSING: "Restriction not in place", REVIEW: "Access needs a person",
+              DISAGREE: "Access needs a person"}
 GATE_RULES = {
     "deny_if_any_unit_restricted": "the gate code stays off while any of the customer's units here is past the rule",
     "allow_if_any_unit_in_good_standing": "the gate code works while any of the customer's units here is in good standing",
@@ -145,7 +148,7 @@ def assess_customer(adapter: FMSAdapter, facility: Facility, policy: AccessPolic
         if disagree:
             # two authorities disagree about this unit: a person settles the rule before anyone is asked to act
             out.append(Discrepancy(
-                REVIEW, "lease", pl.provider_id,
+                DISAGREE, "lease", pl.provider_id,
                 f"Unit {unit}: the recorded rule says the unit should {'be' if should_restrict else 'not be'} restricted, but the FMS "
                 f"says an overlock is {'needed' if pl.overlock_needed else 'not needed'}. One of the two rules is out of date, so "
                 "Gatehouse asks no one to change the unit until a person settles it.",
@@ -290,10 +293,10 @@ def closing(item: WorkItem, facts: dict[tuple[str, str], dict]) -> tuple[str, st
             if not restrict:
                 return "No longer applies", "Closed: the FMS no longer shows the unit past the rule."
             return (CLOSED_BY, f"Closed: Locks Search shows an operator lock on the unit. {PHYSICAL}") if locked else None
-        # each review closes on its own evidence: a readable date, or the FMS stating in so many words what the rule says
-        if item.evidence_source == DATE_SOURCE:
-            return (CLOSED_BY, "Closed: the FMS now sends a readable delinquency date.") if f.get("date_readable") else None
-        return (CLOSED_BY, "Closed: the FMS and the recorded rule now agree on this unit.") if f.get("fms_agrees") else None
+        # each review closes on its own evidence: the FMS stating in so many words what the rule says, or a readable date
+        if item.kind == DISAGREE:
+            return (CLOSED_BY, "Closed: the FMS and the recorded rule now agree on this unit.") if f.get("fms_agrees") else None
+        return (CLOSED_BY, "Closed: the FMS now sends a readable delinquency date.") if f.get("date_readable") else None
     allowed, expected = f.get("allowed"), f.get("expected")
     if allowed is None or expected is None:
         return None
