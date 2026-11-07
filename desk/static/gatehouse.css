@@ -410,3 +410,4 @@ dl.kv.pairs { grid-template-columns: 11rem minmax(0, 1fr) 11rem minmax(0, 1fr); 
   .next-cols li, .next-cols li + li { padding: var(--s4) 0; border-left: 0; border-bottom: 1px solid rgba(255,255,255,.16); }
 }
 .wide-prose { max-width: none; } .wide-prose .lede { max-width: 70ch; } .wide-prose section { max-width: 64ch; }
+.next-cols.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }

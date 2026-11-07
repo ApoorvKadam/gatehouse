@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}{{ kind_names[w.kind] }}, {{ label or ('unit ' ~ unit) }} | Gatehouse{% endblock %}
+{% block main %}
+<div class="wrap">
+<p class="crumbs"><a href="/today?facility={{ facility.provider_id }}">Today at {{ facility.name }}</a> / Access</p>
+<div class="head">
+  <h1>{{ kind_names[w.kind] }}: {{ label or ('unit ' ~ unit) }}</h1>
+  <p>{{ facility.name }} &middot; opened {{ local(w.opened_at) }}{% if w.episode_key != '1' %} &middot; episode {{ w.episode_key }}{% endif %}</p>
+</div>
+<div class="state"><span class="chip {{ 'done' if w.state == 'closed' else ('act' if w.kind == 'access_not_restored' else 'wait') }}">{% include "icons/door-open.svg" %}{{ 'Closed: ' ~ closed_by if w.state == 'closed' else kind_names[w.kind] }}</span>
+  <span class="muted small">last read {{ local(w.updated_at) }}</span></div>
+<p class="lede">{{ w.problem }}</p>
+{% if w.note %}<p class="note" style="font-size:var(--t-body);color:var(--ink)">{{ w.note }}</p>{% endif %}
+
+<div class="grid2 top">
+  <section class="panel">
+    <h2><span class="lane-dot lane-concluded"></span>What the recorded rule expects</h2>
+    {% if policy %}
+    <dl class="kv">
+      <dt>Lockout</dt><dd>{{ policy.lockout_days }} days overdue</dd>
+      <dt>Shared gate code</dt><dd>{{ gate_rules.get(policy.gate_rule, policy.gate_rule) }}</dd>
+      <dt>Stated by</dt><dd>{{ policy.source }}</dd>
+      <dt>Approved by</dt><dd>{{ policy.approved_by }}, from {{ policy.effective_on.strftime('%b %-d, %Y') }}</dd>
+      <dt>Version</dt><dd>{{ policy.version }}</dd>
+    </dl>
+    <p class="note">Cubby documents no facility lockout setting, so this rule is an operator's statement recorded in Gatehouse, not read from the FMS.</p>
+    {% else %}
+    <p>No access rule is recorded for this facility. Gatehouse does not judge gate codes or overlocks here until one is.</p>
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    <h2><span class="lane-dot lane-observed"></span>The FMS task for a person</h2>
+    <dl class="kv">
+      <dt>Task</dt><dd>{% if w.task_state == 'created' %}{{ w.task_id }}, {{ (w.task_status or 'OPEN')|lower }}{% elif w.task_state == 'outcome_unknown' %}Outcome unknown: the request may have made a task; none with this item's marker is found yet{% elif w.task_state == 'intent' %}Being created{% elif w.task_state == 'rejected' %}Refused by the FMS{% else %}None: a person reviews this in Gatehouse{% endif %}</dd>
+      {% if w.task_marker %}<dt>Marker in the task</dt><dd>{{ w.task_marker }}</dd>{% endif %}
+      <dt>Closes when</dt><dd>{{ w.closing_evidence }}</dd>
+      <dt>Who acts</dt><dd>{{ w.who_acts }}</dd>
+    </dl>
+    <p class="note">Gatehouse never changes access itself. A task marked completed does not close this item; only a later complete FMS reading does. {{ physical }}</p>
+  </section>
+</div>
+
+<section class="panel" style="margin-top:var(--s5)">
+  <h2><span class="lane-dot lane-fms"></span>What the FMS shows, unit by unit</h2>
+  {% if views %}
+  <table>
+    <thead><tr><th>Unit</th><th>Standing</th><th>Exemption</th><th>Operator lock</th><th>FMS says overlock needed</th><th>Gate code</th><th>Read</th></tr></thead>
+    <tbody>
+    {% for lease, v in views %}
+      {% set d = v.data if v else {} %}
+      <tr>
+        <td>{% if cases.get(lease.id) %}<a href="/accounts/{{ cases[lease.id] }}">{{ lease.unit_name }}</a>{% else %}{{ lease.unit_name }}{% endif %}</td>
+        <td>{{ d.get('standing', 'not read') }}{% if d.get('should_restrict') %}<br><span class="muted small">past the rule</span>{% endif %}</td>
+        <td>{% if d.get('exemption') %}{{ d.exemption.reason|replace('_', ' ')|lower }}, until {{ d.exemption.end_date }}{% if d.exemption.pause_overlock %}<br><span class="muted small">overlock paused</span>{% endif %}{% else %}None{% endif %}</td>
+        <td>{% if d.get('operator_locks') %}{% for k in d.operator_locks %}{{ k.serial }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}None recorded{% endif %}</td>
+        <td>{{ {True: 'Yes', False: 'No'}.get(d.get('overlock_needed'), 'Not said') }}</td>
+        <td>{% set g = d.get('gate', {}) %}{% if g.get('codes') == 1 %}On file (not shown), answers &ldquo;{{ g.get('message') }}&rdquo;{% elif g %}{{ g.get('codes') }} codes on file{% else %}Not read{% endif %}</td>
+        <td class="small muted">{{ local(v.observed_at) if v else '' }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="note">Gate codes and lock combinations are credentials; Gatehouse uses them only to ask the FMS and never shows them.</p>
+  {% else %}
+  <p class="muted">This item is about the facility as a whole.</p>
+  {% endif %}
+</section>
+
+{% if history %}
+<section class="panel" style="margin-top:var(--s5)">
+  <h2>Earlier episodes</h2>
+  <ul class="decisions">{% for h in history %}<li><b>Episode {{ h.episode_key }}, {{ h.state }}</b><span>Opened {{ local(h.opened_at) }}{% if h.closed_at %}, closed {{ local(h.closed_at) }} ({{ h.verification }}){% endif %}</span></li>{% endfor %}</ul>
+</section>
+{% endif %}
+</div>
+{% endblock %}

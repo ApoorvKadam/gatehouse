@@ -16,9 +16,10 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from .access import CLOSED_BY, GATE_RULES, KIND_NAMES, MISSING, NOT_RESTORED, PHYSICAL, policy_for, facility_today
 from .models import (
-    CaseEvent, DelinquencyCase, DeskBinding, Facility, IdentityCheck, Lease, LedgerSnapshot, LienEvaluation, LienEvidence,
-    PaymentCommand, PaymentProposal,
+    AccessPolicy, AccessView, CaseEvent, DelinquencyCase, DeskBinding, Facility, IdentityCheck, Lease, LedgerSnapshot,
+    LienEvaluation, LienEvidence, PaymentCommand, PaymentProposal, WorkItem,
 )
 from .payments import tenant_message
 
@@ -131,6 +132,8 @@ class Item:
     link: str
     amount: str = ""
     extra: list[str] = field(default_factory=list)
+    # what the row names instead of "Unit X" (a customer's gate code, a facility's rule)
+    label: str | None = None
 
 
 def describe(e: CaseEvent, commands: dict[int, PaymentCommand], evidence: dict[int, dict]) -> Entry:
@@ -251,7 +254,31 @@ class Pages:
                 items.append(Item(4, "Past due", lease.unit_name, case.id, case.opened_at,
                                   f"{money(owed)} owed. No payment or lien step in progress.",
                                   "The FMS ledger shows the balance paid.", "Front desk", f"/accounts/{case.id}", money(owed)))
+        items.extend(self.access_items(s, facility))
         return sorted(items, key=lambda i: (i.rank, i.since))
+
+    def subject_label(self, s: Session, w: WorkItem) -> tuple[str | None, str | None]:
+        """(unit, label) for an access work item: a unit, a customer's shared gate code, or the facility."""
+        if w.subject_type == "lease":
+            lease = s.scalar(select(Lease).where(Lease.provider_id == w.subject_id))
+            return (lease.unit_name if lease else w.subject_id), None
+        if w.subject_type == "customer":
+            units = sorted(l.unit_name for l in s.scalars(select(Lease).where(Lease.provider_customer_id == w.subject_id,
+                                                                               Lease.facility_id == w.facility_id)))
+            return None, "Gate code for unit" + ("s " if len(units) > 1 else " ") + ", ".join(units or ["unknown"])
+        return None, "Facility access rule"
+
+    def access_items(self, s: Session, facility: Facility) -> list[Item]:
+        out = []
+        for w in s.scalars(select(WorkItem).where(WorkItem.facility_id == facility.id, WorkItem.state == "open",
+                                                  WorkItem.kind.in_(KIND_NAMES)).order_by(WorkItem.id)):
+            unit, label = self.subject_label(s, w)
+            rank = {NOT_RESTORED: 1, MISSING: 2}.get(w.kind, 3)
+            task = {"created": f" FMS task: {(w.task_status or 'open').lower()}.", "outcome_unknown": " FMS task: outcome unknown.",
+                    "intent": " FMS task: being created.", "rejected": " FMS task: refused by the FMS."}.get(w.task_state, "")
+            out.append(Item(rank, KIND_NAMES[w.kind], unit or "", 0, w.opened_at, w.problem + task + (f" {w.note}" if w.note else ""),
+                            w.closing_evidence + " " + PHYSICAL, w.who_acts, f"/access/{w.id}", "", label=label))
+        return out
 
     def record(self, s: Session, case: DelinquencyCase) -> list[Entry]:
         commands = {c.id: c for c in s.scalars(select(PaymentCommand).where(PaymentCommand.case_id == case.id)).all()}
@@ -321,8 +348,15 @@ def router(pages: Pages) -> APIRouter:
             counsel = next((e for e in latest.values() if e.state == "Counsel review required" and not e.rule_version), None)
             counsel_state = (s.get(Facility, s.get(Lease, s.get(DelinquencyCase, counsel.case_id).lease_id).facility_id).jurisdiction
                              if counsel else None)
-            record_case = held.case_id if held else (items[0].case_id if items else None)
+            record_case = held.case_id if held else next((i.case_id for i in items if i.case_id), None)
             record_unit = s.get(Lease, s.get(DelinquencyCase, record_case).lease_id).unit_name if record_case is not None else None
+            # the access example: a unit the FMS still records as locked although the rule says it should not be
+            access = s.scalars(select(WorkItem).where(WorkItem.facility_id.in_([f.id for f in facilities]), WorkItem.state == "open",
+                                                      WorkItem.kind == NOT_RESTORED, WorkItem.subject_type == "lease")
+                               .order_by(WorkItem.id)).first()
+            access_lease = s.scalar(select(Lease).where(Lease.provider_id == access.subject_id)) if access else None
+            access_view = s.get(AccessView, access_lease.id) if access_lease else None
+            access_policy = policy_for(s, s.get(Facility, access.facility_id), facility_today(s.get(Facility, access.facility_id))) if access else None
             lanes = {}
             if record_case is not None:
                 for e in pages.record(s, s.get(DelinquencyCase, record_case)):
@@ -332,7 +366,8 @@ def router(pages: Pages) -> APIRouter:
                 "held": held, "held_answer": (lost.get(held.id) or {}).get("detail") if held else None, "held_unit": s.get(Lease, held.lease_id).unit_name if held else None,
                 "returned": returned, "returned_unit": s.get(Lease, returned.lease_id).unit_name if returned else None,
                 "changed": changed, "counsel": counsel, "counsel_state": counsel_state, "record_case": record_case,
-                "record_unit": record_unit, "lanes": lanes, "lane_names": LANES,
+                "record_unit": record_unit, "lanes": lanes, "lane_names": LANES, "access": access, "access_lease": access_lease,
+                "access_view": access_view.data if access_view else None, "access_policy": access_policy, "gate_rules": GATE_RULES,
                 "truth": pages.trace.get(s.get(Lease, held.lease_id).provider_id) if held else None,
                 "money": money, "local": local, "nav": "front"})
 
@@ -355,7 +390,13 @@ def router(pages: Pages) -> APIRouter:
             case, lease, facility = case_or_404(s, case_id)
             snap = s.get(LedgerSnapshot, case.last_snapshot_id) if case.last_snapshot_id else None
             entries = pages.record(s, case)
+            access = s.get(AccessView, lease.id)
+            access_items = s.scalars(select(WorkItem).where(WorkItem.facility_id == facility.id, WorkItem.kind.in_(KIND_NAMES),
+                                                            ((WorkItem.subject_type == "lease") & (WorkItem.subject_id == lease.provider_id))
+                                                            | ((WorkItem.subject_type == "customer") & (WorkItem.subject_id == lease.provider_customer_id)))
+                                     .order_by(WorkItem.id.desc())).all()
             return templates.TemplateResponse(request, "account.html", {
+                "access": access, "access_items": access_items, "kind_names": KIND_NAMES,
                 "case": case, "lease": lease, "facility": facility, "snap": snap, "entries": entries, "lanes": LANES,
                 "money": money, "local": local, "nav": "today", "facilities": pages.facilities(s)})
 
@@ -395,6 +436,29 @@ def router(pages: Pages) -> APIRouter:
                 "case": case, "lease": lease, "facility": facility, "current": current, "previous": previous, "snap": snap, "money": money,
                 "changed": changed, "findings": findings, "evidence": evidence, "names": EVIDENCE_NAMES, "day": day,
                 "replaced": {e.supersedes_id for e in evidence if e.supersedes_id},
+                "local": local, "nav": "today", "facilities": pages.facilities(s)})
+
+    @r.get("/access/{item_id}", response_class=HTMLResponse)
+    def access_item(request: Request, item_id: int):
+        with session() as s:
+            w = s.get(WorkItem, item_id)
+            facility = s.get(Facility, w.facility_id) if w is not None else None
+            if w is None or w.kind not in KIND_NAMES or facility not in pages.facilities(s):
+                raise HTTPException(404, "No such access item")
+            unit, label = pages.subject_label(s, w)
+            leases = (s.scalars(select(Lease).where(Lease.provider_id == w.subject_id)).all() if w.subject_type == "lease" else
+                      s.scalars(select(Lease).where(Lease.provider_customer_id == w.subject_id, Lease.facility_id == facility.id)
+                                .order_by(Lease.unit_name)).all() if w.subject_type == "customer" else [])
+            views = [(l, s.get(AccessView, l.id)) for l in leases]
+            cases = {l.id: s.scalar(select(DelinquencyCase.id).where(DelinquencyCase.lease_id == l.id).order_by(DelinquencyCase.id.desc()).limit(1))
+                     for l in leases}
+            history = s.scalars(select(WorkItem).where(WorkItem.facility_id == w.facility_id, WorkItem.kind == w.kind,
+                                                       WorkItem.subject_type == w.subject_type, WorkItem.subject_id == w.subject_id,
+                                                       WorkItem.id != w.id).order_by(WorkItem.id)).all()
+            policy = policy_for(s, facility, facility_today(facility))
+            return templates.TemplateResponse(request, "access.html", {
+                "w": w, "facility": facility, "unit": unit, "label": label, "views": views, "cases": cases, "history": history,
+                "policy": policy, "gate_rules": GATE_RULES, "kind_names": KIND_NAMES, "physical": PHYSICAL, "closed_by": CLOSED_BY,
                 "local": local, "nav": "today", "facilities": pages.facilities(s)})
 
     @r.get("/limits", response_class=HTMLResponse)

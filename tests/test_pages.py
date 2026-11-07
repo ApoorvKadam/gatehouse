@@ -1,6 +1,8 @@
 """The preview's screens: what a first-time visitor sees, and that reading them changes nothing."""
 from __future__ import annotations
 
+import re
+
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
@@ -176,3 +178,31 @@ def test_lien_page_survives_a_document_name_without_text_and_marks_corrections(f
     assert page.status_code == 200
     assert "Document content not kept" in page.text and "Replaced by a later correction" in page.text
     assert "Recorded after the evaluation shown" in page.text
+
+
+
+def test_access_shows_on_today_and_its_own_page_without_any_credential(fms_url, sim):
+    """The seeded world's access work: a paid tenant still locked out (its task marked done, the item still open), a
+    returned payment past the rule with no lock, and a facility with no recorded rule. No code or combination shows."""
+    with TestClient(preview(fms_url)) as visitor:
+        today = visitor.get("/today").text
+        assert "Access not restored" in today and "Restriction not in place" in today
+        assert "does not close this item" in today
+        albany = visitor.get("/today", params={"facility": "fac_NSalbany001"}).text
+        assert "No access rule is recorded" in albany
+        front = visitor.get("/").text
+        assert "Access and overlocks" in front and "Not verified" in front
+        links = sorted(set(re.findall(r'href="(/access/\d+)"', today + albany + front)))
+        assert links
+        pages = [today, albany, front] + [visitor.get(l).text for l in links]
+        for link in links:
+            assert visitor.get(link).status_code == 200
+        accounts = sorted(set(re.findall(r'href="(/accounts/\d+)"', " ".join(pages))))
+        pages += [visitor.get(a).text for a in accounts]
+        assert any("Access, as the FMS records it" in p for p in pages)
+        from fmssim.seed import ACCESS_CODES, LOCKS
+        secrets_ = [code for _, _, code in ACCESS_CODES] + [combo for stock in LOCKS.values() for _, combo in stock]
+        for page in pages:
+            for secret in secrets_:
+                assert f">{secret}<" not in page and f" {secret} " not in page and f"&ldquo;{secret}" not in page
+        assert visitor.get("/access/99999").status_code == 404
