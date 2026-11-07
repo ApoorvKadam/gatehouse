@@ -10,10 +10,10 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from . import seed
+from . import access, seed
 from .store import (
     ApiKey, BookEntry, Customer, Facility, Lease, LeaseBehavior, Payment, PaymentMethod,
-    apply_to_lease, lease_total_due, make_session_factory, new_id, reverse_on_lease, utcnow,
+    apply_to_lease, lease_total_due, make_session_factory, new_id, reverse_on_lease, unit_id_of, utcnow,
 )
 
 PII_FIELDS = ("name", "firstName", "lastName", "phone", "email")
@@ -76,7 +76,7 @@ def create_app(database_url: str | None = None, lose_response_seconds: float = 8
             "monthlyRentalAmount": lease.monthly_rental_amount, "billingCycle": lease.billing_cycle,
             "paidThroughDate": iso(lease.paid_through_date), "prepaidBalance": lease.prepaid_balance,
             "totalDue": due, "delinquencyStartDate": iso(lease.delinquency_start_date),
-            "overlockNeeded": lease.overlock_needed,
+            "overlockNeeded": lease.overlock_needed, "unitId": unit_id_of(lease),
         }
 
     def payment_json(p: Payment) -> dict:
@@ -315,6 +315,8 @@ def create_app(database_url: str | None = None, lose_response_seconds: float = 8
                               description=body.get("description"), amount=control_int(body.get("amount"), "amount")))
         session.commit()
         return ok({"totalDue": lease_total_due(session, lease.lease_id)})
+
+    access.register(app, db, caller, own_lease, ok, iso, ApiError)
 
     with factory() as session:
         if session.scalars(select(Facility)).first() is None:

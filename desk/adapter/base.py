@@ -26,6 +26,8 @@ class ProviderLease:
     billing_cycle: str
     total_due: int
     delinquent_since: str | None
+    unit_id: str | None = None
+    overlock_needed: bool | None = None     # None: the FMS did not say
 
 
 @dataclass(frozen=True)
@@ -66,6 +68,57 @@ class SubmitOutcome:
     errors: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class ProviderAccessCode:
+    code: str
+    enabled: bool
+    customer_provider_id: str
+
+
+@dataclass(frozen=True)
+class AccessCheck:
+    allowed: bool
+    message: str
+
+
+@dataclass(frozen=True)
+class ProviderLock:
+    lock_id: str
+    status: str                 # AVAILABLE, OPERATOR_USE, TENANT_USE, DISABLED
+    attached_to: str | None
+    serial: str
+
+
+@dataclass(frozen=True)
+class ProviderExemption:
+    lease_provider_id: str
+    reason: str
+    end_date: str
+    pause_overlock: bool
+    note: str | None
+
+
+@dataclass(frozen=True)
+class ProviderTask:
+    task_id: str
+    title: str
+    description: str | None
+    status: str                 # OPEN, COMPLETED, ARCHIVED
+    customer_provider_id: str | None
+    unit_id: str | None
+    updated_at: datetime | None
+
+
+@dataclass(frozen=True)
+class TaskCreateOutcome:
+    """'created' carries the task id; 'lost' means the task may exist but its id never arrived; 'rejected' means the
+    FMS refused the request and made nothing."""
+
+    kind: Literal["created", "lost", "rejected"]
+    task_id: str | None = None
+    detail: str | None = None
+
+
 class FMSAdapter(Protocol):
     provider: str
 
@@ -77,3 +130,11 @@ class FMSAdapter(Protocol):
     def make_payment(self, lease_provider_id: str, payment_method_id: str, amount: int) -> SubmitOutcome: ...
     def payments_for_lease(self, lease_provider_id: str) -> list[ProviderPayment]: ...
     def payment_methods(self, customer_provider_id: str) -> list[dict]: ...
+    def leases(self, facility_provider_id: str) -> list[ProviderLease]: ...
+    def access_codes(self, facility_provider_id: str, customer_provider_id: str) -> list[ProviderAccessCode]: ...
+    def check_code(self, facility_provider_id: str, code: str) -> AccessCheck: ...
+    def locks_for_lease(self, lease_provider_id: str) -> list[ProviderLock]: ...
+    def exemptions_for_customer(self, customer_provider_id: str) -> list[ProviderExemption]: ...
+    def tasks_for(self, scope: str, value: str) -> list[ProviderTask]: ...
+    def create_task(self, facility_provider_id: str, title: str, description: str, *, unit_id: str | None = None,
+                    customer_provider_id: str | None = None) -> TaskCreateOutcome: ...

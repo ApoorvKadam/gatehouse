@@ -134,6 +134,33 @@
 </section>
 {% endif %}
 
+{% if access and access_view and access_policy %}
+<section class="feature flip">
+  <div class="wrap">
+    <div data-reveal>
+      <p class="kicker" style="--c:var(--blue)">{% include "icons/door-open.svg" %}Access and overlocks</p>
+      <h2>A tenant who paid gets their unit back, and a task marked done is not proof.</h2>
+      <p>Gatehouse reads the gate code, the locks on each unit and any exemption from the FMS, and compares them with the facility's recorded lockout rule in both directions. A paying tenant still locked out, or an account past the rule whose code the FMS still allows, becomes an item and one FMS task for a person. The item closes only when the FMS shows the expected state. Gatehouse never changes access itself, and the FMS's records are not proof the gate opened or a lock came off.</p>
+      <a class="open" href="/access/{{ access.id }}">Open this access item {% include "icons/arrow-right.svg" %}</a>
+    </div>
+    <div class="frame" data-reveal>
+      <div class="frame-bar"><span><b>Access</b> &middot; unit {{ access_lease.unit_name }}</span><span class="chip act">Access not restored</span></div>
+      <div class="frame-body">
+        <dl class="kv">
+          <dt>Recorded rule</dt><dd>{{ access_policy.lockout_days }} days overdue; {{ gate_rules.get(access_policy.gate_rule, access_policy.gate_rule) }}</dd>
+          <dt>FMS standing</dt><dd>{{ access_view.get('standing')|capitalize }}</dd>
+          {% set g = access_view.get('gate', {}) %}
+          <dt>Gate code</dt><dd>{% if g.get('codes') == 1 %}The FMS answers &ldquo;{{ g.get('message') }}&rdquo;{% else %}Not read{% endif %}</dd>
+          <dt>Operator lock</dt><dd>{% if access_view.get('operator_locks') %}{{ access_view.operator_locks|map(attribute='serial')|join(', ') }} still recorded on the unit{% else %}None recorded{% endif %}</dd>
+          <dt>FMS task</dt><dd>{% if access.task_state == 'created' %}{{ (access.task_status or 'OPEN')|lower|capitalize }}{% if access.task_status == 'COMPLETED' %}; the item stays open{% endif %}{% else %}{{ access.task_state|replace('_', ' ') }}{% endif %}</dd>
+          <dt>Physical outcome</dt><dd>Not verified</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+</section>
+{% endif %}
+
 {% if changed or counsel %}
 <section class="feature band wide">
   <div class="wrap">
@@ -196,8 +223,7 @@
         <a class="open" href="/limits">What this is and is not {% include "icons/arrow-right.svg" %}</a>
       </div>
     </div>
-    <ol class="next-cols" data-reveal>
-      <li>{% include "icons/door-open.svg" %}<b>Access and overlocks</b><span>Done when gate codes and overlocks in the FMS match what each tenant has paid, in both directions.</span></li>
+    <ol class="next-cols two" data-reveal>
       <li>{% include "icons/phone.svg" %}<b>Leads and move-ins</b><span>Done when a missed call counts as recovered only once a specific lease is linked to it.</span></li>
       <li>{% include "icons/trending-up.svg" %}<b>Rent changes</b><span>Done when an approved increase is saved, noticed and charged in the FMS, with what happened after.</span></li>
     </ol>

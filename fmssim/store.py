@@ -144,6 +144,131 @@ class LeaseBehavior(Base):
     decline_reason: Mapped[str] = mapped_column(String, default="Insufficient funds")
 
 
+class AccessRule(Base):
+    """The simulated FMS's own delinquency automation for one facility: after this many days overdue it disables the
+    customer's gate code and marks the lease as needing an overlock. Cubby documents no such setting; real systems
+    have one, and Gatehouse never reads this table (it holds its own, operator-attested rule)."""
+
+    __tablename__ = "access_rules"
+    facility_id: Mapped[str] = mapped_column(ForeignKey("facilities.facility_id"), primary_key=True)
+    lockout_days: Mapped[int] = mapped_column(Integer)
+
+
+class AccessCode(Base):
+    """One gate code per customer per facility, as Cubby's access codes are."""
+
+    __tablename__ = "access_codes"
+    code_id: Mapped[str] = mapped_column(String, primary_key=True)
+    facility_id: Mapped[str] = mapped_column(ForeignKey("facilities.facility_id"))
+    customer_id: Mapped[str] = mapped_column(ForeignKey("customers.customer_id"))
+    code: Mapped[str] = mapped_column(String)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class Lock(Base):
+    __tablename__ = "locks"
+    lock_id: Mapped[str] = mapped_column(String, primary_key=True)
+    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.org_id"))
+    facility_id: Mapped[str] = mapped_column(ForeignKey("facilities.facility_id"))
+    serial: Mapped[str] = mapped_column(String, unique=True)
+    combo: Mapped[str] = mapped_column(String)
+    # AVAILABLE, OPERATOR_USE (restricting a unit), TENANT_USE, DISABLED
+    status: Mapped[str] = mapped_column(String, default="AVAILABLE")
+    attached_to: Mapped[str | None] = mapped_column(String, nullable=True)   # unit id
+    disabled_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class Task(Base):
+    __tablename__ = "tasks"
+    task_id: Mapped[str] = mapped_column(String, primary_key=True)
+    facility_id: Mapped[str] = mapped_column(ForeignKey("facilities.facility_id"))
+    title: Mapped[str] = mapped_column(String)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
+    due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    status: Mapped[str] = mapped_column(String, default="OPEN")
+    customer_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    unit_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class Exemption(Base):
+    """A delinquency exemption on one lease. One active exemption per lease."""
+
+    __tablename__ = "delinquency_exemptions"
+    exemption_id: Mapped[str] = mapped_column(String, primary_key=True)
+    lease_id: Mapped[str] = mapped_column(ForeignKey("leases.lease_id"))
+    reason: Mapped[str] = mapped_column(String)
+    other_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    end_date: Mapped[date] = mapped_column(Date)
+    pause_delinquency_fees: Mapped[bool] = mapped_column(Boolean, default=False)
+    pause_overlock: Mapped[bool] = mapped_column(Boolean, default=False)
+    pause_lien_eligibility: Mapped[bool] = mapped_column(Boolean, default=False)
+    pause_collections_messages: Mapped[bool] = mapped_column(Boolean, default=False)
+    note: Mapped[str | None] = mapped_column(String, nullable=True)
+    cancelled: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class AccessFault(Base):
+    """A named fault the simulator is told to have, kept inspectable in its truth reader:
+    gate_sync_stale (customer at a facility: the automation stops updating that code),
+    lose_task_response (facility: tasks/create makes the task, then the connection breaks)."""
+
+    __tablename__ = "access_faults"
+    fault_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(String)
+    facility_id: Mapped[str] = mapped_column(String)
+    customer_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+def unit_id_of(lease: "Lease") -> str:
+    return "unit_" + lease.lease_id.removeprefix("lease_")
+
+
+def facility_today(session: Session, facility_id: str) -> date:
+    from zoneinfo import ZoneInfo
+    facility = session.get(Facility, facility_id)
+    return datetime.now(ZoneInfo(facility.time_zone if facility else "America/New_York")).date()
+
+
+def active_exemption(session: Session, lease_id: str, today: date) -> "Exemption | None":
+    return session.scalar(select(Exemption).where(Exemption.lease_id == lease_id, Exemption.cancelled.is_(False),
+                                                  Exemption.end_date >= today))
+
+
+def run_access_automation(session: Session, facility_id: str, customer_id: str) -> None:
+    """What the simulated FMS does on its own when a customer's balance changes or its daily run comes round: set
+    each lease's overlockNeeded, and disable the customer's gate code while any of their leases here is past the rule.
+    It never attaches or removes a physical lock; that is a person's job."""
+    rule = session.get(AccessRule, facility_id)
+    if rule is None:
+        return
+    today = facility_today(session, facility_id)
+    leases = session.scalars(select(Lease).where(Lease.facility_id == facility_id, Lease.customer_id == customer_id)).all()
+    any_eligible = False
+    for lease in leases:
+        ex = active_exemption(session, lease.lease_id, today)
+        overdue = lease.delinquency_start_date is not None and (today - lease.delinquency_start_date).days >= rule.lockout_days
+        lease.overlock_needed = bool(overdue and not (ex and ex.pause_overlock))
+        any_eligible = any_eligible or lease.overlock_needed
+    stale = session.scalar(select(AccessFault).where(AccessFault.kind == "gate_sync_stale", AccessFault.facility_id == facility_id,
+                                                    AccessFault.customer_id == customer_id))
+    if stale is not None:
+        return
+    for code in session.scalars(select(AccessCode).where(AccessCode.facility_id == facility_id, AccessCode.customer_id == customer_id)):
+        code.enabled = not any_eligible
+
+
+def oldest_open_due(session: Session, lease_id: str) -> date | None:
+    """When the oldest charge still open fell due: the date delinquency counts from."""
+    entries = session.scalars(select(BookEntry).where(BookEntry.lease_id == lease_id, BookEntry.waive.is_(False))
+                              .order_by(BookEntry.entry_time, BookEntry.book_entry_id)).all()
+    for e in entries:
+        if e.amount - e.amount_paid > 0:
+            return e.accrues_on or e.entry_time.date()
+    return None
+
+
 def make_session_factory(url: str | None = None) -> sessionmaker[Session]:
     url = url or os.environ.get("SIM_DATABASE_URL", "sqlite:///./data/fmssim.db")
     if url.startswith("sqlite:///") and not url.startswith("sqlite:///:memory:"):
@@ -182,6 +307,8 @@ def apply_to_lease(session: Session, lease: Lease, amount: int, when: datetime) 
         lease.delinquency_start_date = None
         lease.overlock_needed = False
     lease.updated_at = when
+    session.flush()
+    run_access_automation(session, lease.facility_id, lease.customer_id)
 
 
 def reverse_on_lease(session: Session, lease: Lease, amount: int, when: datetime) -> None:
@@ -200,6 +327,10 @@ def reverse_on_lease(session: Session, lease: Lease, amount: int, when: datetime
         take = min(e.amount_paid, left)
         e.amount_paid -= take
         left -= take
-    if lease_total_due(session, lease.lease_id) > 0 and lease.delinquency_start_date is None:
-        lease.delinquency_start_date = when.date()
+    if lease_total_due(session, lease.lease_id) > 0:
+        # delinquency counts from the oldest charge the reversal left unpaid, not from the day of the return
+        session.flush()
+        lease.delinquency_start_date = oldest_open_due(session, lease.lease_id) or when.date()
     lease.updated_at = when
+    session.flush()
+    run_access_automation(session, lease.facility_id, lease.customer_id)
