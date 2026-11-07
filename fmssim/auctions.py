@@ -14,7 +14,7 @@ from fastapi import Depends, FastAPI
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .store import ApiKey, Auction, AuctionedLease, ExternalListing, Facility, Lease, facility_today, new_id, unit_id_of, utcnow
+from .store import ApiKey, Auction, AuctionApiCall, AuctionedLease, ExternalListing, Facility, Lease, facility_today, new_id, unit_id_of, utcnow
 
 STATUSES = ("LISTED", "NO_BIDS", "SOLD", "PAYMENT_RECEIVED", "COMPLETE", "CANCELLED")
 
@@ -62,8 +62,13 @@ def register(app: FastAPI, db, caller, own_lease, ok, iso, ApiError) -> None:
             q = q.where(Auction.auction_id == where["auctionId"])
         return ok({"auctions": [auction_json(session, a) for a in session.scalars(q.order_by(Auction.auction_time)).all()]})
 
+    def on_record(session: Session, path: str, body: dict) -> None:
+        session.add(AuctionApiCall(path=path, lease_id=body.get("leaseId") if isinstance(body.get("leaseId"), str) else None))
+        session.commit()
+
     @app.post("/v1/auctions/create")
     def auctions_create(body: dict, key: ApiKey = Depends(caller), session: Session = Depends(db)):
+        on_record(session, "/v1/auctions/create", body)
         facility = own_facility(session, key, body.get("facilityId"))
         if not body.get("leaseConfigurationId"):
             raise ApiError(400, "leaseConfigurationId is required")
@@ -88,6 +93,7 @@ def register(app: FastAPI, db, caller, own_lease, ok, iso, ApiError) -> None:
 
     @app.post("/v1/auctions/start-lien")
     def auctions_start_lien(body: dict, key: ApiKey = Depends(caller), session: Session = Depends(db)):
+        on_record(session, "/v1/auctions/start-lien", body)
         # sendEmailAndSms and sendToAlternativeContacts default to false; the simulator sends nothing either way, and
         # starting the lien process says nothing about whether any statutory notice was delivered
         lease = own_lease(session, key, body.get("leaseId"))
@@ -107,6 +113,7 @@ def register(app: FastAPI, db, caller, own_lease, ok, iso, ApiError) -> None:
 
     @app.post("/v1/auctions/cancel-lien")
     def auctions_cancel_lien(body: dict, key: ApiKey = Depends(caller), session: Session = Depends(db)):
+        on_record(session, "/v1/auctions/cancel-lien", body)
         cancel(session, own_lease(session, key, body.get("leaseId")), "api")
         return ok()
 
@@ -135,10 +142,12 @@ def register(app: FastAPI, db, caller, own_lease, ok, iso, ApiError) -> None:
 
     @app.post("/v1/auctions/settle")
     def auctions_settle(body: dict, key: ApiKey = Depends(caller), session: Session = Depends(db)):
+        on_record(session, "/v1/auctions/settle", body)
         return ok({"auctionedLease": entry_json(settle(session, own_lease(session, key, body.get("leaseId")), body, "api"))})
 
     @app.post("/v1/auctions/complete")
     def auctions_complete(body: dict, key: ApiKey = Depends(caller), session: Session = Depends(db)):
+        on_record(session, "/v1/auctions/complete", body)
         entry = current_entry(session, own_lease(session, key, body.get("leaseId")).lease_id)
         if entry is None or entry.status in ("LISTED", "NO_BIDS", "CANCELLED", "COMPLETE"):
             raise ApiError(400, "There is no sale to complete")
@@ -222,7 +231,9 @@ def register(app: FastAPI, db, caller, own_lease, ok, iso, ApiError) -> None:
 
     @app.get("/sim/auctions/truth")
     def sim_auctions_truth(facilityId: str, session: Session = Depends(db)):
-        """Every entry with who changed it last, for the evaluation."""
+        """Every entry with who changed it last, and every sale-changing API call, for the evaluation."""
         rows = session.scalars(select(AuctionedLease).join(Auction, Auction.auction_id == AuctionedLease.auction_id)
                                .where(Auction.facility_id == facilityId).order_by(AuctionedLease.id)).all()
-        return ok({"entries": [{**entry_json(e), "auctionId": e.auction_id, "changedBy": e.changed_by} for e in rows]})
+        calls = session.scalars(select(AuctionApiCall).order_by(AuctionApiCall.id)).all()
+        return ok({"entries": [{**entry_json(e), "auctionId": e.auction_id, "changedBy": e.changed_by} for e in rows],
+                   "apiCalls": [{"path": c.path, "leaseId": c.lease_id, "at": iso(c.at)} for c in calls]})

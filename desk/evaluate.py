@@ -324,15 +324,21 @@ def sales_red_lines(session, url: str) -> dict[str, int]:
     }
 
 
+def sale_calls(url: str) -> int:
+    return len(httpx.get(f"{url}/sim/auctions/truth", params={"facilityId": ORLANDO}, timeout=15).json()["data"]["apiCalls"])
+
+
 class SaleTally:
     def __init__(self, url: str):
         self.url, self.totals, self.sale_writes = url, {}, 0
 
     def reconcile(self, session, adapter, facility, passes: int = 1) -> None:
         for _ in range(passes):
-            sent = len(adapter.recording.paths)
+            sent, calls = len(adapter.recording.paths), sale_calls(self.url)
             sales.reconcile_sales(session, adapter, facility, "eval", self.url)
-            self.sale_writes += sum(1 for path in adapter.recording.paths[sent:] if path not in SALE_ALLOWED)
+            # the simulator's own record of sale-changing calls, whoever sent them, plus any other write through the adapter
+            self.sale_writes += sale_calls(self.url) - calls
+            self.sale_writes += sum(1 for path in adapter.recording.paths[sent:] if path not in SALE_ALLOWED and not path.startswith("/v1/auctions/"))
             for k, v in sales_red_lines(session, self.url).items():
                 self.totals[k] = self.totals.get(k, 0) + v
 
@@ -486,6 +492,26 @@ def control_sale_task_closes(url: str) -> Control:
                    "calls the lien cancelled while the FMS still lists the sale", caught)
 
 
+def control_sale_cancelled_by_gatehouse(url: str) -> Control:
+    """A wrong build that cancels the sale itself instead of asking staff, through its own client."""
+    run, tally = AccessRun(url), SaleTally(url)
+    session, adapter, facility = run.start()
+    schedule(run, "lease_WhitB1042")
+    run.sim("/sim/payments/offline", {"allocations": {"lease_WhitB1042": 24000}})
+    real = sales.reconcile_sales
+
+    def wrong(session, adapter, facility, run_id, feed_url=None):
+        httpx.post(f"{url}/v1/auctions/cancel-lien", json={"leaseId": "lease_WhitB1042"},
+                   headers={"Authorization": f"Bearer {KEY}"}, timeout=15)          # what the wrong build would do
+        return real(session, adapter, facility, run_id, feed_url)
+    sales.reconcile_sales = wrong
+    try:
+        tally.reconcile(session, adapter, facility)
+    finally:
+        sales.reconcile_sales = real
+    return Control("A build that cancels a sale itself", "sends cancel-lien to the FMS through its own client", tally.sale_writes > 0)
+
+
 def control_outside_from_fms(url: str) -> Control:
     """A wrong build that takes the FMS cancellation as the outside site's withdrawal."""
     run = AccessRun(url)
@@ -594,7 +620,8 @@ def evaluate(url: str) -> Report:
     report.red_lines += [RedLine("Lien sales", line, n) for line, n in sale_totals.items()]
     report.red_lines.append(RedLine("Lien sales", "a request from Gatehouse that could change a sale (cancel, settle or complete)",
                                     sale_writes))
-    report.controls += [control_retry(url), control_task_closes(url), control_sale_task_closes(url), control_outside_from_fms(url)]
+    report.controls += [control_retry(url), control_task_closes(url), control_sale_task_closes(url), control_outside_from_fms(url),
+                        control_sale_cancelled_by_gatehouse(url)]
     return report
 
 

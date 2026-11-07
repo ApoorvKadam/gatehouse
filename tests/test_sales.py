@@ -119,6 +119,11 @@ def test_a_payment_that_comes_back_moves_the_item_to_review_with_one_task(fms_ur
         assert item.state == "open" and item.kind == BALANCE_CHANGED
         assert "$185.00 owed" in item.problem and "Do not act on it" in item.note
         assert not items(s, kind=LISTED_PAID) and not items(s, kind=AFTER_NOTICE)
+        # staff mark the old task done: the warning about it stays on the item
+        assert sim.post("/sim/tasks/complete", {"taskId": item.task_id}).status_code == 200
+        sweep(s, adapter, fms_url)
+        s.refresh(item)
+        assert item.task_status == "COMPLETED" and "Do not act on it" in item.note
     tasks = sim.post("/v1/tasks/search", {"where": {"unitId": "unit_BellC0207"}}).json()["data"]["tasks"]
     assert len(tasks) == 1
 
@@ -204,3 +209,29 @@ def test_a_malformed_auction_answer_is_an_fms_error():
     broken = CubbyAdapter("http://fms.invalid", "key", 1.0, transport=httpx.MockTransport(lambda r: httpx.Response(200, json=answer)))
     with pytest.raises(FMSError):
         broken.auction_entries(ORLANDO)
+
+
+def test_with_no_notice_date_no_payment_is_said_to_follow_the_notice():
+    from desk.adapter.base import ProviderAuctionEntry
+    from desk.sales import SaleFacts, assess
+    entry = ProviderAuctionEntry("auction_x", "2026-11-08T10:00:00", "lease_x", "unit_x", None, "LISTED")
+    found = assess(SaleFacts(entry, 0, [], None, "the lien start date the FMS reports", "2026-11-08T15:00:00", None, "X-1"))
+    assert found.kind == LISTED_PAID and "No notice date is known" in found.problem and "since the notice" not in found.problem
+
+
+def test_the_outside_feed_still_decides_when_the_ledger_cannot_be_read(fms_url, sim, adapter):
+    factory = world(adapter, fms_url)
+
+    class LedgerDown:
+        def __getattr__(self, name):
+            return getattr(adapter, name)
+
+        def ledger(self, lease_id):
+            raise FMSError("/v1/ledgers/search: ReadTimeout")
+
+    with factory() as s:
+        dana = items(s, kind=OUTSIDE)
+        assert sim.post("/sim/listings/withdraw", {"leaseId": "lease_WhitB1042"}).status_code == 200
+        sweep(s, LedgerDown(), fms_url)
+        closed = [i for i in items(s, kind=OUTSIDE, state="closed") if i.subject_id.endswith("lease_WhitB1042")]
+        assert dana and len(closed) == 1 and closed[0].verification == "Confirmed by the outside site's feed"

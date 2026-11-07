@@ -249,6 +249,17 @@ class AuctionedLease(Base):
     changed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class AuctionApiCall(Base):
+    """Every request to an auctions endpoint that can change a sale, written before it is checked, so a refused call
+    is on record too. The evaluation counts Gatehouse's red line from this, not from what Gatehouse says it sent."""
+
+    __tablename__ = "auction_api_calls"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    path: Mapped[str] = mapped_column(String)
+    lease_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class ExternalListing(Base):
     """A listing on an outside auction site, as that site's own feed reports it. Not part of the FMS: cancelling the
     lien in the FMS leaves it as it is."""

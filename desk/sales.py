@@ -142,7 +142,8 @@ def assess(f: SaleFacts) -> Finding | None:
     subject, status, observed = subject_of(f.entry), f.entry.status, observed_of(f)
     since = f"since the notice ({f.notice_source}, {on(f.notice_on)})" if f.notice_on else "since the notice (no notice date known)"
     if status == "LISTED" and f.owed == 0:
-        why = (f"The FMS reports payments {since}: {_paid(f)}." if f.payments else
+        why = ("No notice date is known, so Gatehouse does not say whether any payment came after the notice." if not f.notice_on else
+               f"The FMS reports payments {since}: {_paid(f)}." if f.payments else
                f"No payment {since} was found, so a credit, waiver or correction may explain it; Gatehouse does not call it a tenant payment.")
         task = (f"Cancel the lien sale for unit {f.unit}, or record why it stands",
                 f"The FMS ledger shows nothing owed on unit {f.unit}, and {_when(f)} is still listed in the FMS. {why}",
@@ -161,7 +162,8 @@ def assess(f: SaleFacts) -> Finding | None:
 def settled_review(f: SaleFacts) -> Finding:
     since = f"since the notice ({f.notice_source}, {on(f.notice_on)})" if f.notice_on else "since the notice (no notice date known)"
     owed = "nothing owed" if f.owed == 0 else f"{dollars(f.owed)} owed"
-    paid = f" It reports payments {since}: {_paid(f)}." if f.payments else ""
+    paid = (f" It reports payments {since}: {_paid(f)}." if f.payments else
+            " No notice date is known, so no payment is said to follow it." if not f.notice_on else "")
     return Finding(SETTLED_REVIEW, subject_of(f.entry),
                    f"The FMS records this sale as {STATUS_WORDS[f.entry.status]}, and its ledger shows {owed}.{paid} The FMS does "
                    "not say whether the sale came before or after these payments, so Gatehouse makes no claim about the "
@@ -234,8 +236,10 @@ def reconcile_sales(session: Session, adapter: FMSAdapter, facility: Facility, r
                 payments = adapter.payments_for_lease(entry.lease_provider_id)
             except FMSError as exc:
                 for item in mine:
-                    item.note = f"Not freshly verified: the lease's ledger or payments could not be read at {now:%b %-d, %H:%M} UTC."
+                    if item.kind != OUTSIDE:
+                        item.note = f"Not freshly verified: the lease's ledger or payments could not be read at {now:%b %-d, %H:%M} UTC."
                 result.failures.append(f"ledger for {entry.lease_provider_id}: {exc}")
+                _outside(session, facility, run_id, entry, listings, result)   # the outside site's feed is its own evidence
                 continue
             notice_on, source = notice_date(session, lease, entry)
             zone = ZoneInfo(facility.time_zone or "America/New_York")
@@ -245,7 +249,7 @@ def reconcile_sales(session: Session, adapter: FMSAdapter, facility: Facility, r
                     continue    # pending, declined, returned, refunded or disputed money is not counted
                 stamp = p.created_at if p.created_at.tzinfo else p.created_at.replace(tzinfo=timezone.utc)
                 day = stamp.astimezone(zone).date().isoformat()
-                if notice_on is None or day >= notice_on:
+                if notice_on is not None and day >= notice_on:   # with no notice date, no payment is said to follow it
                     paid.append({"id": p.provider_id, "amount": p.amount, "when": stamp.astimezone(timezone.utc).isoformat(timespec="seconds"),
                                  "on": day})
             try:
@@ -268,7 +272,7 @@ def reconcile_sales(session: Session, adapter: FMSAdapter, facility: Facility, r
         task = item.observed.get("task")
         if item.task_state == "none" and not (item.kind == LISTED_PAID and item.subject_id in decided):
             task = None   # a new task only on this pass's fresh reading; a task already sent is still looked up by its marker
-        ensure_task(session, adapter, facility, item, task, result.failures)
+        ensure_task(session, adapter, facility, item, task, result.failures, keep_note=True)
     return result
 
 

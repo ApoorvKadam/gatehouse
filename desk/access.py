@@ -364,11 +364,13 @@ def _tasks(session: Session, adapter: FMSAdapter, facility: Facility, run_id: st
 
 
 def ensure_task(session: Session, adapter: FMSAdapter, facility: Facility, item: WorkItem, task: tuple | None,
-                failures: list[str]) -> None:
+                failures: list[str], keep_note: bool = False) -> None:
     """One FMS task for an open item that asks a person to act; `task` is (title, description, unit_id, customer id), or
     None when nothing is wanted this pass. Before the call the item is claimed and marked as sending, in its own
     committed write, so a crash, a lost answer or a second worker can only ever look the task up by its marker; nothing
-    creates a second one."""
+    creates a second one. keep_note: a note the item already carries (a warning about stale evidence) is never
+    replaced by task news; the task's own status is still saved."""
+    kept = item.note if keep_note else None
     try:
         if item.task_state == "none" and task:
             claimed = session.execute(update(WorkItem).where(WorkItem.id == item.id, WorkItem.task_state == "none")
@@ -399,6 +401,8 @@ def ensure_task(session: Session, adapter: FMSAdapter, facility: Facility, item:
             elif item.task_status in ("ARCHIVED", "not found"):
                 item.note = (f"The FMS task is {item.task_status.lower()}, and the problem is still there. Gatehouse does not "
                              "create another task for the same episode.")
+        if kept:
+            item.note = kept
         session.commit()
     except FMSError as exc:
         session.rollback()
