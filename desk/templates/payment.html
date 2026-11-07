@@ -44,8 +44,9 @@
     <h2><span class="lane-dot lane-fms"></span>What the FMS shows now</h2>
     <dl class="kv">
       {% if cmd.suggested_payment_id %}<dt>Possible match</dt><dd>{{ cmd.suggested_payment_id }}: same lease and amount, created after this attempt. Not matched automatically.</dd>{% endif %}
-      <dt>Payments before this one</dt><dd>{% if cmd.fms_payments_before %}{{ cmd.fms_payments_before|length }}{% else %}None on this lease{% endif %}</dd>
-      <dt>Balance when agreed</dt><dd>{{ money(cmd.balance_before) }}</dd>
+      {# these two are read just before sending; an attempt that was never sent has no such read #}
+      <dt>Payments read before sending</dt><dd>{% if not cmd.submitted_at %}Not sent{% elif cmd.fms_payments_before %}{{ cmd.fms_payments_before|length }} on this lease{% else %}None on this lease{% endif %}</dd>
+      <dt>Balance read before sending</dt><dd>{% if cmd.submitted_at %}{{ money(cmd.balance_before) }}{% else %}Not sent{% endif %}</dd>
       <dt>Balance now</dt><dd>{{ money(snap.total_due) if snap else 'Not read' }}{% if snap %}, read {{ local(snap.observed_at) }}{% endif %}</dd>
     </dl>
     <p class="note">Cubby's ledger does not say which payment paid which charge. When the balance drops but the answer was lost, the ledger alone cannot prove this attempt is the payment that dropped it.</p>
