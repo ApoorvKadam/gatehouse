@@ -17,7 +17,8 @@
       </div>
     </div>
     <figure class="film">
-      <video id="film" autoplay muted loop playsinline preload="metadata" poster="{{ url_for('static', path='film/gatehouse-film.jpg') }}" aria-describedby="film-caption">
+      <video id="film" autoplay muted loop playsinline preload="metadata" poster="{{ url_for('static', path='film/gatehouse-film.jpg') }}" data-phone-poster="{{ url_for('static', path='film/gatehouse-film-phone.jpg') }}" data-phone-webm="{{ url_for('static', path='film/gatehouse-film-phone.webm') }}" data-phone-mp4="{{ url_for('static', path='film/gatehouse-film-phone.mp4') }}" aria-describedby="film-caption">
+        {# the wide film by default; on a phone the script below swaps in the portrait cut (not every browser honours media on a video source) #}
         <source src="{{ url_for('static', path='film/gatehouse-film.webm') }}" type="video/webm">
         <source src="{{ url_for('static', path='film/gatehouse-film.mp4') }}" type="video/mp4">
       </video>
