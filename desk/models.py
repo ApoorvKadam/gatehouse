@@ -185,6 +185,15 @@ class PaymentProposal(Base):
     command_id: Mapped[int | None] = mapped_column(ForeignKey("payment_commands.id"), nullable=True)
 
 
+class DemoSeed(Base):
+    """Written as the last step of building the synthetic world, so a seed that stopped part-way is never mistaken
+    for a finished one on the next start."""
+
+    __tablename__ = "demo_seed"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    finished_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class DeskBinding(Base):
     """The FMS account this database belongs to. One deployment serves one operator; pointing a database at another
     operator's FMS key would mix their accounts, so the desk refuses to start."""

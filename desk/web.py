@@ -197,6 +197,7 @@ def describe(e: CaseEvent, commands: dict[int, PaymentCommand], evidence: dict[i
 class Pages:
     factory: sessionmaker[Session]
     trace: dict = field(default_factory=dict)   # simulator truth saved when the world was built, keyed by lease
+    worker: object | None = None                 # the reconciliation worker in this process, for the operations page
 
     def facilities(self, s: Session) -> list[Facility]:
         binding = s.get(DeskBinding, 1)
@@ -479,6 +480,36 @@ def router(pages: Pages) -> APIRouter:
         with session() as s:
             return templates.TemplateResponse(request, "evaluation.html", {
                 "report": evaluation_report(), "nav": "evaluation", "facilities": pages.facilities(s), "local": local})
+
+    @r.get("/operations", response_class=HTMLResponse)
+    def operations(request: Request):
+        """How the running system is doing, from its own records: the worker's recent passes, when readings from the
+        FMS were last stored, and the open work in each part with its oldest item. It reads the database only, never
+        the FMS, and counts open work with Today's own rules."""
+        import time as _time
+        from sqlalchemy import func
+        with session() as s:
+            facilities = pages.facilities(s)
+            groups: dict[tuple[str, str], list[Item]] = {}
+            for f in facilities:
+                for i in pages.today(s, f):
+                    part = ("Payments" if i.link.startswith("/payments/") else "Lien files" if i.link.endswith("/lien")
+                            else "Access" if i.link.startswith("/access/") else "Collections")
+                    groups.setdefault((part, i.head), []).append(i)
+            open_work = sorted(({"part": part, "label": head, "count": len(rows), "since": min(r.since for r in rows),
+                                 "link": min(rows, key=lambda r: r.since).link} for (part, head), rows in groups.items()),
+                               key=lambda o: o["since"])
+            readings = {"Ledger": s.scalar(select(func.max(LedgerSnapshot.observed_at))),
+                        "Access": s.scalar(select(func.max(AccessView.observed_at)))}
+            w = pages.worker
+            worker = None
+            if w is not None:
+                ago = (_time.monotonic() - w.last_ok) if w.last_ok is not None else None
+                worker = {"state": w.state(), "every": w.every, "last_ok_ago": ago, "last_error": w.last_error,
+                          "passes": list(reversed(w.passes.copy()))}
+            return templates.TemplateResponse(request, "operations.html", {
+                "worker": worker, "open_work": open_work, "readings": readings, "nav": "operations",
+                "facilities": facilities, "local": local})
 
     @r.get("/limits", response_class=HTMLResponse)
     def limits(request: Request):
