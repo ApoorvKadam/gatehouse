@@ -141,6 +141,9 @@ def test_a_payment_that_comes_back_moves_the_item_to_review_with_one_task(fms_ur
         sweep(s, LedgerDown(adapter), fms_url)
         s.refresh(item)
         assert "Not freshly verified" in item.note and "Do not act on it" in item.observed["task_warning"]
+        sweep(s, adapter, fms_url)          # the next good reading clears the freshness note, never the warning
+        s.refresh(item)
+        assert not (item.note or "").startswith("Not freshly verified") and "Do not act on it" in item.observed["task_warning"]
     tasks = sim.post("/v1/tasks/search", {"where": {"unitId": "unit_BellC0207"}}).json()["data"]["tasks"]
     assert len(tasks) == 1
 
@@ -211,6 +214,10 @@ def test_a_sale_that_settles_under_an_open_item_turns_that_item_into_the_review(
         sweep(s, adapter, fms_url)          # a later clean pass keeps the warning while the old task exists
         s.refresh(item)
         assert "earlier reading" in item.observed["task_warning"] and item.task_status == "OPEN"
+        assert sim.post("/sim/auctions/bidder-paid", {"leaseId": "lease_BellC0207"}).status_code == 200
+        sweep(s, adapter, fms_url)          # the warning follows the sale's status
+        s.refresh(item)
+        assert "sold, and the bidder paid" in item.observed["task_warning"]
 
 
 def test_an_unreadable_outside_feed_is_said_on_its_item(fms_url, sim, adapter):

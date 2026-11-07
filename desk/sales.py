@@ -219,6 +219,10 @@ def reconcile_sales(session: Session, adapter: FMSAdapter, facility: Facility, r
             if item.kind == OUTSIDE:
                 item.note = f"Not freshly verified: the outside site's feed could not be read at {now:%b %-d, %H:%M} UTC."
         result.failures.append(f"outside listings at {facility.provider_id}: the feed could not be read")
+    elif listings is not None:
+        for item in open_items:
+            if item.kind == OUTSIDE and (item.note or "").startswith("Not freshly verified"):
+                item.note = None
     decided: set[str] = set()
     for entry in entries:
         subject = subject_of(entry)
@@ -258,6 +262,11 @@ def reconcile_sales(session: Session, adapter: FMSAdapter, facility: Facility, r
                 sale_at, problem = None, str(exc)
             facts = SaleFacts(entry, ledger.total_due, paid, notice_on, source, sale_at, problem,
                               lease.unit_name if lease else (entry.unit_id or entry.lease_provider_id), facility.time_zone)
+            for item in mine:
+                if item.kind != OUTSIDE and (item.note or "").startswith("Not freshly verified"):
+                    item.note = None   # this pass read the lease afresh
+                if item.kind == SETTLED_REVIEW and entry.status in SETTLED and (item.observed or {}).get("task_warning"):
+                    _warn_task(item, settled_warning(entry.status))
             if entry.status == "LISTED" and ledger.total_due > 0:
                 _balance_changed(session, mine, facts, now)   # before the new finding, so it updates this item, not a second one
             found = assess(facts)
@@ -282,6 +291,11 @@ def _carry(item: WorkItem, observed: dict) -> dict:
     warning lives apart from the note, so a freshness note or task news can never erase it."""
     old = item.observed or {}
     return dict(observed, task=observed.get("task") or old.get("task"), task_warning=old.get("task_warning"))
+
+
+def settled_warning(status: str) -> str:
+    return (f"This item was opened while the sale was listed. The FMS now records it as {STATUS_WORDS[status]}; its FMS task "
+            "asking for a cancellation rests on the earlier reading.")
 
 
 def _warn_task(item: WorkItem, warning: str) -> None:
@@ -336,8 +350,7 @@ def _apply(session: Session, facility: Facility, run_id: str, mine: list[WorkIte
         if current is not None:
             _retitle(session, current, SETTLED_REVIEW)
             current.problem, current.observed, current.updated_at = found.problem, _carry(current, dict(observed, task=None)), now
-            _warn_task(current, "This item was opened while the sale was listed. The FMS now records it as "
-                                f"{STATUS_WORDS[facts.entry.status]}; its FMS task asking for a cancellation rests on the earlier reading.")
+            _warn_task(current, settled_warning(facts.entry.status))
             return
     if current is None and found.kind in (LISTED_PAID, AFTER_NOTICE):
         # once the balance changed under an open item, a person owns it: it carries the current facts, nothing new opens
