@@ -414,7 +414,7 @@ dl.kv.pairs { grid-template-columns: 11rem minmax(0, 1fr) 11rem minmax(0, 1fr); 
 }
 .wide-prose { max-width: none; } .wide-prose .lede { max-width: 70ch; } .wide-prose section { max-width: 64ch; }
 .next-cols.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-/* phones: the nav scrolls sideways instead of pushing the page wider, and a wide table scrolls inside its panel */
+/* up to 900 px the nav scrolls sideways instead of pushing the page wider (the next block spreads it at 520 px and below), and a wide table scrolls inside its panel */
 .panel { overflow-x: auto; }
 @media (max-width: 900px) {
   .top nav { gap: var(--s5); max-width: 100%; overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
