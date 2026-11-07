@@ -37,7 +37,7 @@
     <thead><tr><th>Part</th><th>Scenario</th><th>What the FMS did</th><th>What Gatehouse did</th><th>Who hears what</th><th class="num">Result</th></tr></thead>
     <tbody>{% for r in report.rows %}<tr><td class="small">{{ r.module }}</td><td><b>{{ r.name }}</b></td><td class="small">{{ r.fms }}</td><td class="small">{{ r.gatehouse }}</td><td class="small muted">{{ r.told }}</td><td class="num"><span class="status {{ 'met' if r.passed else 'review' }}">{{ 'pass' if r.passed else 'fail' }}</span></td></tr>{% endfor %}</tbody>
   </table>
-  <p class="note">The scenarios run in desk/scenarios.py and desk/evaluate.py; the simulator follows Cubby's public Operator API. A real FMS, gate system or processor is not part of this run.</p>
+  <p class="note">The scenarios run in desk/scenarios.py and desk/evaluate.py; the simulator follows Cubby's public Operator API. A real FMS, gate system, auction site or processor is not part of this run.</p>
 </section>
 {% else %}
 <p class="lede">This build has no evaluation report. The image build writes one with <code>python -m desk.evaluate</code>.</p>

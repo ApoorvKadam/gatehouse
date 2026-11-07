@@ -29,6 +29,8 @@ from .adapter.cubby import CubbyAdapter
 from .cases import sync_facility
 from .db import make_session_factory
 from .models import AccessPolicy, Facility, WorkItem
+from . import sales
+from .adapter.base import FMSError
 
 KEY = "sim_org_northstar_full"
 ORLANDO = "fac_NSorlando01"
@@ -286,6 +288,221 @@ def access_scenarios(url: str) -> tuple[list[Row], dict[str, int], int]:
     return rows, tally.totals, tally.access_writes
 
 
+# ------------------------------------------------------------------ lien sales
+# a sales pass may read, and create one task; cancel-lien, settle and complete are never Gatehouse's to send
+SALE_ALLOWED = ALLOWED | {"/v1/auctions/search"}
+FEED_CONFIRMED = "Confirmed by the outside site's feed"
+
+
+def sale_items(session, kind: str | None = None, state: str | None = "open") -> list[WorkItem]:
+    q = select(WorkItem).where(WorkItem.kind.in_(sales.KIND_NAMES))
+    if kind:
+        q = q.where(WorkItem.kind == kind)
+    if state:
+        q = q.where(WorkItem.state == state)
+    return session.scalars(q.order_by(WorkItem.id)).all()
+
+
+def sales_red_lines(session, url: str) -> dict[str, int]:
+    """Counted from the simulator's own record of each sale and the outside site's own feed, never from what Gatehouse
+    believes."""
+    truth = {f"{e['auctionId']}/{e['leaseId']}": e for e in
+             httpx.get(f"{url}/sim/auctions/truth", params={"facilityId": ORLANDO}, timeout=15).json()["data"]["entries"]}
+    feed = {f"{x['auctionId']}/{x['leaseId']}": x for x in
+            httpx.get(f"{url}/marketplace/v1/listings", params={"facilityId": ORLANDO}, timeout=15).json()["data"]["listings"]}
+    closed = sale_items(session, state="closed")
+    return {
+        "a sale item closed while the FMS does not show that auction and lease cancelled":
+            sum(1 for w in closed if w.kind != sales.OUTSIDE and truth.get(w.subject_id, {}).get("status") != "CANCELLED"),
+        "an outside listing closed without that site's own feed reporting it withdrawn":
+            sum(1 for w in closed if w.kind == sales.OUTSIDE and feed.get(w.subject_id, {}).get("status") != "WITHDRAWN"),
+        "a zero balance with no payment since the notice described as a tenant payment":
+            sum(1 for w in sale_items(session, sales.LISTED_PAID, state=None)
+                if not (w.observed or {}).get("payments") and "reports payments" in w.problem),
+        "a settled sale shown with an order between the sale and the payments":
+            sum(1 for w in sale_items(session, sales.SETTLED_REVIEW, state=None) if "makes no claim about the order" not in w.problem),
+    }
+
+
+class SaleTally:
+    def __init__(self, url: str):
+        self.url, self.totals, self.sale_writes = url, {}, 0
+
+    def reconcile(self, session, adapter, facility, passes: int = 1) -> None:
+        for _ in range(passes):
+            sent = len(adapter.recording.paths)
+            sales.reconcile_sales(session, adapter, facility, "eval", self.url)
+            self.sale_writes += sum(1 for path in adapter.recording.paths[sent:] if path not in SALE_ALLOWED)
+            for k, v in sales_red_lines(session, self.url).items():
+                self.totals[k] = self.totals.get(k, 0) + v
+
+
+def schedule(run: AccessRun, lease_id: str, when: str | None = None, marketplace: bool = False) -> None:
+    today = datetime.now(timezone.utc).date()
+    body = {"facilityId": ORLANDO, "auctionTime": when or f"{date.fromordinal(today.toordinal() + 2)}T10:00:00",
+            "leaseIds": [lease_id], "lienStartDate": date.fromordinal(today.toordinal() - 20).isoformat()}
+    if marketplace:
+        body["marketplace"] = "Online auction site (evaluation)"
+    run.sim("/sim/auctions/schedule", body)
+
+
+def sale_tasks(run: AccessRun, lease_id: str) -> list[dict]:
+    return [t for t in run.tasks(lease_id) if t["title"].startswith("Cancel the lien sale")]
+
+
+def sales_scenarios(url: str) -> tuple[list[Row], dict[str, int], int]:
+    run, tally, rows = AccessRun(url), SaleTally(url), []
+
+    # 1. paid in full, the sale still listed, then the task marked done, then the FMS cancellation, then the outside site
+    session, adapter, facility = run.start()
+    schedule(run, "lease_WhitB1042", marketplace=True)
+    run.sim("/sim/payments/offline", {"allocations": {"lease_WhitB1042": 24000}})
+    tally.reconcile(session, adapter, facility, passes=3)
+    listed, tasks = sale_items(session, sales.LISTED_PAID), sale_tasks(run, "lease_WhitB1042")
+    ok = len(listed) == 1 and len(tasks) == 1
+    rows.append(Row("Lien sales", "Paid, sale still listed", "the ledger shows nothing owed; auctions/search still lists the sale",
+                    f"{len(listed)} urgent item, {len(tasks)} FMS task after three passes", "Collections lead: cancel it or say why", ok))
+    if tasks:
+        run.sim("/sim/tasks/complete", {"taskId": tasks[0]["taskId"]})
+    tally.reconcile(session, adapter, facility)
+    still = bool(sale_items(session, sales.LISTED_PAID))
+    run.sim("/sim/auctions/cancel", {"leaseId": "lease_WhitB1042"})
+    tally.reconcile(session, adapter, facility)
+    closed = sale_items(session, sales.LISTED_PAID, state="closed")
+    outside_open = bool(sale_items(session, sales.OUTSIDE))
+    ok = still and len(closed) == 1 and closed[0].verification == sales.CANCELLED_BY and outside_open
+    rows.append(Row("Lien sales", "Task marked done, sale still listed", "the task is COMPLETED; the sale is cancelled later",
+                    "open while listed; closed as FMS lien cancellation verified; the outside listing stays open",
+                    "The outside site is a separate check", ok))
+    run.sim("/sim/listings/withdraw", {"leaseId": "lease_WhitB1042"})
+    tally.reconcile(session, adapter, facility)
+    out = sale_items(session, sales.OUTSIDE, state="closed")
+    ok = len(out) == 1 and out[0].verification == FEED_CONFIRMED
+    rows.append(Row("Lien sales", "Outside listing withdrawn", "the outside site's feed reports the listing withdrawn",
+                    "closed on that feed, not on the FMS cancellation", "Front desk: nothing more", ok))
+
+    # 2. the payment comes back before anyone cancels
+    session, adapter, facility = run.start()
+    schedule(run, "lease_BellC0207")
+    paid = run.sim("/sim/payments/offline", {"allocations": {"lease_BellC0207": 18500}})["data"]["payment"]
+    tally.reconcile(session, adapter, facility)
+    run.sim("/sim/payments/return", {"paymentId": paid["paymentId"]})
+    tally.reconcile(session, adapter, facility, passes=2)
+    review = sale_items(session, sales.BALANCE_CHANGED)
+    ok = len(review) == 1 and not sale_items(session, sales.LISTED_PAID) and len(sale_tasks(run, "lease_BellC0207")) == 1
+    rows.append(Row("Lien sales", "Payment came back before cancelling", "the full payment is returned; the sale is still listed",
+                    "the same item moves to review; its task is marked as resting on the older reading; no second task",
+                    "Collections lead: reassess the sale", ok))
+
+    # 3. a payment after the notice that leaves a balance
+    session, adapter, facility = run.start()
+    schedule(run, "lease_OkfrE0505")
+    run.sim("/sim/payments/offline", {"allocations": {"lease_OkfrE0505": 5000}})
+    tally.reconcile(session, adapter, facility)
+    after = sale_items(session, sales.AFTER_NOTICE)
+    ok = len(after) == 1 and not sale_items(session, sales.LISTED_PAID) and not sale_tasks(run, "lease_OkfrE0505")
+    rows.append(Row("Lien sales", "Payment after the notice, balance left", "$50 paid after the notice; $115 still owed; still listed",
+                    "a review item for a person and counsel; no cancellation task and no conclusion", "Collections lead, with counsel", ok))
+
+    # 4. nothing owed because of a credit, not a payment
+    session, adapter, facility = run.start()
+    schedule(run, "lease_BellC0207")
+    run.sim("/sim/charges", {"leaseId": "lease_BellC0207", "category": "CREDIT", "description": "Courtesy credit", "amount": -18500})
+    tally.reconcile(session, adapter, facility)
+    listed = sale_items(session, sales.LISTED_PAID)
+    ok = len(listed) == 1 and "does not call it a tenant payment" in listed[0].problem
+    rows.append(Row("Lien sales", "Nothing owed after a credit", "a credit clears the balance; no payment since the notice",
+                    "urgent item that says no payment was found", "Collections lead: check why", ok))
+
+    # 5. a sale already settled on an account with nothing owed
+    session, adapter, facility = run.start()
+    schedule(run, "lease_BellC0207")
+    run.sim("/sim/payments/offline", {"allocations": {"lease_BellC0207": 18500}})
+    run.sim("/sim/auctions/settle", {"leaseId": "lease_BellC0207", "outcome": "SOLD", "bidAmount": 40000,
+                                     "winningBidderId": "cust_MarcBell01", "force": True})
+    tally.reconcile(session, adapter, facility)
+    settled = sale_items(session, sales.SETTLED_REVIEW)
+    ok = len(settled) == 1 and not sale_items(session, sales.LISTED_PAID)
+    rows.append(Row("Lien sales", "Sold, account paid", "the FMS records the sale SOLD; the ledger shows nothing owed",
+                    "urgent review that claims no order between the sale and the payment", "Manager, with counsel", ok))
+
+    # 6. the ledger cannot be read
+    session, adapter, facility = run.start()
+    schedule(run, "lease_OkfrE0505")
+    run.sim("/sim/payments/offline", {"allocations": {"lease_OkfrE0505": 5000}})
+    tally.reconcile(session, adapter, facility)
+
+    class LedgerDown:
+        recording = adapter.recording
+
+        def __getattr__(self, name):
+            return getattr(adapter, name)
+
+        def ledger(self, lease_id):
+            raise FMSError("/v1/ledgers/search: ReadTimeout")
+
+    tally.reconcile(session, LedgerDown(), facility)
+    after = sale_items(session, sales.AFTER_NOTICE)
+    ok = len(after) == 1 and "Not freshly verified" in (after[0].note or "")
+    rows.append(Row("Lien sales", "Ledger read fails", "ledgers/search times out", "the item stays open, marked not freshly verified",
+                    "Nothing is decided on an old reading", ok))
+
+    # 7. the answer to the task request is lost
+    session, adapter, facility = run.start()
+    schedule(run, "lease_WhitB1042")
+    run.sim("/sim/payments/offline", {"allocations": {"lease_WhitB1042": 24000}})
+    run.sim("/sim/faults", {"kind": "lose_task_response", "facilityId": ORLANDO})
+    tally.reconcile(session, adapter, facility, passes=3)
+    listed, tasks = sale_items(session, sales.LISTED_PAID), sale_tasks(run, "lease_WhitB1042")
+    ok = len(tasks) == 1 and len(listed) == 1 and listed[0].task_state == "created"
+    rows.append(Row("Lien sales", "Task answer lost", "makes the task, then the answer breaks", f"found it by its marker; {len(tasks)} task",
+                    "Collections lead: one task", ok))
+
+    # 8. a sale time that happens twice when the clocks go back
+    session, adapter, facility = run.start()
+    schedule(run, "lease_WhitB1042", when="2026-11-01T01:30:00")
+    run.sim("/sim/payments/offline", {"allocations": {"lease_WhitB1042": 24000}})
+    tally.reconcile(session, adapter, facility)
+    listed = sale_items(session, sales.LISTED_PAID)
+    ok = len(listed) == 1 and listed[0].observed.get("sale_at") is None and bool(listed[0].observed.get("sale_time_problem"))
+    rows.append(Row("Lien sales", "Sale time on a clock change", "1:30 AM on the night the clocks go back",
+                    "the time is refused, not guessed; the item still opens", "The page says the time could not be worked out", ok))
+    return rows, tally.totals, tally.sale_writes
+
+
+def control_sale_task_closes(url: str) -> Control:
+    """A wrong build that closes a sale item when its task is marked done."""
+    run = AccessRun(url)
+    session, adapter, facility = run.start()
+    schedule(run, "lease_WhitB1042")
+    run.sim("/sim/payments/offline", {"allocations": {"lease_WhitB1042": 24000}})
+    sales.reconcile_sales(session, adapter, facility, "eval", url)
+    run.sim("/sim/tasks/complete", {"taskId": sale_tasks(run, "lease_WhitB1042")[0]["taskId"]})
+    item = sale_items(session, sales.LISTED_PAID)[0]
+    item.state, item.verification = "closed", sales.CANCELLED_BY            # what the wrong build would do
+    session.commit()
+    caught = sales_red_lines(session, url)["a sale item closed while the FMS does not show that auction and lease cancelled"] > 0
+    return Control("A build that closes a sale item when its task is marked done",
+                   "calls the lien cancelled while the FMS still lists the sale", caught)
+
+
+def control_outside_from_fms(url: str) -> Control:
+    """A wrong build that takes the FMS cancellation as the outside site's withdrawal."""
+    run = AccessRun(url)
+    session, adapter, facility = run.start()
+    schedule(run, "lease_WhitB1042", marketplace=True)
+    run.sim("/sim/payments/offline", {"allocations": {"lease_WhitB1042": 24000}})
+    sales.reconcile_sales(session, adapter, facility, "eval", url)
+    run.sim("/sim/auctions/cancel", {"leaseId": "lease_WhitB1042"})
+    sales.reconcile_sales(session, adapter, facility, "eval", url)
+    item = sale_items(session, sales.OUTSIDE)[0]
+    item.state, item.verification = "closed", FEED_CONFIRMED                 # what the wrong build would do
+    session.commit()
+    caught = sales_red_lines(session, url)["an outside listing closed without that site's own feed reporting it withdrawn"] > 0
+    return Control("A build that takes the FMS cancellation as the outside listing's withdrawal",
+                   "closes the outside listing when the FMS shows the lien cancelled", caught)
+
+
 # ------------------------------------------------------------------ payments
 # how many card charges each scenario should leave at the FMS: one per payment the tenant agreed to, none when nothing
 # was charged. Counted from the simulator's own record, so a resent payment shows up whatever Gatehouse believes.
@@ -372,7 +589,12 @@ def evaluate(url: str) -> Report:
     report.red_lines += [RedLine("Access", line, n) for line, n in access_totals.items()]
     report.red_lines.append(RedLine("Access", "a request from Gatehouse that could change access (anything but a read or a task)",
                                     access_writes))
-    report.controls += [control_retry(url), control_task_closes(url)]
+    sale_rows, sale_totals, sale_writes = sales_scenarios(url)
+    report.rows.extend(sale_rows)
+    report.red_lines += [RedLine("Lien sales", line, n) for line, n in sale_totals.items()]
+    report.red_lines.append(RedLine("Lien sales", "a request from Gatehouse that could change a sale (cancel, settle or complete)",
+                                    sale_writes))
+    report.controls += [control_retry(url), control_task_closes(url), control_sale_task_closes(url), control_outside_from_fms(url)]
     return report
 
 

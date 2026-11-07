@@ -114,8 +114,10 @@ def test_a_lien_file_shows_its_state_as_of_its_evaluation_beside_the_balance_now
         lien = visitor.get("/accounts/2/lien").text
         assert "Account changed: re-review</span><span class=\"muted small\">as of" in lien and "Owed on this account, per the FMS: <b>$0.00</b>" in lien
         page = visitor.get("/today").text
-        unit = page[page.index("Unit E-505") - 400: page.index("Unit E-505") + 500]
-        assert "Lien file out of date" in unit and "As of the evaluation on" in unit
+        row = page[page.index("Lien file out of date"): page.index("Lien file out of date") + 1500]
+        assert "Unit E-505" in row and "As of the evaluation on" in row
+        # paid in full with the sale still listed: the sale is now the most urgent thing on Today
+        assert page.index("Sale still listed, nothing owed") < page.index("Lien file out of date")
 
 
 def test_the_seeded_lien_file_is_not_called_stale_by_its_own_payment(fms_url, sim):

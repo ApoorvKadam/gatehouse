@@ -14,6 +14,7 @@
   <li>Collections and payments: identity, the tenant's explicit yes, one charge, lost answers held for a person, returned payments reopening the account.</li>
   <li>Florida lien evidence review: every requirement with its statutory or policy basis. A file is evaluated when a person asks; a payment on or after the day the notice was delivered that leaves a balance due sends it back to review at that evaluation, and a payment of the whole balance takes it out of lien work. Each result is shown as of its evaluation. New York and other states go to counsel.</li>
   <li>Access and overlocks: each unit's operator locks, the shared gate code and any exemption read from the FMS and compared with the facility's recorded lockout rule, in both directions. A mismatch opens an item and one FMS task for a person; Gatehouse never changes access.</li>
+  <li>Lien sales: each listed or settled sale read against the unit's ledger and payments. A sale still listed with nothing owed opens an item and one FMS task, closed only when the FMS shows the lien cancelled; a payment after the notice and a sale settled on a paid account go to a person. A listing on an outside auction site is tracked separately. Gatehouse never cancels or settles a sale.</li>
 </ul>
 </section>
 <section><h2>What comes next</h2>
@@ -28,6 +29,7 @@
   <li>Cubby's ledger does not say which payment paid which charge, so some outcomes need a person.</li>
   <li>No legal approval. The Florida rules are a reading of the statute, not counsel's review. Nothing here says a file is compliant or a unit may be sold.</li>
   <li>The preview runs on a free host that sleeps when idle. It takes a minute or two to wake, and it rebuilds the same world each time it starts.</li>
+  <li>Lien sales: the outside auction site is a synthetic feed served by the simulator, not a real marketplace, and a staff statement that a listing was taken down cannot be recorded yet. Whether a payment satisfied the notice's claim is left to a person and counsel.</li>
   <li>Access: the facility's lockout rule is an operator's statement recorded in Gatehouse, because Cubby documents no such setting. The FMS records configuration; whether a gate opened or a lock came off is not verified.</li>
 </ul>
 </section>
