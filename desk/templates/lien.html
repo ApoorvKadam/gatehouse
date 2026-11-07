@@ -18,9 +18,9 @@
     <thead><tr><th>Requirement</th><th>Before</th><th>Now</th></tr></thead>
     <tbody>
     {% for old, new in changed %}
-      <tr><td class="req">{{ new.requirement }}</td>
-        <td>{% if old %}<span class="status {{ old.status }}">{{ old.status }}</span>: {{ sentence(old.detail) }}{% if old.action %} <b>{{ old.action }}</b>{% endif %} <span class="muted small">({{ old.basis }})</span>{% else %}No finding{% endif %}</td>
-        <td><span class="status {{ new.status }}">{{ new.status }}</span>: {{ sentence(new.detail) }}{% if new.action %} <b>{{ new.action }}</b>{% endif %} <span class="muted small">({{ new.basis }})</span></td></tr>
+      <tr><td class="req">{{ (old or new).requirement }}</td>
+        <td>{% if old %}<span class="status {{ old.status }}">{{ old.status }}</span>: {{ sentence(old.detail) }}{% if old.action %} <b>{{ old.action }}</b>{% endif %} <span class="muted small">({{ old.basis }})</span>{% else %}<span class="muted">Not in the earlier evaluation</span>{% endif %}</td>
+        <td>{% if new %}<span class="status {{ new.status }}">{{ new.status }}</span>: {{ sentence(new.detail) }}{% if new.action %} <b>{{ new.action }}</b>{% endif %} <span class="muted small">({{ new.basis }})</span>{% else %}<span class="muted">No longer found</span>{% endif %}</td></tr>
     {% endfor %}
     </tbody>
   </table>

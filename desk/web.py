@@ -75,22 +75,22 @@ def local(when: datetime | None, zone: str = "America/New_York") -> str:
     return t.strftime("%b %-d, %-I:%M %p")
 
 
-def changed_findings(previous: list[dict], current: list[dict]) -> list[tuple[dict | None, dict]]:
-    """Findings of the current evaluation that differ from the previous one, each beside what it replaced.
-    A requirement can have several findings (one per charge), so unchanged ones are matched first, by content, and
-    only what is left is paired, in order."""
-    content = lambda f: (f.get("basis"), f.get("status"), f.get("detail"), f.get("action"))
-    left: dict[str, list[dict]] = {}
-    for f in previous:
-        left.setdefault(f["requirement"], []).append(f)
+def changed_findings(previous: list[dict], current: list[dict]) -> list[tuple[dict | None, dict | None]]:
+    """What differs between two evaluations, as (before, now) rows. Identical findings are matched first, by content.
+    Nothing else is paired: a requirement can carry one finding per charge, and pairing two different findings would
+    say one became the other. A finding that is gone shows as (it, None); a new one as (None, it)."""
+    content = lambda f: (f.get("requirement"), f.get("basis"), f.get("status"), f.get("detail"), f.get("action"))
+    gone = list(previous)
     new = []
     for f in current:
-        same = next((o for o in left.get(f["requirement"], []) if content(o) == content(f)), None)
+        same = next((o for o in gone if content(o) == content(f)), None)
         if same is not None:
-            left[f["requirement"]].remove(same)
+            gone.remove(same)
         else:
             new.append(f)
-    return [((left.get(f["requirement"]) or [None]).pop(0) if left.get(f["requirement"]) else None, f) for f in new]
+    order = {f.get("requirement"): i for i, f in enumerate(list(current) + list(previous))}
+    rows = [(f, None) for f in gone] + [(None, f) for f in new]
+    return sorted(rows, key=lambda r: order.get((r[0] or r[1]).get("requirement"), 0))
 
 
 def sentence(text: str) -> str:

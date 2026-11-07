@@ -149,11 +149,12 @@ def test_findings_are_written_in_dollars_and_dates_and_quote_records_as_they_are
 
 
 
-def test_changed_since_matches_unchanged_findings_before_pairing_changes():
+def test_changed_since_never_pairs_two_different_findings():
     from desk.web import changed_findings
     a = {"requirement": "account unchanged since notice", "basis": "policy", "status": "review", "detail": "charge A paid", "action": "x"}
     b = {"requirement": "account unchanged since notice", "basis": "policy", "status": "review", "detail": "charge B paid", "action": "x"}
     assert changed_findings([a, b], [b, a]) == []                      # reordered, nothing changed
-    c = dict(b, basis="statute 83.806(1)")
-    assert changed_findings([a, b], [a, c]) == [(b, c)]                # only the finding that changed, beside its old self
+    c = dict(b, detail="charge B waived")
+    assert changed_findings([a, b], [a, c]) == [(b, None), (None, c)]  # B's finding gone, a new one: not "B became C"
+    assert changed_findings([a], []) == [(a, None)]                    # a resolved finding still shows
     assert changed_findings([], [a]) == [(None, a)]
