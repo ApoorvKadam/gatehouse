@@ -126,7 +126,7 @@ def test_the_front_page_shows_every_built_feature_with_a_link_into_it(fms_url, s
     with TestClient(preview(fms_url)) as visitor:
         page = visitor.get("/").text
         for heading in ("A payment whose answer was lost is held, not retried.", "Every fact keeps its source.",
-                        "A payment that comes back reopens the account.", "A lien file goes back to review when the account changes.",
+                        "A payment that comes back reopens the account.", "A lien file goes back to review when the account has changed.",
                         "Where no rules are reviewed, the file goes to counsel."):
             assert heading in page
         for link in ("/today", "/payments/1", "/payments/2", "/accounts/2/lien", "/accounts/6/lien"):
@@ -158,3 +158,20 @@ def test_changed_since_never_pairs_two_different_findings():
     assert changed_findings([a, b], [a, c]) == [(b, None), (None, c)]  # B's finding gone, a new one: not "B became C"
     assert changed_findings([a], []) == [(a, None)]                    # a resolved finding still shows
     assert changed_findings([], [a]) == [(None, a)]
+
+
+
+def test_lien_page_survives_a_document_name_without_text_and_marks_corrections(fms_url, sim):
+    """Evidence may name a document whose text was not kept; a corrected record is marked as replaced."""
+    from desk.models import LienEvidence
+    app = preview(fms_url)
+    client = TestClient(app).__enter__()
+    with app.state.session_factory() as s:
+        e = s.scalars(select(LienEvidence).order_by(LienEvidence.id)).first()
+        s.add(LienEvidence(case_id=e.case_id, kind=e.kind, facts=e.facts, document_name="scan.pdf", document_sha256=None,
+                           document_text=None, entered_by="front desk (synthetic)", supersedes_id=e.id))
+        s.commit()
+        case_id = e.case_id
+    page = client.get(f"/accounts/{case_id}/lien")
+    assert page.status_code == 200
+    assert "Document content not kept" in page.text and "Replaced by a later correction" in page.text

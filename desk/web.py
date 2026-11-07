@@ -394,6 +394,7 @@ def router(pages: Pages) -> APIRouter:
             return templates.TemplateResponse(request, "lien.html", {
                 "case": case, "lease": lease, "facility": facility, "current": current, "previous": previous, "snap": snap, "money": money,
                 "changed": changed, "findings": findings, "evidence": evidence, "names": EVIDENCE_NAMES, "day": day,
+                "replaced": {e.supersedes_id for e in evidence if e.supersedes_id},
                 "local": local, "nav": "today", "facilities": pages.facilities(s)})
 
     @r.get("/limits", response_class=HTMLResponse)
