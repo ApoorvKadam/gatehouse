@@ -9,3 +9,5 @@ npx hyperframes@0.9.19 render --output renders/gatehouse-film.mp4
 ```
 
 The page serves the result from `desk/static/film/` as MP4, a smaller WebM and a poster frame.
+
+`phone/` is the portrait cut that phones get: the same scenes and timing, laid out for a narrow screen, with the account record showing entry titles only so the words stay readable.

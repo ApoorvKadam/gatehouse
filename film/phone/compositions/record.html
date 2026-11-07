@@ -1,0 +1,92 @@
+<template>
+  <style>
+@font-face { font-family: "Geist"; src: url("assets/fonts/geist.woff2") format("woff2"); font-weight: 300 800; }
+@font-face { font-family: "Source Serif 4"; src: url("assets/fonts/source-serif-4.woff2") format("woff2"); font-weight: 200 900; }
+@font-face { font-family: "Geist Mono"; src: url("assets/fonts/geist-mono.woff2") format("woff2"); font-weight: 400 600; }
+
+#root { position: absolute; inset: 0; background: #121413; color: #eceeec; font-family: "Geist", sans-serif; overflow: hidden; }
+.cam { position: absolute; inset: 0; transform-origin: 50% 50%; }
+.serif { font-family: "Source Serif 4", serif; font-weight: 500; letter-spacing: -0.015em; }
+.pnl { position: absolute; background: #171a19; border: 2px solid #2c312e; border-radius: 20px; }
+.chip { display: inline-flex; align-items: center; gap: 12px; font-size: 28px; font-weight: 600; padding: 8px 20px 8px 16px; border-radius: 999px; white-space: nowrap; }
+.chip.act { color: #ff8f78; background: rgba(255,143,120,.14); }
+.chip.wait { color: #f0b54a; background: rgba(240,181,74,.14); }
+.chip.done { color: #63c8be; background: rgba(99,200,190,.14); }
+.chip.plain { color: #b8bdb9; background: #1f2321; }
+.muted { color: #8f9590; }
+.ink2 { color: #b8bdb9; }
+.mono { font-family: "Geist Mono", monospace; }
+
+#r-title { position: absolute; left: 120px; top: 92px; font-size: 60px; }
+#r-chip { position: absolute; right: 120px; top: 108px; height: 60px; }
+#r-chip-l { position: absolute; right: 590px; top: 116px; font-size: 28px; }
+#r-chip .chip { position: absolute; right: 0; top: 0; }
+#r-lanes { left: 120px; right: 120px; top: 220px; bottom: 80px; display: grid; grid-template-columns: repeat(4, 1fr); overflow: hidden; }
+.lane { padding: 34px 30px; border-left: 2px solid #232725; } .lane:first-child { border-left: 0; }
+.lane h3 { margin: 0 0 30px; font-size: 28px; font-weight: 600; } .lane h3 i { display: block; width: 52px; height: 6px; border-radius: 3px; margin-bottom: 18px; }
+.ent { margin-bottom: 34px; border-radius: 14px; }
+.ent time { display: block; font-size: 28px; color: #8f9590; }
+.ent b { display: block; font-size: 30px; font-weight: 600; margin-top: 4px; line-height: 1.25; }
+.ent p { font-size: 28px; color: #b8bdb9; margin: 8px 0 0; line-height: 1.4; }
+#r-new1, #r-new2, #r-new3 { padding: 14px 20px; margin: -14px -20px 14px; }
+.ent { margin-bottom: 26px; }
+
+#r-title { left: 60px; top: 70px; font-size: 54px; }
+#r-chip-l { left: 60px; right: auto; top: 168px; } #r-chip { left: 220px; right: auto; top: 160px; }
+#r-chip .chip { left: 0; right: auto; }
+#r-title { top: 56px; } #r-chip-l { top: 146px; } #r-chip { top: 138px; }
+#r-lanes { left: 40px; right: 40px; top: 214px; bottom: 16px; grid-template-columns: 1fr 1fr; grid-template-rows: auto 1fr; }
+.lane { padding: 18px 20px; } .lane:nth-child(3) { border-left: 0; } .lane:nth-child(n+3) { border-top: 2px solid #232725; }
+.lane h3 { margin-bottom: 12px; } .lane h3 i { margin-bottom: 12px; } .ent { margin-bottom: 12px; }
+.ent b { font-size: 36px; line-height: 1.2; } .ent p, .ent time { display: none; }
+.lane h3 { font-size: 32px; } .ent { margin-bottom: 22px; }
+#r-lanes { grid-template-rows: 1fr 1fr; }
+#r-new1, #r-new2, #r-new3 { padding: 10px 14px; margin: -10px -14px 8px; }
+</style>
+  <div id="root" data-composition-id="record" data-width="1080" data-height="1350">
+    <div class="cam" id="r-cam">
+      <h1 id="r-title" class="serif">Account record &middot; unit B-1042</h1>
+      <p id="r-chip-l" class="muted">Payment 1</p>
+      <div id="r-chip" data-layout-allow-overlap>
+        <span class="chip act" id="r-c1"><svg class="ic " width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2" /><path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2" /><path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8" /><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" /></svg>Outcome unknown: held for a person</span>
+        <span class="chip act" id="r-c2"><svg class="ic " width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16.5 12" /></svg>Outcome unknown</span>
+        <span class="chip done" id="r-c3"><svg class="ic " width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="m9 12 2 2 4-4" /></svg>Confirmed by the FMS ledger</span>
+      </div>
+      <div class="pnl" id="r-lanes">
+        <div class="lane"><h3><i style="background:#8aa3e0"></i>The FMS said</h3>
+          <div class="ent" ><time>Nov 6, 5:52 PM</time><b>Past due</b><p>$240.00 owed since Oct 1, 2026.</p></div>
+        </div>
+        <div class="lane"><h3><i style="background:#a99ff0"></i>Gatehouse observed</h3>
+          <div class="ent" ><time>Nov 6, 5:52 PM</time><b>Sent a $240.00 card payment</b><p>The outcome was not confirmed (the connection broke before the answer arrived).</p></div>
+          <div class="ent" ><time>Nov 6, 5:52 PM</time><b>Found a possible match</b><p>payment_NTSaWQLBzIs (SUCCEEDED) at the FMS may be this attempt. Not matched automatically.</p></div>
+        </div>
+        <div class="lane"><h3><i style="background:#63c8be"></i>Gatehouse concluded</h3>
+          <div class="ent" ><time>Nov 6, 5:52 PM</time><b>Account needs staff</b><p>From open. The FMS balance read $0.00.</p></div>
+          <div class="ent" id="r-new2"><time>Nov 6, 5:58 PM</time><b>Payment confirmed</b><p>$240.00 as payment_NTSaWQLBzIs, applied on the FMS ledger.</p></div>
+          <div class="ent" id="r-new3"><time>Nov 6, 5:58 PM</time><b>Account paid</b><p>From needs staff. The FMS balance read $0.00.</p></div>
+        </div>
+        <div class="lane"><h3><i style="background:#ff8f78"></i>A person decided</h3>
+          <div class="ent" ><time>Nov 6, 5:52 PM</time><b>Tenant agreed to $240.00</b><p>“Yes, go ahead”, card ending 4242, heard by front desk (synthetic).</p></div>
+          <div class="ent" id="r-new1"><time>Nov 6, 5:58 PM</time><b>Resolved by staff</b><p>Collections lead named payment_NTSaWQLBzIs: same lease and amount.</p></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+
+    tl.fromTo("#r-cam", { y: 60 }, { y: 0, duration: 0.6, ease: "expo.out" }, 0);
+    tl.fromTo("#r-lanes .ent:not(#r-new1):not(#r-new2):not(#r-new3)", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.5, ease: "expo.out", stagger: 0.06 }, 0.1);
+    tl.fromTo("#r-new1", { opacity: 0, y: 40, backgroundColor: "rgba(255,143,120,0)" }, { opacity: 1, y: 0, backgroundColor: "rgba(255,143,120,0.12)", duration: 0.7, ease: "expo.out" }, 1.2);
+    tl.to("#r-new1", { backgroundColor: "rgba(255,143,120,0)", duration: 0.8, ease: "power2.inOut" }, 3.2);
+    tl.fromTo("#r-c1", { opacity: 1 }, { opacity: 0, duration: 0.15, ease: "none" }, 2.4);
+    tl.fromTo("#r-c2", { opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.2, ease: "power2.out" }, 2.45);
+    tl.fromTo("#r-new2", { opacity: 0, y: 40, backgroundColor: "rgba(99,200,190,0)" }, { opacity: 1, y: 0, backgroundColor: "rgba(99,200,190,0.12)", duration: 0.7, ease: "expo.out" }, 3.4);
+    tl.to("#r-c2", { opacity: 0, duration: 0.15, ease: "none" }, 4.6);
+    tl.fromTo("#r-c3", { opacity: 0, filter: "blur(6px)", scale: 0.9 }, { opacity: 1, filter: "blur(0px)", scale: 1, duration: 0.45, ease: "back.out(1.2)", transformOrigin: "0% 50%" }, 4.65);
+    tl.fromTo("#r-new3", { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.7, ease: "expo.out" }, 3.8);
+    tl.to("#r-new2", { backgroundColor: "rgba(99,200,190,0)", duration: 0.8, ease: "power2.inOut" }, 5.2);
+
+    window.__timelines["record"] = tl;
+  </script>
+</template>

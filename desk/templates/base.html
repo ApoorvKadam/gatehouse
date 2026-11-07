@@ -50,6 +50,7 @@
 {% if nav == 'front' %}<script>
   // the film plays on its own unless the visitor asked for less motion; then it waits on its poster with controls
   (function () { var v = document.getElementById("film"); if (!v) return;
+    if (window.matchMedia("(max-width: 640px)").matches && v.dataset.phonePoster) v.poster = v.dataset.phonePoster;
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) { v.removeAttribute("autoplay"); v.pause(); v.controls = true; } })();
 </script>{% endif %}
 </body>

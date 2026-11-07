@@ -17,7 +17,10 @@
       </div>
     </div>
     <figure class="film">
-      <video id="film" autoplay muted loop playsinline preload="metadata" poster="{{ url_for('static', path='film/gatehouse-film.jpg') }}" aria-describedby="film-caption">
+      <video id="film" autoplay muted loop playsinline preload="metadata" poster="{{ url_for('static', path='film/gatehouse-film.jpg') }}" data-phone-poster="{{ url_for('static', path='film/gatehouse-film-phone.jpg') }}" aria-describedby="film-caption">
+        {# phones get the portrait cut, laid out for a narrow screen with fewer, larger words #}
+        <source media="(max-width: 640px)" src="{{ url_for('static', path='film/gatehouse-film-phone.webm') }}" type="video/webm">
+        <source media="(max-width: 640px)" src="{{ url_for('static', path='film/gatehouse-film-phone.mp4') }}" type="video/mp4">
         <source src="{{ url_for('static', path='film/gatehouse-film.webm') }}" type="video/webm">
         <source src="{{ url_for('static', path='film/gatehouse-film.mp4') }}" type="video/mp4">
       </video>
