@@ -268,12 +268,25 @@ def reconcile_sales(session: Session, adapter: FMSAdapter, facility: Facility, r
         _outside(session, facility, run_id, entry, listings, result)
     session.commit()
     for item in session.scalars(select(WorkItem).where(WorkItem.run_id == run_id, WorkItem.facility_id == facility.id,
-                                                       WorkItem.kind.in_((LISTED_PAID, BALANCE_CHANGED)), WorkItem.state == "open")):
+                                                       WorkItem.kind.in_((LISTED_PAID, BALANCE_CHANGED, SETTLED_REVIEW)),
+                                                       WorkItem.state == "open")):
         task = item.observed.get("task")
         if item.task_state == "none" and not (item.kind == LISTED_PAID and item.subject_id in decided):
             task = None   # a new task only on this pass's fresh reading; a task already sent is still looked up by its marker
         ensure_task(session, adapter, facility, item, task, result.failures, keep_note=True)
     return result
+
+
+def _carry(item: WorkItem, observed: dict) -> dict:
+    """New facts for an open item, keeping its FMS task and any warning that the task rests on an older reading. That
+    warning lives apart from the note, so a freshness note or task news can never erase it."""
+    old = item.observed or {}
+    return dict(observed, task=observed.get("task") or old.get("task"), task_warning=old.get("task_warning"))
+
+
+def _warn_task(item: WorkItem, warning: str) -> None:
+    if item.task_state != "none":
+        item.observed = dict(item.observed or {}, task_warning=warning)
 
 
 def _open(session: Session, facility: Facility, run_id: str, kind: str, subject: str, problem: str, observed: dict) -> WorkItem:
@@ -305,7 +318,7 @@ def _apply(session: Session, facility: Facility, run_id: str, mine: list[WorkIte
         for item in mine:
             if item.kind in SALE_KINDS:
                 # nothing about payments touches the sale on this reading (a payment came back, say); a person still owns it
-                item.observed, item.updated_at = dict(observed_of(facts), task=item.observed.get("task")), now
+                item.observed, item.updated_at = _carry(item, observed_of(facts)), now
                 if item.kind == AFTER_NOTICE:
                     item.note = ("On the latest reading no payment since the notice touches this sale any more. The item "
                                  "stays open for a person.")
@@ -322,22 +335,22 @@ def _apply(session: Session, facility: Facility, run_id: str, mine: list[WorkIte
         current = next((i for i in mine if i.kind in LISTED_KINDS), None)
         if current is not None:
             _retitle(session, current, SETTLED_REVIEW)
-            current.problem, current.observed, current.updated_at = found.problem, dict(observed, task=current.observed.get("task")), now
-            current.note = ("This item was opened while the sale was listed. The FMS now records it as "
-                            f"{STATUS_WORDS[facts.entry.status]}; any FMS task asking for a cancellation rests on the earlier reading.")
+            current.problem, current.observed, current.updated_at = found.problem, _carry(current, dict(observed, task=None)), now
+            _warn_task(current, "This item was opened while the sale was listed. The FMS now records it as "
+                                f"{STATUS_WORDS[facts.entry.status]}; its FMS task asking for a cancellation rests on the earlier reading.")
             return
     if current is None and found.kind in (LISTED_PAID, AFTER_NOTICE):
         # once the balance changed under an open item, a person owns it: it carries the current facts, nothing new opens
         current = next((i for i in mine if i.kind == BALANCE_CHANGED), None)
         if current is not None:
-            current.observed, current.updated_at = dict(observed, task=current.observed.get("task")), now
+            current.observed, current.updated_at = _carry(current, dict(observed, task=None)), now
             return
     if current is None:
         item = _open(session, facility, run_id, found.kind, found.subject_id, found.problem, observed)
         mine.append(item)
         result.opened += 1
         return
-    current.problem, current.observed, current.updated_at, current.note = found.problem, observed, now, None
+    current.problem, current.observed, current.updated_at, current.note = found.problem, _carry(current, observed), now, None
 
 
 def _balance_changed(session: Session, mine: list[WorkItem], facts: SaleFacts, now: datetime) -> None:
@@ -350,9 +363,9 @@ def _balance_changed(session: Session, mine: list[WorkItem], facts: SaleFacts, n
         item.problem = (f"When this was opened the FMS ledger showed nothing owed. It now shows {dollars(facts.owed)} owed, and "
                         f"{_when(facts)} is still listed. Gatehouse does not close this or treat the sale as cleared; a person "
                         "reassesses the notice, the charges and the sale.")
-        item.observed = dict(observed_of(facts), task=item.observed.get("task"))
-        item.note = ("The FMS task opened for this item asked staff to cancel the sale on the older reading. Do not act on it "
-                     "without this review.")
+        item.observed = _carry(item, observed_of(facts))
+        _warn_task(item, "The FMS task opened for this item asked staff to cancel the sale on the older reading. Do not act on "
+                         "it without this review.")
         item.updated_at = now
 
 

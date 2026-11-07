@@ -90,6 +90,19 @@ def test_a_completed_task_closes_nothing_and_only_the_fms_cancellation_closes_th
         assert outside.state == "closed" and outside.verification == "Confirmed by the outside site's feed"
 
 
+class LedgerDown:
+    """The FMS adapter with its ledger read failing."""
+
+    def __init__(self, adapter):
+        self.adapter = adapter
+
+    def __getattr__(self, name):
+        return getattr(self.adapter, name)
+
+    def ledger(self, lease_id):
+        raise FMSError("/v1/ledgers/search: ReadTimeout")
+
+
 def sale_for(sim, lease_id, days=2):
     today = datetime.now(ZoneInfo("America/New_York")).date()
     r = sim.post("/sim/auctions/schedule", {"facilityId": ORLANDO, "auctionTime": f"{today + timedelta(days=days)}T10:00:00",
@@ -117,13 +130,17 @@ def test_a_payment_that_comes_back_moves_the_item_to_review_with_one_task(fms_ur
         sweep(s, adapter, fms_url)
         s.refresh(item)
         assert item.state == "open" and item.kind == BALANCE_CHANGED
-        assert "$185.00 owed" in item.problem and "Do not act on it" in item.note
+        assert "$185.00 owed" in item.problem and "Do not act on it" in item.observed["task_warning"]
         assert not items(s, kind=LISTED_PAID) and not items(s, kind=AFTER_NOTICE)
         # staff mark the old task done: the warning about it stays on the item
         assert sim.post("/sim/tasks/complete", {"taskId": item.task_id}).status_code == 200
         sweep(s, adapter, fms_url)
         s.refresh(item)
-        assert item.task_status == "COMPLETED" and "Do not act on it" in item.note
+        assert item.task_status == "COMPLETED" and "Do not act on it" in item.observed["task_warning"]
+        # a failed read adds its own note and leaves the warning about the old task in place
+        sweep(s, LedgerDown(adapter), fms_url)
+        s.refresh(item)
+        assert "Not freshly verified" in item.note and "Do not act on it" in item.observed["task_warning"]
     tasks = sim.post("/v1/tasks/search", {"where": {"unitId": "unit_BellC0207"}}).json()["data"]["tasks"]
     assert len(tasks) == 1
 
@@ -189,8 +206,11 @@ def test_a_sale_that_settles_under_an_open_item_turns_that_item_into_the_review(
                                                  "winningBidderId": "cust_MarcBell01", "force": True}).status_code == 200
         sweep(s, adapter, fms_url)
         s.refresh(item)
-        assert item.kind == SETTLED_REVIEW and item.state == "open" and "earlier reading" in item.note
+        assert item.kind == SETTLED_REVIEW and item.state == "open" and "earlier reading" in item.observed["task_warning"]
         assert [i.id for i in items(s, state="open")] == [item.id]
+        sweep(s, adapter, fms_url)          # a later clean pass keeps the warning while the old task exists
+        s.refresh(item)
+        assert "earlier reading" in item.observed["task_warning"] and item.task_status == "OPEN"
 
 
 def test_an_unreadable_outside_feed_is_said_on_its_item(fms_url, sim, adapter):

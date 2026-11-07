@@ -10,6 +10,7 @@
 <div class="state"><span class="chip {{ 'done' if w.state == 'closed' else ('act' if w.kind in ('sale_listed_nothing_owed', 'sale_settled_review') else 'wait') }}">{% include "icons/gavel.svg" %}{{ 'Closed: ' ~ w.verification if w.state == 'closed' else kind_names[w.kind] }}</span>
   <span class="muted small">last read {{ local(w.updated_at) }}</span></div>
 <p class="lede">{{ w.problem }}</p>
+{% if o.get('task_warning') %}<p class="note" style="font-size:var(--t-body);color:var(--ink)">{{ o.task_warning }}</p>{% endif %}
 {% if w.note %}<p class="note" style="font-size:var(--t-body);color:var(--ink)">{{ w.note }}</p>{% endif %}
 
 <div class="grid2 top">
@@ -31,7 +32,7 @@
     <dl class="kv">
       <dt>Owed now</dt><dd>{{ money(o.owed) }}, per the FMS ledger</dd>
       <dt>Notice</dt><dd>{% if o.get('notice_on') %}{{ on(o.notice_on) }}, {{ o.get('notice_source') }}{% else %}No notice date known{% endif %}</dd>
-      <dt>Payments since</dt><dd>{% if o.get('payments') %}{% for p in o.payments %}{{ money(p.amount) }} on {{ on(p.get('on') or p.when[:10]) }} ({{ p.id }}){% if not loop.last %}<br>{% endif %}{% endfor %}{% else %}None the FMS reports as succeeded{% endif %}</dd>
+      <dt>Payments since</dt><dd>{% if not o.get('notice_on') %}Cannot be worked out: no notice date is known{% elif o.get('payments') %}{% for p in o.payments %}{{ money(p.amount) }} on {{ on(p.get('on') or p.when[:10]) }} ({{ p.id }}){% if not loop.last %}<br>{% endif %}{% endfor %}{% else %}None the FMS reports as succeeded{% endif %}</dd>
       {% if case_id %}<dt>Account</dt><dd><a href="/accounts/{{ case_id }}">The account's record</a>{% if 'lien file' in (o.get('notice_source') or '') %} &middot; <a href="/accounts/{{ case_id }}/lien">its lien file</a>{% endif %}</dd>{% endif %}
     </dl>
     <p class="note">Payments the FMS reports as pending, returned, refunded or disputed are not counted. A zero balance without a payment is not called a tenant payment.</p>
@@ -47,7 +48,7 @@
     <dl class="kv">
       <dt>Closes when</dt><dd>{{ w.closing_evidence }}</dd>
       <dt>Who acts</dt><dd>{{ w.who_acts }}</dd>
-      {% if w.kind in ('sale_listed_nothing_owed', 'sale_balance_changed') %}
+      {% if w.kind == 'sale_listed_nothing_owed' or w.task_state != 'none' %}
       <dt>FMS task</dt><dd>{% if w.task_state == 'created' %}{{ w.task_id }}, {{ (w.task_status or 'OPEN')|lower }}{% elif w.task_state == 'outcome_unknown' %}Outcome unknown: the request may have made a task; none with this item's marker is found yet{% elif w.task_state == 'sending' %}Being created{% elif w.task_state == 'rejected' %}Refused by the FMS{% else %}None{% endif %}</dd>
       {% if w.task_marker %}<dt>Marker in the task</dt><dd>{{ w.task_marker }}</dd>{% endif %}
       {% endif %}

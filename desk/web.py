@@ -305,7 +305,8 @@ class Pages:
             task = {"created": f" FMS task: {(w.task_status or 'open').lower()}.", "outcome_unknown": " FMS task: outcome unknown.",
                     "sending": " FMS task: being created.", "rejected": " FMS task: refused by the FMS."}.get(w.task_state, "")
             out.append(Item(rank, sales.KIND_NAMES[w.kind], o.get("unit") or o.get("lease_id", ""), 0, w.opened_at,
-                            w.problem + task + (f" {w.note}" if w.note else ""), w.closing_evidence, w.who_acts, f"/sales/{w.id}",
+                            w.problem + task + (f" {o['task_warning']}" if o.get("task_warning") else "") + (f" {w.note}" if w.note else ""),
+                            w.closing_evidence, w.who_acts, f"/sales/{w.id}",
                             money(o["owed"]) if isinstance(o.get("owed"), int) else ""))
         return out
 
