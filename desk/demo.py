@@ -51,6 +51,18 @@ def build(factory: sessionmaker[Session], adapter: FMSAdapter, fms_base_url: str
     return True
 
 
+def trace(fms_base_url: str) -> dict:
+    """The simulator's own record of the seeded payments, saved once the world is built. A real FMS has nothing
+    like it; the preview shows it next to what Gatehouse concluded, so a reader can check the two agree."""
+    recorded_at = datetime.now(ZoneInfo("America/New_York")).strftime("%b %-d, %-I:%M %p")
+    out = {}
+    with httpx.Client(base_url=fms_base_url, timeout=30) as sim:
+        for lease in ("lease_WhitB1042", "lease_BellC0207", "lease_OkfrE0505"):
+            data = sim.get("/sim/truth", params={"leaseId": lease}).raise_for_status().json()["data"]
+            out[lease] = {**data, "recorded_at": recorded_at}
+    return out
+
+
 def case_of(session: Session, lease_provider_id: str) -> DelinquencyCase:
     lease = session.scalar(select(Lease).where(Lease.provider_id == lease_provider_id))
     return current_case(session, lease)
@@ -69,9 +81,10 @@ def settle(session: Session, adapter: FMSAdapter, passes: int = 4) -> None:
 
 
 def lost_response(session: Session, adapter: FMSAdapter, sim: httpx.Client) -> None:
-    """Dana pays her $240 balance by phone. The FMS takes the money and applies it, and its answer never arrives:
+    """Dana pays her $240 balance by phone. The FMS takes the money and applies it, and the connection breaks before
+    its answer arrives:
     the desk does not retry, does not tell her it went through, and holds the account for a person."""
-    sim.post("/sim/behaviors", json={"leaseId": "lease_WhitB1042", "mode": "lose_response"}).raise_for_status()
+    sim.post("/sim/behaviors", json={"leaseId": "lease_WhitB1042", "mode": "drop_after_charge"}).raise_for_status()
     case = case_of(session, "lease_WhitB1042")
     pay_by_phone(session, adapter, case, IdentityClaim("Whitfield", "0142", "B-1042"), 24000)
     settle(session, adapter)

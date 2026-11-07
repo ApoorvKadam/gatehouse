@@ -9,6 +9,7 @@ dependencies = [
     "sqlalchemy>=2.0",
     "pydantic>=2.7",
     "httpx>=0.27",
+    "jinja2>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -26,4 +27,4 @@ include = ["desk*", "fmssim*"]
 testpaths = ["tests"]
 
 [tool.setuptools.package-data]
-desk = ["reference/*.csv"]
+desk = ["reference/*.csv", "templates/*.html", "static/*"]

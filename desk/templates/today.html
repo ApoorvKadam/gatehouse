@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Today, {{ facility.name }} | Gatehouse{% endblock %}
+{% block main %}
+<div class="wrap">
+  <div class="head">
+    <h1>Today at {{ facility.name }}</h1>
+    <p>{{ items|length }} open {{ 'item' if items|length == 1 else 'items' }}, most consequential first</p>
+  </div>
+  <p class="lede">Every unfinished piece of work at this facility, with the fact that will prove it done. Nothing leaves this list because someone said it is done; it leaves when the system of record shows it.</p>
+  {% if items %}
+  <div class="worklist">
+    <table>
+      <thead><tr><th>What is wrong</th><th>Proved done when</th><th>Who acts</th><th class="num">Amount</th></tr></thead>
+      <tbody>
+      {% for i in items %}
+        <tr>
+          <td>
+            {% set ic = 'scale' if 'Lien' in i.head else ('gavel' if 'Counsel' in i.head else ('rotate-ccw' if i.head in ('Payment returned', 'Payment refunded', 'Refund in progress', 'Payment disputed') else ('credit-card' if 'Payment' in i.head else 'clock-3'))) %}
+            <span class="chip {{ 'act' if i.rank < 2 else ('wait' if i.rank < 4 else 'plain') }}">{% include "icons/" ~ ic ~ ".svg" %}{{ i.head }}</span>
+            <div class="work-head" style="margin-top:8px"><a href="{{ i.link }}">Unit {{ i.unit }}</a> <span class="muted small">since {{ local(i.since) }}</span></div>
+            <p class="work-what">{{ i.what }}</p>
+          </td>
+          <td><p class="work-proof">{{ i.proof }}</p></td>
+          <td class="small">{{ i.who }}</td>
+          <td class="num amount">{{ i.amount }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">Nothing is open at this facility. Every account the FMS reports past due has been worked to a confirmed result.</p>
+  {% endif %}
+</div>
+{% endblock %}

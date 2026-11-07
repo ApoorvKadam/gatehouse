@@ -2,6 +2,7 @@
 {"code", "errors"} on failure, integer cents, and payment statuses where a decline is still an HTTP 200."""
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 import httpx
@@ -33,6 +34,8 @@ def _json(response: httpx.Response) -> dict:
         return {}
     return body if isinstance(body, dict) else {}
 
+
+log = logging.getLogger("desk.adapter")
 
 class CubbyAdapter:
     provider = "cubby"
@@ -126,7 +129,8 @@ class CubbyAdapter:
             return SubmitOutcome(kind="lost", detail="no response before the timeout")
         except httpx.TransportError as exc:
             # the connection broke after the request may have reached the FMS
-            return SubmitOutcome(kind="lost", detail=f"connection failed: {exc.__class__.__name__}")
+            log.info("payment request lost after sending: %s", exc.__class__.__name__)
+            return SubmitOutcome(kind="lost", detail="the connection broke before the answer arrived")
         payload = _json(response)
         errors = payload.get("errors") if isinstance(payload.get("errors"), list) else []
         if 400 <= response.status_code < 500 and "errors" in payload and "code" in payload:

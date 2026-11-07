@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.12-slim AS app
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 TZ=America/New_York \
     DESK_FMS_BASE_URL=http://127.0.0.1:8100 \
@@ -17,3 +17,15 @@ USER gatehouse
 # the simulator stays on 127.0.0.1:8100 inside the container; only Gatehouse's port is published
 EXPOSE 8000
 CMD ["bash", "start.sh"]
+
+# The test suite, run inside the image that ships, so a dependency missing from it fails here and not in
+# production: docker build --target test -t gatehouse:test . && docker run --rm gatehouse:test
+FROM app AS test
+USER root
+RUN pip install --no-cache-dir "pytest>=8"
+COPY tests ./tests
+USER gatehouse
+CMD ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+
+# what a plain `docker build` produces, and what the host runs
+FROM app
