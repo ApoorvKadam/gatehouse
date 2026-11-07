@@ -8,8 +8,11 @@ from datetime import date, datetime
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
+from datetime import timedelta
+
 from .store import (
-    ApiKey, Base, BookEntry, Customer, Facility, Lease, LeaseBehavior, Organization, Payment, PaymentMethod, restart_ids,
+    AccessCode, AccessRule, ApiKey, Base, BookEntry, Customer, Exemption, Facility, Lease, LeaseBehavior, Lock, Organization,
+    Payment, PaymentMethod, facility_today, restart_ids, run_access_automation, unit_id_of,
 )
 
 NORTHSTAR = "org_Northstar01"
@@ -67,6 +70,47 @@ PAYMENT_METHODS = [
 ]
 
 
+# the simulated FMS's own lockout automation: days overdue before it disables the gate code and calls for an overlock
+ACCESS_RULES = [("fac_NSorlando01", 30), ("fac_NSalbany001", 30), ("fac_HBtampa0001", 30)]
+# one gate code per customer at their facility
+ACCESS_CODES = [("cust_DanaWhit01", "fac_NSorlando01", "4127"), ("cust_MarcBell01", "fac_NSorlando01", "8830"),
+                ("cust_PriyaRmn01", "fac_NSorlando01", "2265"), ("cust_TeoVarga01", "fac_NSalbany001", "7741"),
+                ("cust_GinaOkfr01", "fac_NSorlando01", "5196"), ("cust_HBRuizLu01", "fac_HBtampa0001", "3302")]
+# the office's lock stock: serial, combination
+LOCKS = {"fac_NSorlando01": [("NSO-OL-101", "4821"), ("NSO-OL-102", "7310"), ("NSO-OL-103", "0954"), ("NSO-OL-104", "6628"),
+                             ("NSO-OL-105", "3197"), ("NSO-OL-106", "8402")],
+         "fac_NSalbany001": [("NSA-OL-201", "5530"), ("NSA-OL-202", "2716")],
+         "fac_HBtampa0001": [("HBT-OL-301", "9041")]}
+# Priya agreed to pay A-012's October balance in two parts; staff paused its overlock while she does
+EXEMPTIONS = [("lease_RamnA0012", "PAYMENT_ARRANGEMENT", "Paying the October balance in two parts (synthetic)")]
+
+
+def seed_access(session: Session) -> None:
+    """Codes, locks and the overlocks staff already put on, as an office would have them on a normal morning."""
+    session.add_all(AccessRule(facility_id=f, lockout_days=d) for f, d in ACCESS_RULES)
+    session.add_all(AccessCode(code_id=f"code_{c[5:]}_{f[4:]}", facility_id=f, customer_id=c, code=code)
+                    for c, f, code in ACCESS_CODES)
+    for facility_id, stock in LOCKS.items():
+        org = session.get(Facility, facility_id).org_id
+        session.add_all(Lock(lock_id=f"lock_{serial.replace('-', '')}", org_id=org, facility_id=facility_id, serial=serial,
+                             combo=combo) for serial, combo in stock)
+    session.flush()
+    for lease_id, reason, note in EXEMPTIONS:
+        lease = session.get(Lease, lease_id)
+        session.add(Exemption(exemption_id=f"dex_{lease_id[6:]}", lease_id=lease_id, reason=reason, note=note,
+                              end_date=facility_today(session, lease.facility_id) + timedelta(days=30),
+                              pause_delinquency_fees=True, pause_overlock=True))
+    session.flush()
+    for customer_id, facility_id, _ in ACCESS_CODES:
+        run_access_automation(session, facility_id, customer_id)
+    session.flush()
+    # staff have done their rounds: every unit the FMS says needs an overlock has one
+    for lease in session.query(Lease).order_by(Lease.lease_id):
+        if lease.overlock_needed:
+            lock = session.query(Lock).filter(Lock.facility_id == lease.facility_id, Lock.status == "AVAILABLE").order_by(Lock.lock_id).first()
+            lock.status, lock.attached_to = "OPERATOR_USE", unit_id_of(lease)
+
+
 def reset(session: Session, id_seed: str | None = None) -> None:
     restart_ids(id_seed)
     for table in reversed(Base.metadata.sorted_tables):
@@ -88,6 +132,8 @@ def reset(session: Session, id_seed: str | None = None) -> None:
                 description=description, amount=cents, entry_time=datetime(2026, 10, 1, 9, 0, i),
                 accrues_on=accrues_on, accrues_through=(accrues_on.replace(day=28) if accrues_on else None)))
     session.add_all(PaymentMethod(payment_method_id=pm, customer_id=c, last4=l4) for pm, c, l4 in PAYMENT_METHODS)
+    session.flush()
+    seed_access(session)
     session.commit()
 
 
