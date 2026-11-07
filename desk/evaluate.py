@@ -75,7 +75,9 @@ def start_simulator() -> tuple[str, uvicorn.Server, threading.Thread]:
     reports it started, so a reset can never reach another simulator that happened to take the port."""
     from fmssim.app import create_app
     db = Path(tempfile.mkdtemp(prefix="gatehouse-eval-")) / "fmssim.db"
-    app = create_app(f"sqlite:///{db}", lose_response_seconds=3.0)
+    # a lost answer takes longer than Gatehouse's 5-second wait, as in the tests, so a busy build machine cannot turn an
+    # ordinary slow read into a failure
+    app = create_app(f"sqlite:///{db}", lose_response_seconds=8.0)
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
     port = sock.getsockname()[1]
@@ -309,7 +311,7 @@ def payment_rows(url: str) -> tuple[list[Row], int, int]:
     """Each payment scenario, and two red lines read from the simulator's own record: card charges beyond the ones the
     tenant agreed to, counted after the scenario; and a tenant sentence that says "applied", judged against the ledger
     at the moment the sentence is written, whenever that is in the scenario."""
-    run = scenarios.Run(url)
+    run = scenarios.Run(url, timeout=5.0)
     rows, duplicates, unproven = [], 0, []
     original = scenarios.tenant_message
 
@@ -333,7 +335,7 @@ def payment_rows(url: str) -> tuple[list[Row], int, int]:
 def control_retry(url: str) -> Control:
     """A wrong build that sends a lost payment again. The duplicate-charge count, the same one the red line uses, must
     see more card charges than the one the tenant agreed to."""
-    run = scenarios.Run(url)
+    run = scenarios.Run(url, timeout=5.0)
     session, adapter, case = run.start("lose_response")
     from .payments import Authorization, PaymentService
     PaymentService(session, adapter).take_payment(case.id, scenarios.DANA_CARD, Authorization.new(True, 24000, 24000))

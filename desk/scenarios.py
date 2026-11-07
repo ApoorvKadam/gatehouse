@@ -35,8 +35,9 @@ class Result:
 
 
 class Run:
-    def __init__(self, fms_url: str, key: str = "sim_org_northstar_full"):
-        self.fms_url, self.key = fms_url, key
+    def __init__(self, fms_url: str, key: str = "sim_org_northstar_full", timeout: float = 1.0):
+        # how long Gatehouse waits for the FMS; it must stay below the simulator's delay for a lost answer
+        self.fms_url, self.key, self.timeout = fms_url, key, timeout
 
     def sim(self, path: str, body: dict | None = None) -> dict:
         r = httpx.post(f"{self.fms_url}{path}", json=body or {}, headers={"Authorization": f"Bearer {self.key}"}, timeout=15)
@@ -50,7 +51,7 @@ class Run:
         if mode:
             self.sim("/sim/behaviors", {"leaseId": DANA, "mode": mode, "lag": lag})
         session = make_session_factory("sqlite:///:memory:")()
-        adapter = CubbyAdapter(self.fms_url, key or self.key, timeout_seconds=1.0)
+        adapter = CubbyAdapter(self.fms_url, key or self.key, timeout_seconds=self.timeout)
         sync_facility(session, adapter, ORLANDO)
         case = current_case(session, session.scalar(select(Lease).where(Lease.provider_id == DANA)))
         return session, adapter, case
@@ -190,7 +191,7 @@ def returned(run: Run):
 @scenario("Key without payment rights", "HTTP 403")
 def read_only(run: Run):
     session, _, case = run.start()
-    limited = CubbyAdapter(run.fms_url, "sim_org_northstar_readonly", timeout_seconds=1.0)
+    limited = CubbyAdapter(run.fms_url, "sim_org_northstar_readonly", timeout_seconds=run.timeout)
     c = PaymentService(session, limited).take_payment(case.id, DANA_CARD, Authorization.new(True, 24000, 24000))
     return c.state, tenant_message(c), c.state == "REJECTED" and run.fms_payments(DANA) == 0
 
