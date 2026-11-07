@@ -362,3 +362,15 @@ def test_a_missing_fms_signal_is_never_presented_as_corroboration(session, adapt
     silent.close()
     (item,) = [w for w in open_items(session) if w.subject_id == "lease_BellC0207"]
     assert "did not say whether an overlock is needed" in item.problem and "calls for an overlock" not in item.problem
+
+
+def test_a_date_review_closes_on_a_readable_date_even_when_the_fms_says_nothing_else(session, adapter, sim, fms_url):
+    facility = orlando(session, adapter)
+    odd = OddDate(fms_url, FULL_KEY, 5.0)
+    reconcile_access(session, odd, facility, RUN)
+    odd.close()
+    silent = SilentOverlock(fms_url, FULL_KEY, 5.0)          # the date reads now; overlockNeeded is absent
+    reconcile_access(session, silent, facility, RUN)
+    silent.close()
+    review = session.scalar(select(WorkItem).where(WorkItem.subject_id == "lease_RamnA0013", WorkItem.kind == REVIEW))
+    assert review.state == "closed" and "readable delinquency date" in review.note

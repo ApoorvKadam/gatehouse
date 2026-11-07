@@ -40,6 +40,7 @@ PHYSICAL = ("Physical outcome not verified: the FMS records configuration, not w
             "off. That needs the gate log or a staff note.")
 CLOSED_BY = "FMS access reconciled"
 KNOWN_CHECK_MESSAGES = ("Access allowed", "Code not found", "Code disabled")
+DATE_SOURCE = "leases/search delinquencyStartDate"
 
 
 @dataclass
@@ -117,11 +118,12 @@ def assess_customer(adapter: FMSAdapter, facility: Facility, policy: AccessPolic
             restricted[pl.provider_id] = None
             views[pl.provider_id] = {**view, "standing": "unknown: the FMS sent a delinquency date that cannot be read",
                                      "overdue_days": None, "should_restrict": None}
-            facts[("lease", pl.provider_id)] = {"locked": bool(operator_locks), "should_restrict": None, "fms_agrees": False}
+            facts[("lease", pl.provider_id)] = {"locked": bool(operator_locks), "should_restrict": None, "fms_agrees": False,
+                                                "date_readable": False}
             out.append(Discrepancy(REVIEW, "lease", pl.provider_id,
                                    f"Unit {unit}: the FMS sent a delinquency date Gatehouse cannot read ({pl.delinquent_since!r}), "
                                    "so whether the unit should be restricted is unknown.",
-                                   "leases/search delinquencyStartDate", "A readable delinquency date from the FMS.",
+                                   DATE_SOURCE, "A readable delinquency date from the FMS.",
                                    "Operations manager", {"delinquent_since": pl.delinquent_since}))
             continue
         should_restrict = overdue is not None and overdue >= policy.lockout_days and not exempt
@@ -137,7 +139,7 @@ def assess_customer(adapter: FMSAdapter, facility: Facility, policy: AccessPolic
         views[pl.provider_id] = {**view, "standing": standing, "overdue_days": overdue,
                                  "should_restrict": None if disagree else should_restrict}
         facts[("lease", pl.provider_id)] = {"locked": bool(operator_locks), "should_restrict": None if disagree else should_restrict,
-                                            "fms_agrees": pl.overlock_needed is not None and not disagree}
+                                            "fms_agrees": pl.overlock_needed is not None and not disagree, "date_readable": True}
         observed = {"standing": standing, "operator_locks": [k.serial for k in operator_locks], "overlock_needed": pl.overlock_needed,
                     "exempt": exempt, "rule_days": policy.lockout_days, "policy": policy.version}
         if disagree:
@@ -288,7 +290,9 @@ def closing(item: WorkItem, facts: dict[tuple[str, str], dict]) -> tuple[str, st
             if not restrict:
                 return "No longer applies", "Closed: the FMS no longer shows the unit past the rule."
             return (CLOSED_BY, f"Closed: Locks Search shows an operator lock on the unit. {PHYSICAL}") if locked else None
-        # a review item closes only when the FMS said, in so many words, what the rule says
+        # each review closes on its own evidence: a readable date, or the FMS stating in so many words what the rule says
+        if item.evidence_source == DATE_SOURCE:
+            return (CLOSED_BY, "Closed: the FMS now sends a readable delinquency date.") if f.get("date_readable") else None
         return (CLOSED_BY, "Closed: the FMS and the recorded rule now agree on this unit.") if f.get("fms_agrees") else None
     allowed, expected = f.get("allowed"), f.get("expected")
     if allowed is None or expected is None:
@@ -327,7 +331,9 @@ def _apply(session: Session, facility: Facility, run_id: str, found: list[Discre
             session.add(item)
             result.opened += 1
         else:
+            # the same item can change cause (an unreadable date, then a disagreement); it carries the current one
             item.problem, item.observed, item.updated_at = d.problem, d.observed, now
+            item.evidence_source, item.closing_evidence, item.who_acts = d.evidence_source, d.closing_evidence, d.who_acts
     for key, item in by_key.items():
         if key in seen:
             continue
