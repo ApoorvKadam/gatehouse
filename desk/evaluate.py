@@ -170,18 +170,20 @@ def expected_mismatches(adapter) -> set[tuple[str, str, str]]:
     return out
 
 
-def access_red_lines(session, adapter) -> dict[str, int]:
-    """The plan's access red lines, counted against the FMS itself after a pass."""
+def access_red_lines(session, adapter, judged: bool = True) -> dict[str, int]:
+    """The plan's access red lines, counted against the FMS itself after a pass. Where no rule is recorded nothing is
+    judged, so the mismatch count is not even worked out."""
     closed_with_lock = sum(1 for w in session.scalars(select(WorkItem).where(
         WorkItem.state == "closed", WorkItem.kind == NOT_RESTORED, WorkItem.subject_type == "lease", WorkItem.verification == CLOSED_BY))
         if any(k.status == "OPERATOR_USE" for k in adapter.locks_for_lease(w.subject_id)))
     verified = sum(1 for w in session.scalars(select(WorkItem))
                    if "verified" in (w.verification or "").lower() and "not verified" not in (w.verification or "").lower())
-    open_keys = {(w.kind, w.subject_type, w.subject_id) for w in items(session)}
-    unflagged = len(expected_mismatches(adapter) - open_keys)
-    return {"an access item closed while Locks Search still shows the operator lock": closed_with_lock,
-            "a physical outcome labeled verified": verified,
-            "a mismatch (lock, missing lock or gate code) left without a work item after a pass": unflagged}
+    out = {"an access item closed while Locks Search still shows the operator lock": closed_with_lock,
+           "a physical outcome labeled verified": verified}
+    if judged:
+        open_keys = {(w.kind, w.subject_type, w.subject_id) for w in items(session)}
+        out["a mismatch (lock, missing lock or gate code) left without a work item after a pass"] = len(expected_mismatches(adapter) - open_keys)
+    return out
 
 
 # what Gatehouse may send to the FMS during an access pass: reads, and one kind of write (a task for a person)
@@ -214,9 +216,8 @@ class Tally:
             sent = len(adapter.recording.paths)
             reconcile_access(session, adapter, facility, "eval")
             self.access_writes += sum(1 for path in adapter.recording.paths[sent:] if path not in ALLOWED)
-            for k, v in access_red_lines(session, adapter).items():
-                if judged or "mismatch" not in k:
-                    self.totals[k] = self.totals.get(k, 0) + v
+            for k, v in access_red_lines(session, adapter, judged).items():
+                self.totals[k] = self.totals.get(k, 0) + v
 
 
 def access_scenarios(url: str) -> tuple[list[Row], dict[str, int], int]:
