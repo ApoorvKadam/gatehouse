@@ -29,7 +29,6 @@ from .adapter.cubby import CubbyAdapter
 from .cases import sync_facility
 from .db import make_session_factory
 from .models import AccessPolicy, Facility, WorkItem
-from .payments import tenant_message
 
 KEY = "sim_org_northstar_full"
 ORLANDO = "fac_NSorlando01"
@@ -72,24 +71,27 @@ class Report:
 
 
 def start_simulator() -> tuple[str, uvicorn.Server, threading.Thread]:
+    """A simulator of our own: the port is bound here and handed to the server, and nothing is sent until that server
+    reports it started, so a reset can never reach another simulator that happened to take the port."""
     from fmssim.app import create_app
     db = Path(tempfile.mkdtemp(prefix="gatehouse-eval-")) / "fmssim.db"
     app = create_app(f"sqlite:///{db}", lose_response_seconds=3.0)
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
     # the simulator's own faults (a dropped connection) are the point of a scenario, not errors to print
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="critical"))
-    thread = threading.Thread(target=server.run, daemon=True)
+    server = uvicorn.Server(uvicorn.Config(app, log_level="critical"))
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
     thread.start()
-    url = f"http://127.0.0.1:{port}"
-    for _ in range(200):
-        try:
-            httpx.post(f"{url}/sim/reset", timeout=1)
+    for _ in range(400):
+        if server.started:
             break
-        except httpx.HTTPError:
-            time.sleep(0.05)
-    return url, server, thread
+        if not thread.is_alive():
+            raise RuntimeError("the evaluation's simulator did not start")
+        time.sleep(0.025)
+    else:
+        raise RuntimeError("the evaluation's simulator did not start in time")
+    return f"http://127.0.0.1:{port}", server, thread
 
 
 # ------------------------------------------------------------------ access scenarios
@@ -127,135 +129,189 @@ def items(session, state: str = "open") -> list[WorkItem]:
     return session.scalars(select(WorkItem).where(WorkItem.state == state)).all()
 
 
+RULE_DAYS = 30   # the rule the evaluation records for the facility (deny the gate code while any unit is past it)
+
+
+def expected_mismatches(adapter) -> set[tuple[str, str, str]]:
+    """Every mismatch the FMS shows against the evaluation's rule, worked out here, apart from desk/access.py: a unit
+    past the rule with no operator lock, a unit not past it with one, a gate code that disagrees with the rule.
+    Units where the FMS's own overlockNeeded disagrees with the rule are left to the review path."""
+    today = datetime.now(timezone.utc).astimezone().date()
+    out = set()
+    by_customer: dict[str, list] = {}
+    for pl in adapter.leases(ORLANDO):
+        by_customer.setdefault(pl.customer_provider_id, []).append(pl)
+    for customer, leases in by_customer.items():
+        exempt = {e.lease_provider_id for e in adapter.exemptions_for_customer(customer)
+                  if e.pause_overlock and e.end_date >= today.isoformat()}
+        eligible = {}
+        for pl in leases:
+            overdue = (today - date.fromisoformat(pl.delinquent_since[:10])).days if pl.delinquent_since else None
+            eligible[pl.provider_id] = overdue is not None and overdue >= RULE_DAYS and pl.provider_id not in exempt
+            if pl.overlock_needed is not None and pl.overlock_needed != eligible[pl.provider_id]:
+                continue
+            locked = any(k.status == "OPERATOR_USE" for k in adapter.locks_for_lease(pl.provider_id))
+            if locked and not eligible[pl.provider_id]:
+                out.add((NOT_RESTORED, "lease", pl.provider_id))
+            if eligible[pl.provider_id] and not locked:
+                out.add((MISSING, "lease", pl.provider_id))
+        codes = adapter.access_codes(ORLANDO, customer)
+        if len(codes) == 1:
+            allowed = adapter.check_code(ORLANDO, codes[0].code).allowed
+            should = not any(eligible.values())
+            if should and not allowed:
+                out.add((NOT_RESTORED, "customer", customer))
+            if allowed and not should:
+                out.add((MISSING, "customer", customer))
+    return out
+
+
 def access_red_lines(session, adapter) -> dict[str, int]:
-    """The plan's access red lines, counted against the FMS itself."""
+    """The plan's access red lines, counted against the FMS itself after a pass."""
     closed_with_lock = sum(1 for w in session.scalars(select(WorkItem).where(
         WorkItem.state == "closed", WorkItem.kind == NOT_RESTORED, WorkItem.subject_type == "lease", WorkItem.verification == CLOSED_BY))
         if any(k.status == "OPERATOR_USE" for k in adapter.locks_for_lease(w.subject_id)))
     verified = sum(1 for w in session.scalars(select(WorkItem))
                    if "verified" in (w.verification or "").lower() and "not verified" not in (w.verification or "").lower())
-    open_keys = {(w.kind, w.subject_id) for w in items(session)}
-    unflagged = 0
-    for pl in adapter.leases(ORLANDO):
-        locked = any(k.status == "OPERATOR_USE" for k in adapter.locks_for_lease(pl.provider_id))
-        if locked and pl.delinquent_since is None and (NOT_RESTORED, pl.provider_id) not in open_keys:
-            unflagged += 1
+    open_keys = {(w.kind, w.subject_type, w.subject_id) for w in items(session)}
+    unflagged = len(expected_mismatches(adapter) - open_keys)
     return {"an access item closed while Locks Search still shows the operator lock": closed_with_lock,
             "a physical outcome labeled verified": verified,
-            "a mismatch left without a work item after a pass": unflagged}
+            "a mismatch (lock, missing lock or gate code) left without a work item after a pass": unflagged}
+
+
+class Tally:
+    """Runs each access pass and checks the red lines right after it, and counts any gate-code or lock change that
+    happened during the pass itself (Gatehouse may only create tasks)."""
+
+    def __init__(self, run: AccessRun):
+        self.run, self.totals, self.access_writes = run, {}, 0
+
+    def state(self) -> tuple:
+        truth = self.run.truth()
+        return (sorted((c["customerId"], c["enabled"]) for c in truth["codes"]),
+                sorted((l["leaseId"], tuple(sorted((k["lockId"], k["status"]) for k in l["locks"]))) for l in truth["leases"]))
+
+    def reconcile(self, session, adapter, facility, passes: int = 1) -> None:
+        for _ in range(passes):
+            before = self.state()
+            reconcile_access(session, adapter, facility, "eval")
+            self.access_writes += int(self.state() != before)
+            for k, v in access_red_lines(session, adapter).items():
+                self.totals[k] = self.totals.get(k, 0) + v
 
 
 def access_scenarios(url: str) -> tuple[list[Row], dict[str, int], int]:
     run = AccessRun(url)
+    tally = Tally(run)
     rows: list[Row] = []
-    totals: dict[str, int] = {}
-    access_writes = 0
-
-    def tally(session, adapter):
-        for k, v in access_red_lines(session, adapter).items():
-            totals[k] = totals.get(k, 0) + v
 
     # 1. a paid tenant is still locked out
     session, adapter, facility = run.start()
     run.sim("/sim/payments/offline", {"allocations": {"lease_WhitB1042": 24000}})
-    before = run.truth()["codes"]
-    for _ in range(3):
-        reconcile_access(session, adapter, facility, "eval")
+    tally.reconcile(session, adapter, facility, passes=3)
     open_ = items(session)
     tasks = run.tasks("lease_WhitB1042")
     ok = [(w.kind, w.subject_id) for w in open_] == [(NOT_RESTORED, "lease_WhitB1042")] and len(tasks) == 1
     rows.append(Row("Access", "Paid, still locked", "the ledger shows the money; the October overlock is still recorded",
                     f"{len(open_)} item, {len(tasks)} FMS task after three passes", "Facility manager: check the lock", ok))
-    tally(session, adapter)
     # 2. staff mark the task done without taking the lock off; then they take it off
-    run.sim("/sim/tasks/complete", {"taskId": tasks[0]["taskId"]} if tasks else {})
-    reconcile_access(session, adapter, facility, "eval")
+    if tasks:
+        run.sim("/sim/tasks/complete", {"taskId": tasks[0]["taskId"]})
+    tally.reconcile(session, adapter, facility)
     still_open = bool(items(session))
     lock = run.locks("lease_WhitB1042")
     if lock:
         run.sim("/sim/locks/return", {"lockId": lock[0]["lockId"]})
-    reconcile_access(session, adapter, facility, "eval")
+    tally.reconcile(session, adapter, facility)
     closed = items(session, "closed")
     ok = still_open and len(closed) == 1 and closed[0].verification == CLOSED_BY
     rows.append(Row("Access", "Task marked done, lock still on", "the task is COMPLETED; Locks Search still shows the lock, later not",
                     "open while the lock was recorded; closed as FMS access reconciled once it was gone",
                     "Physical outcome not verified", ok))
-    tally(session, adapter)
-    access_writes += int(run.truth()["codes"] != before and False)
     # 3. a returned payment leaves a unit past the rule with no lock
     session, adapter, facility = run.start()
     paid = run.sim("/sim/payments/offline", {"allocations": {"lease_BellC0207": 18500}})["data"]["payment"]
     run.sim("/sim/locks/return", {"lockId": run.locks("lease_BellC0207")[0]["lockId"]})
     run.sim("/sim/payments/return", {"paymentId": paid["paymentId"]})
-    before = run.truth()
-    reconcile_access(session, adapter, facility, "eval")
-    after = run.truth()
-    changed = after["codes"] != before["codes"] or [l["locks"] for l in after["leases"]] != [l["locks"] for l in before["leases"]]
-    access_writes += int(changed)
-    ok = [(w.kind, w.subject_id) for w in items(session)] == [(MISSING, "lease_BellC0207")] and not changed
-    rows.append(Row("Access", "Payment came back, no lock", "the return puts the unit 36 days past a 30-day rule; no lock recorded",
+    writes_before = tally.access_writes
+    tally.reconcile(session, adapter, facility)
+    ok = [(w.kind, w.subject_id) for w in items(session)] == [(MISSING, "lease_BellC0207")] and tally.access_writes == writes_before
+    rows.append(Row("Access", "Payment came back, no lock", "the return puts the unit past a 30-day rule; no lock recorded",
                     "flagged for a person; no code or lock changed", "Facility manager: decide on an overlock", ok))
-    tally(session, adapter)
     # 4. a lost answer to the task request
     session, adapter, facility = run.start()
     run.sim("/sim/payments/offline", {"allocations": {"lease_WhitB1042": 24000}})
     run.sim("/sim/faults", {"kind": "lose_task_response", "facilityId": ORLANDO})
-    for _ in range(3):
-        reconcile_access(session, adapter, facility, "eval")
+    tally.reconcile(session, adapter, facility, passes=3)
     tasks = run.tasks("lease_WhitB1042")
     ok = len(tasks) == 1 and items(session)[0].task_state == "created"
     rows.append(Row("Access", "Task answer lost", "makes the task, then the answer breaks", f"found it by its marker; {len(tasks)} task in the FMS",
                     "Facility manager: one task", ok))
-    tally(session, adapter)
-    # 5. no rule recorded
+    # 5. no rule recorded (no access red lines apply: nothing is judged)
     session = make_session_factory("sqlite:///:memory:")()
     adapter = CubbyAdapter(url, KEY, timeout_seconds=5.0)
     run.sim("/sim/reset")
     sync_facility(session, adapter, ORLANDO)
     facility = session.scalar(select(Facility).where(Facility.provider_id == ORLANDO))
     run.sim("/sim/payments/offline", {"allocations": {"lease_WhitB1042": 24000}})
+    before = tally.state()
     reconcile_access(session, adapter, facility, "eval")
+    tally.access_writes += int(tally.state() != before)
     kinds = [(w.kind, w.subject_type) for w in items(session)]
     ok = kinds == [("access_review_required", "facility")] and not run.tasks("lease_WhitB1042")
     rows.append(Row("Access", "No rule recorded", "a paid unit is still locked, but the facility has no stated rule",
                     "one review item; no verdict and no task", "Operations manager: record the rule", ok))
-    return rows, totals, access_writes
+    return rows, tally.totals, tally.access_writes
 
 
 # ------------------------------------------------------------------ payments
-PAYMENT_STATES = ("SUBMITTING", "PENDING_AT_FMS", "AWAITING_APPLICATION", "OUTCOME_UNKNOWN", "NEEDS_STAFF", "DECLINED", "REJECTED",
-                  "NOT_SUBMITTED", "NEEDS_REAUTHORIZATION", "RETURNED", "REFUNDED", "REFUND_PENDING", "DISPUTED",
-                  "CLEARED_BY_STAFF", "CONFIRMED")
+# how many card charges each scenario should leave at the FMS: one per payment the tenant agreed to, none when nothing
+# was charged. Counted from the simulator's own record, so a resent payment shows up whatever Gatehouse believes.
+EXPECTED_CARD_CHARGES = {"Payment applied": 1, "Ledger lags the payment": 1, "Card declined": 0, "Gateway pending": 1,
+                         "Response lost after charging": 1, "FMS refuses the request": 0, "FMS fails mid-request": 0,
+                         "Counter payment at the same time": 1, "Same yes sent twice": 1, "Balance changed after the yes": 0,
+                         "Payment returned later": 1, "Key without payment rights": 0}
+NOT_CHARGED = ("DECLINED", "FAILED", "REJECTED")
 
 
-def applied_without_proof() -> int:
-    """Every sentence a tenant can be told, by payment state: only CONFIRMED, which needs the FMS ledger, may say applied."""
-    from .models import PaymentCommand
-    return sum(1 for s in PAYMENT_STATES if s != "CONFIRMED"
-               and "applied" in tenant_message(PaymentCommand(amount=24000, state=s, provider_reason=None)).lower())
+def card_charges(url: str, lease_id: str) -> int:
+    truth = httpx.get(f"{url}/sim/truth", params={"leaseId": lease_id}, timeout=15).json()["data"]
+    return sum(1 for p in truth["payments"] if p["methodType"] != "CASH" and p["status"] not in NOT_CHARGED)
+
+
+def applied_on_ledger(url: str, lease_id: str) -> bool:
+    """The simulator's own record: a card payment that succeeded and reached the lease ledger."""
+    truth = httpx.get(f"{url}/sim/truth", params={"leaseId": lease_id}, timeout=15).json()["data"]
+    return any(p["methodType"] != "CASH" and p["status"] == "SUCCEEDED" and p["applied"] for p in truth["payments"])
 
 
 def payment_rows(url: str) -> tuple[list[Row], int, int]:
+    """Each payment scenario, then two red lines read from the simulator's own record after it: card charges beyond
+    the ones the tenant agreed to, and a tenant told "applied" while no card payment reached the ledger."""
     run = scenarios.Run(url)
-    rows = []
+    rows, duplicates, applied_without_proof = [], 0, 0
     for fn in scenarios.SCENARIOS:
         desk, told, passed = fn(run)
         rows.append(Row("Payments", fn.title, fn.fms, desk, told, passed))
-    # duplicate charges: every scenario that counts charges passes only with exactly the charges it took
-    duplicates = sum(1 for r in rows if not r.passed and "charge" in r.gatehouse)
-    return rows, applied_without_proof(), duplicates
+        duplicates += max(0, card_charges(url, scenarios.DANA) - EXPECTED_CARD_CHARGES[fn.title])
+        if "applied" in told.lower() and not applied_on_ledger(url, scenarios.DANA):
+            applied_without_proof += 1
+    return rows, applied_without_proof, duplicates
 
 
 # ------------------------------------------------------------------ negative controls
 def control_retry(url: str) -> Control:
-    """A wrong build that sends a lost payment again. The duplicate-charge check must see two charges."""
+    """A wrong build that sends a lost payment again. The duplicate-charge count, the same one the red line uses, must
+    see more card charges than the one the tenant agreed to."""
     run = scenarios.Run(url)
     session, adapter, case = run.start("lose_response")
     from .payments import Authorization, PaymentService
     PaymentService(session, adapter).take_payment(case.id, scenarios.DANA_CARD, Authorization.new(True, 24000, 24000))
     adapter.make_payment(scenarios.DANA, scenarios.DANA_CARD, 24000)          # what the wrong build would do
+    caught = card_charges(url, scenarios.DANA) - EXPECTED_CARD_CHARGES["Response lost after charging"] > 0
     return Control("A build that resends a payment whose answer was lost",
-                   "sends the same $240.00 again after the first answer was lost", run.fms_payments(scenarios.DANA) > 1)
+                   "sends the same $240.00 again after the first answer was lost", caught)
 
 
 def control_task_closes(url: str) -> Control:

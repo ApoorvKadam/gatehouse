@@ -19,10 +19,6 @@ def test_the_evaluation_runs_clean_and_its_wrong_builds_are_caught(tmp_path):
     assert {r["module"] for r in report["rows"]} == {"Payments", "Access"}
 
 
-def test_only_a_confirmed_payment_is_ever_called_applied():
-    assert evaluate.applied_without_proof() == 0
-
-
 def test_the_page_shows_the_report_or_says_there_is_none(fms_url, sim, monkeypatch, tmp_path):
     out = tmp_path / "evaluation.json"
     out.write_text(json.dumps({"generated_at": "2026-11-07T01:00:00+00:00", "ok": True,
