@@ -35,5 +35,25 @@
   {% endfor %}
   </tbody>
 </table>
+{% if access %}
+{% set d = access.data %}
+<section class="panel" style="margin-top:var(--s5)">
+  <h2><span class="lane-dot lane-fms"></span>Access, as the FMS records it</h2>
+  <dl class="kv">
+    <dt>Standing</dt><dd>{{ d.get('standing', 'not read') }}{% if d.get('rule_days') is not none %}, under the facility's {{ d.rule_days }}-day rule{% endif %}</dd>
+    <dt>Should be restricted</dt><dd>{{ {True: 'Yes', False: 'No'}.get(d.get('should_restrict'), 'Unknown') }}</dd>
+    <dt>Operator lock</dt><dd>{% if d.get('operator_locks') %}{% for k in d.operator_locks %}{{ k.serial }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}None recorded{% endif %}</dd>
+    <dt>FMS says overlock needed</dt><dd>{{ {True: 'Yes', False: 'No'}.get(d.get('overlock_needed'), 'Not said') }}</dd>
+    <dt>Exemption</dt><dd>{% if d.get('exemption') %}{{ d.exemption.reason|replace('_', ' ')|lower }} until {{ d.exemption.end_date }}{% if d.exemption.pause_overlock %}, overlock paused{% endif %}{% else %}None{% endif %}</dd>
+    {% set g = d.get('gate', {}) %}
+    <dt>Gate code</dt><dd>{% if g.get('codes') == 1 %}On file (not shown); the FMS answers &ldquo;{{ g.get('message') }}&rdquo;{% elif g %}{{ g.get('codes') }} codes on file{% else %}Not read{% endif %}</dd>
+    <dt>Read</dt><dd>{{ local(access.observed_at) }}, rule {{ d.get('policy') }}</dd>
+  </dl>
+  {% if access_items %}
+  <ul class="decisions" style="margin-top:var(--s3)">{% for w in access_items %}<li><b><a href="/access/{{ w.id }}">{{ kind_names[w.kind] }}</a>, {{ w.state }}</b><span>{{ w.problem }}</span></li>{% endfor %}</ul>
+  {% endif %}
+  <p class="note">The FMS records configuration. Whether the gate opened or a lock came off is not verified here.</p>
+</section>
+{% endif %}
 </div>
 {% endblock %}

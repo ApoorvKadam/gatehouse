@@ -7,7 +7,8 @@ from sqlalchemy import select
 from desk import demo
 from desk.db import make_session_factory
 from desk.lien_files import ensure_append_only
-from desk.models import DelinquencyCase, LienEvaluation, PaymentCommand
+from desk.access import reconcile_access
+from desk.models import DelinquencyCase, Facility, LienEvaluation, PaymentCommand, WorkItem
 from desk.payments import PaymentService
 from desk.rules import import_stitch
 
@@ -55,6 +56,11 @@ def world(factory, adapter, fms_url) -> dict:
                 "lien": [e.state for e in s.scalars(select(LienEvaluation).where(LienEvaluation.case_id == case.id).order_by(LienEvaluation.id))],
                 "truth": truth,
             }
+        out["access"] = sorted((w.kind, w.subject_type, w.subject_id, w.state, w.task_state, w.task_status)
+                               for w in s.scalars(select(WorkItem)))
+        for fac in ("fac_NSorlando01", "fac_NSalbany001"):
+            t = httpx.get(f"{fms_url}/sim/access/truth", params={"facilityId": fac}).json()["data"]
+            out[fac] = {"codes": t["codes"], "leases": t["leases"], "tasks": sorted((x["title"], x["status"]) for x in t["tasks"])}
         return out
 
 
@@ -75,6 +81,8 @@ def test_two_boots_give_the_same_world_and_the_worker_cannot_move_it(fms_url, si
     for _ in range(5):   # the worker's passes read the FMS the way the hosted preview's worker does
         with factory() as s:
             PaymentService(s, adapter).reconcile_all()
+            for facility in s.scalars(select(Facility)).all():
+                reconcile_access(s, adapter, facility, "local")
     assert world(factory, adapter, fms_url) == first
 
 

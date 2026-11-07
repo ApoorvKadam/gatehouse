@@ -10,13 +10,21 @@ Gatehouse finds that work, keeps the evidence, and closes an item only when the 
 
 A 29-second loop of one lost payment, built from the app's own screens (click the frame for the video). Its source is in `film/`.
 
+## Screens
+
+| | |
+|---|---|
+| ![The overview, opening on the film](docs/screens/overview.png) **Overview.** What Gatehouse is, with the film and each built part. | ![Today's worklist](docs/screens/today.png) **Today.** Every open item at a facility, worst first, with what proves it done. |
+| ![A held payment](docs/screens/payment.png) **A held payment.** What the tenant agreed to, what was sent and heard back, and what the FMS shows now. | ![The account record](docs/screens/record.png) **The record.** Four lanes: what the FMS said, what Gatehouse observed and concluded, and what a person decided. |
+| ![A Florida lien file](docs/screens/lien.png) **A lien file.** Every requirement with its basis and evidence, and what changed since the last evaluation. | ![An access item](docs/screens/access.png) **An access item.** The recorded rule, the FMS task, and what the FMS shows unit by unit. |
+
 ## What is built and what is next
 
 | Part | Status | Done means |
 |---|---|---|
 | Collections and payments | Built | The FMS shows the payment succeeded and the ledger shows the money on the charges the tenant agreed to pay |
 | Florida lien evidence | Built | Every requirement has a record; the best a file reaches is a packet for a person to review |
-| Access and overlocks | Next | Gate codes and overlocks in the FMS match what each tenant has paid, in both directions |
+| Access and overlocks | Built | The FMS's gate code and unit locks match the facility's recorded lockout rule, in both directions, on a complete reading |
 | Leads and move-ins | Planned | A missed call counts as recovered only when a specific lease is linked to it |
 | Rent changes | Planned | An approved increase is saved, noticed and charged in the FMS, with what happened after |
 
@@ -30,6 +38,13 @@ The hosted preview is read-only and runs on synthetic data. Its home page shows 
 - **Every outcome has a state.** Declines (an HTTP 200 at Cubby), pending gateway answers, lost responses, FMS failures, late application, refunds, disputes and returns each land in a defined state. A pending payment is never retried. A lost response gets a suggested FMS payment, never an automatic match. What the desk cannot establish goes to staff, who need their own token and record what they found (naming a payment says which one an attempt was; confirming it posted takes their statement that they checked the ledger); "not charged" is refused while the FMS shows the payment pending or succeeded, or while a possible match is unaccounted for. The unit stays held until then.
 - **Tenant conversation.** A tenant can check and pay a past-due balance by message. Claude Haiku handles the conversation but has no tool that charges a card: it can propose an amount, and the card is charged only when the tenant's very next message is a plain yes to that proposal. The model never writes anything the tenant reads: it chooses an action (verify, read the balance, propose a payment, check its status, explain a charge, ask to clarify, hand off) and the desk sends its own sentence, built from the FMS ledger and the payment record. Text the model writes anyway is logged and not sent. Identity comes from what the caller types, lasts 15 minutes and is never renewed by the model; a conversation answers only the sender who started it. Three wrong identity answers, hardship, military service, liens and anything legal go to a person.
 - **Lien evidence, not legal answers.** For a Florida account, operators record the notice, how it was delivered, the posting, each newspaper publication and the legal checks (military disclosure and service, bankruptcy, vehicle or watercraft, dispute, secured party), each with its document. The desk evaluates the file against rule version FL-r1 and lists every open item with its basis: a section of Fla. Stat. 83.801-83.809, or an operator policy the desk applies on top of the statute. The best a file can reach is "Review packet assembled": every listed requirement has a record, with its document or transcription kept where one is needed. Nothing here authenticates those documents: a person still has to check them, and sale authorization is outside this desk. New York is reference only and every New York case goes to counsel; other states have no reviewed rule version.
+
+## Access and overlocks
+
+- **The rule is stated, not guessed.** Cubby documents no facility lockout setting, so the rule (days overdue before lockout, and what one shared gate code does when only some of a customer's units are past it) is recorded in Gatehouse with who approved it and from when. A facility without one gets a review item, not a verdict.
+- **Both directions are work.** Each pass reads every customer's gate code and its check, the locks on each unit, the lease's overlockNeeded and any exemption from the FMS. A tenant who is current or exempt but still has an operator lock or a disabled code, and an account past the rule whose code the FMS still allows or whose unit has no lock, each open an item. A lock in operator use says the unit is restricted, not why, so the task asks a person to check before taking it off.
+- **A task is a request, not proof.** Gatehouse asks for a person through one FMS task per item, recording the intent and a marker before the call. If the answer is lost, it looks the task up by its marker and never creates another while the outcome is unknown. A task marked completed does not close the item; only a later complete FMS reading showing the expected state does. A failed read changes nothing.
+- **Configuration is not the physical world.** The FMS records codes and locks. Whether the gate opened or the lock came off needs the gate log or a staff note, and every access item says so.
 
 ## How it is built
 

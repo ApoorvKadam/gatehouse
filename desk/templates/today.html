@@ -15,9 +15,9 @@
       {% for i in items %}
         <tr>
           <td>
-            {% set ic = 'scale' if 'Lien' in i.head else ('gavel' if 'Counsel' in i.head else ('rotate-ccw' if i.head in ('Payment returned', 'Payment refunded', 'Refund in progress', 'Payment disputed') else ('credit-card' if 'Payment' in i.head else 'clock-3'))) %}
+            {% set ic = 'door-open' if i.link.startswith('/access/') else ('scale' if 'Lien' in i.head else ('gavel' if 'Counsel' in i.head else ('rotate-ccw' if i.head in ('Payment returned', 'Payment refunded', 'Refund in progress', 'Payment disputed') else ('credit-card' if 'Payment' in i.head else 'clock-3')))) %}
             <span class="chip {{ 'act' if i.rank < 2 else ('wait' if i.rank < 4 else 'plain') }}">{% include "icons/" ~ ic ~ ".svg" %}{{ i.head }}</span>
-            <div class="work-head" style="margin-top:8px"><a href="{{ i.link }}">Unit {{ i.unit }}</a> <span class="muted small">since {{ local(i.since) }}</span></div>
+            <div class="work-head" style="margin-top:8px"><a href="{{ i.link }}">{{ i.label or ('Unit ' ~ i.unit) }}</a> <span class="muted small">since {{ local(i.since) }}</span></div>
             <p class="work-what">{{ i.what }}</p>
           </td>
           <td><p class="work-proof">{{ i.proof }}</p></td>

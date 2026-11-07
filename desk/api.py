@@ -102,14 +102,14 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
     trace: dict = {}
     if settings.demo_seed:
         from . import demo
-        demo.build(factory, adapter, settings.fms_base_url)
+        demo.build(factory, adapter, settings.fms_base_url, settings.run_id)
         if settings.public_view:
             try:
                 trace = demo.trace(settings.fms_base_url)
             except Exception:
                 # the pages still work without it; they just do not show the simulator's own record
                 log.exception("could not save the simulator's record of the seeded payments")
-    worker = Worker(factory, adapter, settings.reconcile_every_seconds)
+    worker = Worker(factory, adapter, settings.reconcile_every_seconds, run_id=settings.run_id)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):

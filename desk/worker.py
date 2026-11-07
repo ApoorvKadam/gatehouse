@@ -1,6 +1,8 @@
-"""The reconciliation worker: re-reads the FMS for every unsettled payment and every open case on a timer.
+"""The reconciliation worker: re-reads the FMS for every unsettled payment and every open case on a timer, then
+checks access at every facility this database is bound to.
 
-It only reads. Submitting happens in one place (PaymentService.take_payment) and never from here."""
+It only reads, apart from asking for FMS tasks when access needs a person. Submitting a payment happens in one place
+(PaymentService.take_payment) and never from here."""
 from __future__ import annotations
 
 import logging
@@ -9,23 +11,31 @@ import time
 
 from sqlalchemy.orm import Session, sessionmaker
 
+from .access import bound_facilities, reconcile_access
 from .adapter import FMSAdapter
 from .payments import PaymentService
 
 log = logging.getLogger("desk.worker")
 
 
-def run_once(factory: sessionmaker[Session], adapter: FMSAdapter) -> tuple[int, int]:
-    """One pass: how many payments were checked, and how many FMS reads failed along the way."""
+def run_once(factory: sessionmaker[Session], adapter: FMSAdapter, run_id: str = "local") -> tuple[int, int]:
+    """One pass: how many payments were checked, and how many FMS reads failed along the way (payments and access)."""
     with factory() as session:
         service = PaymentService(session, adapter)
         checked = service.reconcile_all()
-        return checked, service.read_failures
+        failures = service.read_failures
+        for facility in bound_facilities(session):
+            result = reconcile_access(session, adapter, facility, run_id)
+            failures += len(result.failures)
+            if result.opened or result.closed:
+                log.info("access at %s: %d opened, %d closed", facility.provider_id, result.opened, result.closed)
+        return checked, failures
 
 
 class Worker:
-    def __init__(self, factory: sessionmaker[Session], adapter: FMSAdapter, every_seconds: float, stale_after: float | None = None):
-        self.factory, self.adapter, self.every = factory, adapter, every_seconds
+    def __init__(self, factory: sessionmaker[Session], adapter: FMSAdapter, every_seconds: float, stale_after: float | None = None,
+                 run_id: str = "local"):
+        self.factory, self.adapter, self.every, self.run_id = factory, adapter, every_seconds, run_id
         # how long without a successful pass before readiness says the worker is not doing its job
         self.stale_after = stale_after if stale_after is not None else every_seconds * 3 + 30
         self._stop = threading.Event()
@@ -52,7 +62,7 @@ class Worker:
         # the first pass runs at once, so readiness can be earned right after startup
         while True:
             try:
-                checked, failed = run_once(self.factory, self.adapter)
+                checked, failed = run_once(self.factory, self.adapter, self.run_id)
                 if failed:
                     # the pass went on with the other cases, but it did not do its whole job
                     self.last_error = f"{failed} FMS read(s) failed"

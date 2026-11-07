@@ -7,9 +7,9 @@
 The desk never keeps a balance of its own. A balance always comes from the latest FMS snapshot."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base, utcnow
@@ -244,3 +244,63 @@ class LienEvaluation(Base):
     findings: Mapped[list] = mapped_column(JSON)
     timing: Mapped[dict] = mapped_column(JSON)
     evaluated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class AccessPolicy(Base):
+    """A facility's lockout rule as an operator stated it, with who approved it and from when. Cubby documents no such
+    setting, so Gatehouse never infers it from the FMS; a facility without one gets a review item, not a verdict.
+    gate_rule says what one gate code (shared by all of a customer's units) should do when only some of their units
+    are past the rule: deny_if_any_unit_restricted or allow_if_any_unit_in_good_standing."""
+
+    __tablename__ = "access_policies"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    facility_id: Mapped[int] = mapped_column(ForeignKey("facilities.id"))
+    lockout_days: Mapped[int] = mapped_column(Integer)
+    gate_rule: Mapped[str] = mapped_column(String)
+    source: Mapped[str] = mapped_column(String)
+    approved_by: Mapped[str] = mapped_column(String)
+    effective_on: Mapped[date] = mapped_column(Date)
+    version: Mapped[str] = mapped_column(String)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class WorkItem(Base):
+    """One piece of unfinished work, written by a module that found it (Access first). Repeated observations update
+    the open episode; when the condition is gone it closes; if it comes back, a new episode opens and the old one stays.
+    Closing needs the closing evidence from the system of record, never a task marked done."""
+
+    __tablename__ = "work_items"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[str] = mapped_column(String)
+    facility_id: Mapped[int] = mapped_column(ForeignKey("facilities.id"))
+    kind: Mapped[str] = mapped_column(String)
+    subject_type: Mapped[str] = mapped_column(String)          # facility, customer or lease
+    subject_id: Mapped[str] = mapped_column(String)            # the FMS id of the subject
+    episode_key: Mapped[str] = mapped_column(String)
+    problem: Mapped[str] = mapped_column(Text)
+    evidence_source: Mapped[str] = mapped_column(String)
+    closing_evidence: Mapped[str] = mapped_column(Text)
+    verification: Mapped[str] = mapped_column(String)
+    state: Mapped[str] = mapped_column(String, default="open")
+    who_acts: Mapped[str] = mapped_column(String)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    observed: Mapped[dict] = mapped_column(JSON, default=dict)
+    opened_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # the FMS task asking a person to act: none, intent (recorded before the call), created, or outcome_unknown
+    task_state: Mapped[str] = mapped_column(String, default="none")
+    task_marker: Mapped[str | None] = mapped_column(String, nullable=True)
+    task_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    task_status: Mapped[str | None] = mapped_column(String, nullable=True)
+    task_intent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    __table_args__ = (UniqueConstraint("run_id", "facility_id", "kind", "subject_type", "subject_id", "episode_key"),)
+
+
+class AccessView(Base):
+    """The latest complete access reading for one lease, as the worker took it. Pages read this, never the FMS."""
+
+    __tablename__ = "access_views"
+    lease_id: Mapped[int] = mapped_column(ForeignKey("leases.id"), primary_key=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    data: Mapped[dict] = mapped_column(JSON, default=dict)
