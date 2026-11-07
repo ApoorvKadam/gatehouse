@@ -148,7 +148,7 @@
       <div class="frame-body">
         <dl class="kv">
           <dt>Recorded rule</dt><dd>{{ access_policy.lockout_days }} days overdue; {{ gate_rules.get(access_policy.gate_rule, access_policy.gate_rule) }}</dd>
-          <dt>Account</dt><dd>{{ access_view.get('standing')|capitalize }}</dd>
+          <dt>FMS standing</dt><dd>{{ access_view.get('standing')|capitalize }}</dd>
           {% set g = access_view.get('gate', {}) %}
           <dt>Gate code</dt><dd>{% if g.get('codes') == 1 %}The FMS answers &ldquo;{{ g.get('message') }}&rdquo;{% else %}Not read{% endif %}</dd>
           <dt>Operator lock</dt><dd>{% if access_view.get('operator_locks') %}{{ access_view.operator_locks|map(attribute='serial')|join(', ') }} still recorded on the unit{% else %}None recorded{% endif %}</dd>

@@ -116,8 +116,9 @@ def assess_customer(adapter: FMSAdapter, facility: Facility, policy: AccessPolic
             continue
         should_restrict = overdue is not None and overdue >= policy.lockout_days and not exempt
         restricted[pl.provider_id] = should_restrict
-        standing = ("current" if overdue is None else f"{overdue} days overdue")
-        why_not = ("the account is current" if overdue is None
+        # always from the FMS's side: Gatehouse may still be checking a payment the FMS already shows
+        standing = ("no balance due, per the FMS" if overdue is None else f"{overdue} days overdue, per the FMS")
+        why_not = ("the FMS shows no balance due" if overdue is None
                    else f"its delinquency is paused by a {ex.reason.replace('_', ' ').lower()} exemption until {ex.end_date}" if exempt
                    else f"it is {overdue} days overdue, under the {policy.lockout_days}-day rule")
         views[pl.provider_id] = {
