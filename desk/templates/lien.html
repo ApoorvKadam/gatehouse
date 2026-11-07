@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Lien file, unit {{ lease.unit_name }} | Gatehouse{% endblock %}
+{% block main %}
+<div class="wrap">
+<p class="crumbs"><a href="/today?facility={{ facility.provider_id }}">Today at {{ facility.name }}</a> / <a href="/accounts/{{ case.id }}">Unit {{ lease.unit_name }}</a></p>
+<div class="head">
+  <h1>Lien file, unit {{ lease.unit_name }}</h1>
+  <p>{{ facility.name }} ({{ facility.jurisdiction }}) &middot; evaluated {{ local(current.evaluated_at) }}</p>
+</div>
+<div class="state"><span class="chip {{ 'wait' if current.state in ('Review packet assembled', 'Waiting for a timing threshold', 'Counsel review required') else 'act' }}">{{ current.state }}</span><span class="muted small">as of {{ local(current.evaluated_at) }}</span></div>
+{% if snap %}<p class="lede">Owed on this account, per the FMS: <b>{{ money(snap.total_due) }}</b>, read {{ local(snap.observed_at) }}.</p>{% endif %}
+<p class="lede">{{ current.summary }} Gatehouse never says a file is compliant or that a unit may be sold. The best a file can reach is a packet ready for a person to review. Files are evaluated when someone asks, not yet on their own: account changes after {{ local(current.evaluated_at) }} are not reflected here until the file is evaluated again.</p>
+
+{% if changed %}
+<section class="panel">
+  <h2>Changed since the evaluation of {{ local(previous.evaluated_at) }}</h2>
+  <table>
+    <thead><tr><th>Requirement</th><th>Before</th><th>Now</th></tr></thead>
+    <tbody>
+    {% for old, new in changed %}
+      <tr><td class="req">{{ (old or new).requirement }}</td>
+        <td>{% if old %}<span class="status {{ old.status }}">{{ old.status }}</span>: {{ sentence(old.detail) }}{% if old.action %} <b>{{ old.action }}</b>{% endif %} <span class="muted small">({{ old.basis }})</span>{% else %}<span class="muted">Not in the earlier evaluation</span>{% endif %}</td>
+        <td>{% if new %}<span class="status {{ new.status }}">{{ new.status }}</span>: {{ sentence(new.detail) }}{% if new.action %} <b>{{ new.action }}</b>{% endif %} <span class="muted small">({{ new.basis }})</span>{% else %}<span class="muted">No longer found</span>{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+<section class="panel" style="margin-top: var(--s5)">
+  <h2>Every requirement, open items first</h2>
+  <table>
+    <thead><tr><th>Requirement</th><th>Basis</th><th>Status</th><th>What the file shows</th></tr></thead>
+    <tbody>
+    {% for f in findings %}
+      <tr><td class="req">{{ f.requirement }}</td><td>{{ f.basis }}</td>
+        <td class="status {{ f.status }}"><span class="mark{% if f.status == 'met' %} filled{% endif %}"></span>{{ f.status }}</td>
+        <td>{{ sentence(f.detail) }}{% if f.action %}<br><b>{{ f.action }}</b>{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<div class="grid2 top">
+  {% if current.timing %}
+  <section class="panel">
+    <h2>Dates under this rule version</h2>
+    <dl class="kv">{% for k, v in current.timing.items() %}<dt>{{ k|capitalize }}</dt><dd>{{ day(v) if v and v[:2] == '20' else v }}</dd>{% endfor %}</dl>
+  </section>
+  {% endif %}
+  <section class="panel">
+    <h2>Evidence on file</h2>
+    {% if evidence %}
+    <table>
+      <thead><tr><th>Record</th><th>Entered</th><th>Document</th></tr></thead>
+      <tbody>{% for e in evidence %}<tr><td>{{ names.get(e.kind, e.kind) }}{% if e.kind == 'legal_check' %}: {{ e.facts.check|replace('_', ' ') }}{% endif %}{% if e.id in replaced %}<br><span class="muted small">Replaced by a later correction; later evaluations use the correction</span>{% endif %}{% if e.supersedes_id %}<br><span class="muted small">Correction of an earlier record</span>{% endif %}{% if e.entered_at > current.evaluated_at %}<br><span class="muted small">Recorded after the evaluation shown</span>{% endif %}</td><td>{{ e.entered_by }}, {{ local(e.entered_at) }}</td><td>{% if e.document_name %}{{ e.document_name }}<br>{% if e.document_sha256 %}<span class="hash">sha256 {{ e.document_sha256[:12] }}</span>{% else %}<span class="muted small">Document content not kept</span>{% endif %}{% endif %}</td></tr>{% endfor %}</tbody>
+    </table>
+    {% else %}<p>No evidence recorded.</p>{% endif %}
+  </section>
+  <section class="panel wide">
+    <h2>Rule version</h2>
+    <p>{{ current.rule_version or 'None: this state has no reviewed rule version here, so the file goes to counsel.' }}</p>
+    <p class="note">Florida is the one reviewed rule version, built from Fla. Stat. 83.801 to 83.809. It is not legal advice and it was not reviewed by counsel.</p>
+  </section>
+</div>
+</div>
+{% endblock %}

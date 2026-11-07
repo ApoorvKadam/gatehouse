@@ -9,7 +9,7 @@ from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from .store import (
-    ApiKey, Base, BookEntry, Customer, Facility, Lease, LeaseBehavior, Organization, Payment, PaymentMethod,
+    ApiKey, Base, BookEntry, Customer, Facility, Lease, LeaseBehavior, Organization, Payment, PaymentMethod, restart_ids,
 )
 
 NORTHSTAR = "org_Northstar01"
@@ -67,7 +67,8 @@ PAYMENT_METHODS = [
 ]
 
 
-def reset(session: Session) -> None:
+def reset(session: Session, id_seed: str | None = None) -> None:
+    restart_ids(id_seed)
     for table in reversed(Base.metadata.sorted_tables):
         session.execute(delete(table))
     session.add_all(Organization(org_id=o, name=n) for o, n in [(NORTHSTAR, "Northstar Storage"), (HARBOR, "Harbor Self Storage")])

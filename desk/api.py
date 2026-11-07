@@ -1,16 +1,19 @@
 """The desk's HTTP API: the past-due queue, a case with its full history, identity checks and payments."""
 from __future__ import annotations
 
+import dataclasses
 import hmac
 import logging
 import os
+import tempfile
 from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm.exc import StaleDataError
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from .adapter import FMSAdapter, FMSError
@@ -74,6 +77,16 @@ class StaffResolutionIn(BaseModel):
 def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = None, start_worker: bool = True,
                chat_client=None) -> FastAPI:
     settings = settings or Settings.from_env()
+    if settings.public_view and not (settings.demo_seed and urlsplit(settings.fms_base_url).hostname in ("127.0.0.1", "localhost")):
+        # anyone can read the preview without a token, so it may only ever hold the synthetic world
+        raise RuntimeError("the public preview runs only on the synthetic world against the local simulator")
+    if settings.public_view and (settings.operator_token is None or settings.allow_without_token):
+        raise RuntimeError("the public preview needs an operator token for every change")
+    if settings.public_view:
+        # anyone may read the preview, so it never opens a database that existed before this process: each start
+        # gets a new one and builds the synthetic world in it (a configured database is left untouched)
+        preview_dir = tempfile.mkdtemp(prefix="gatehouse-preview-")
+        settings = dataclasses.replace(settings, database_url=f"sqlite:///{preview_dir}/desk.db")
     if chat_client is None and os.environ.get("ANTHROPIC_API_KEY"):
         import anthropic
         chat_client = anthropic.Anthropic()
@@ -86,6 +99,16 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
     ensure_append_only(factory.kw["bind"])
     with factory() as session:
         import_stitch(session)   # published lien-law reference data, stored once per file
+    trace: dict = {}
+    if settings.demo_seed:
+        from . import demo
+        demo.build(factory, adapter, settings.fms_base_url)
+        if settings.public_view:
+            try:
+                trace = demo.trace(settings.fms_base_url)
+            except Exception:
+                # the pages still work without it; they just do not show the simulator's own record
+                log.exception("could not save the simulator's record of the seeded payments")
     worker = Worker(factory, adapter, settings.reconcile_every_seconds)
 
     @asynccontextmanager
@@ -96,8 +119,15 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         if start_worker:
             worker.stop()
 
-    app = FastAPI(title="Past Due Desk", lifespan=lifespan)
+    app = FastAPI(title="Gatehouse", lifespan=lifespan)
     app.state.session_factory = factory
+    if settings.public_view:
+        # the operator screens; for now they exist only in the read-only preview, which needs no sign-in
+        from fastapi.staticfiles import StaticFiles
+
+        from .web import HERE, Pages, router
+        app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
+        app.include_router(router(Pages(factory, trace)))
 
     @app.exception_handler(StaleDataError)
     async def changed_meanwhile(_, exc: StaleDataError):
@@ -121,6 +151,12 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
             raise HTTPException(401, "operator token required")
         return "operator"
 
+    def viewer(x_desk_token: str | None = Header(default=None)) -> str:
+        """Reading. In the public preview anyone may read without a token; a token that is sent is still checked."""
+        if settings.public_view and x_desk_token is None:
+            return "visitor"
+        return operator(x_desk_token)
+
     def check_facility(session: Session, facility_id: str) -> None:
         binding = session.get(DeskBinding, 1)
         if binding is not None and facility_id not in binding.facility_ids:
@@ -143,9 +179,34 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
                 "provider_status": c.provider_status, "provider_reason": c.provider_reason, "checks": c.checks,
                 "created_at": c.created_at, "confirmed_at": c.confirmed_at, "tenant_message": tenant_message(c)}
 
-    @app.get("/api/health")
-    def health():
+    @app.get("/health/live")
+    def live():
+        """The process answers. Nothing else is checked, so a slow FMS never gets the container restarted."""
         return {"ok": True}
+
+    @app.get("/health/ready")
+    def ready():
+        """Ready to serve: the database answers, the FMS answers, and the worker has finished a pass lately."""
+        checks: dict[str, str] = {}
+        try:
+            with factory() as session:
+                session.execute(text("SELECT 1"))
+            checks["database"] = "ok"
+        except Exception as exc:
+            checks["database"] = type(exc).__name__
+        try:
+            adapter.facilities()
+            checks["fms"] = "ok"
+        except Exception as exc:
+            checks["fms"] = type(exc).__name__
+        if not start_worker:
+            checks["worker"] = "not running in this process"
+        elif not worker.alive():
+            checks["worker"] = f"no successful pass lately (last error: {worker.last_error or 'none, still working'})"
+        else:
+            checks["worker"] = "ok"
+        ready_now = all(v == "ok" for v in checks.values())
+        return JSONResponse({"ready": ready_now, "checks": checks}, status_code=200 if ready_now else 503)
 
     @app.post("/api/facilities/{facility_id}/sync")
     def sync(facility_id: str, session: Session = Depends(db), _: str = Depends(operator)):
@@ -157,12 +218,12 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         return {"cases": len(cases)}
 
     @app.get("/api/facilities/{facility_id}/queue")
-    def facility_queue(facility_id: str, session: Session = Depends(db), _: str = Depends(operator)):
+    def facility_queue(facility_id: str, session: Session = Depends(db), _: str = Depends(viewer)):
         check_facility(session, facility_id)
         return {"rows": [r.__dict__ for r in queue(session, facility_id)], "collected": collected(session, adapter.provider, facility_id)}
 
     @app.get("/api/cases/{case_id}")
-    def case_detail(case_id: int, session: Session = Depends(db), _: str = Depends(operator)):
+    def case_detail(case_id: int, session: Session = Depends(db), _: str = Depends(viewer)):
         case = get_case(session, case_id)
         lease = session.get(Lease, case.lease_id)
         snap = session.get(LedgerSnapshot, case.last_snapshot_id) if case.last_snapshot_id else None
@@ -260,7 +321,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         }
 
     @app.get("/api/lien/evaluations/{evaluation_id}/replay")
-    def replay_evaluation(evaluation_id: int, session: Session = Depends(db), _: str = Depends(operator)):
+    def replay_evaluation(evaluation_id: int, session: Session = Depends(db), _: str = Depends(viewer)):
         row = session.get(LienEvaluation, evaluation_id)
         if row is None:
             raise HTTPException(404, "evaluation not found")
@@ -268,7 +329,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         return {"evaluation_id": row.id, "same_result": replay(row)}
 
     @app.get("/api/payments/{command_id}")
-    def payment(command_id: int, session: Session = Depends(db), _: str = Depends(operator)):
+    def payment(command_id: int, session: Session = Depends(db), _: str = Depends(viewer)):
         command = session.get(PaymentCommand, command_id)
         if command is None:
             raise HTTPException(404, "payment not found")

@@ -1,52 +1,19 @@
+# The same single container the hosted preview runs: the FMS simulator on loopback, Gatehouse and its worker on :8000.
 services:
-  fms:
-    image: past-due-desk:local
+  gatehouse:
+    image: gatehouse:local
     build: .
-    command: ["uvicorn", "fmssim.main:app", "--host", "0.0.0.0", "--port", "8100"]
-    environment:
-      SIM_DATABASE_URL: sqlite:////app/data/fmssim.db
-    volumes:
-      - fms-data:/app/data
-    ports:
-      - "8100:8100"
-    mem_limit: 256m
-    memswap_limit: 256m
-
-  desk:
-    image: past-due-desk:local
-    build: .
-    command: ["uvicorn", "desk.main:app", "--host", "0.0.0.0", "--port", "8000"]
     env_file: .env
     environment:
       DESK_DATABASE_URL: sqlite:////app/data/desk.db
-      DESK_FMS_BASE_URL: http://fms:8100
-      # the separate worker service reconciles; the API process runs no loop of its own
-      DESK_RUN_WORKER: "0"
+      SIM_DATABASE_URL: sqlite:////app/data/fmssim.db
+      DESK_FMS_BASE_URL: http://127.0.0.1:8100
     volumes:
-      - desk-data:/app/data
+      - data:/app/data
     ports:
       - "8000:8000"
-    depends_on:
-      - fms
-    mem_limit: 384m
-    memswap_limit: 384m
-
-  worker:
-    image: past-due-desk:local
-    build: .
-    command: ["python", "-m", "desk.worker"]
-    env_file: .env
-    environment:
-      DESK_DATABASE_URL: sqlite:////app/data/desk.db
-      DESK_FMS_BASE_URL: http://fms:8100
-      DESK_RECONCILE_EVERY_SECONDS: "10"
-    volumes:
-      - desk-data:/app/data
-    depends_on:
-      - fms
-    mem_limit: 256m
-    memswap_limit: 256m
+    mem_limit: 512m
+    memswap_limit: 512m
 
 volumes:
-  fms-data:
-  desk-data:
+  data:

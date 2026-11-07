@@ -1,6 +1,8 @@
-FROM python:3.12-slim
+FROM python:3.12-slim AS app
 
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 TZ=America/New_York
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 TZ=America/New_York \
+    DESK_FMS_BASE_URL=http://127.0.0.1:8100 \
+    DESK_DATABASE_URL=sqlite:////app/data/desk.db SIM_DATABASE_URL=sqlite:////app/data/fmssim.db
 WORKDIR /app
 
 COPY pyproject.toml README.md ./
@@ -8,8 +10,22 @@ COPY desk ./desk
 COPY fmssim ./fmssim
 RUN pip install --no-cache-dir ".[chat]" && mkdir -p /app/data
 
-RUN useradd --create-home --uid 1000 desk && chown -R desk /app/data
-USER desk
+COPY start.sh ./
+RUN useradd --create-home --uid 1000 gatehouse && chown -R gatehouse /app/data
+USER gatehouse
 
-EXPOSE 8000 8100
-CMD ["uvicorn", "desk.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# the simulator stays on 127.0.0.1:8100 inside the container; only Gatehouse's port is published
+EXPOSE 8000
+CMD ["bash", "start.sh"]
+
+# The test suite, run inside the image that ships, so a dependency missing from it fails here and not in
+# production: docker build --target test -t gatehouse:test . && docker run --rm gatehouse:test
+FROM app AS test
+USER root
+RUN pip install --no-cache-dir "pytest>=8"
+COPY tests ./tests
+USER gatehouse
+CMD ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+
+# what a plain `docker build` produces, and what the host runs
+FROM app
