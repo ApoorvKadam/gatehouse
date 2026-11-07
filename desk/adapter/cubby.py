@@ -67,7 +67,10 @@ class CubbyAdapter:
             raise PermissionDenied("; ".join(body.get("errors", [])) or path)
         if response.status_code != 200:
             raise FMSError(f"{path}: HTTP {response.status_code} {body.get('errors')}")
-        return body.get("data") or {}
+        data = body.get("data") or {}
+        if not isinstance(data, dict):
+            raise FMSError(f"{path}: the answer's data is not an object")
+        return data
 
     @staticmethod
     def _lease(raw: dict) -> ProviderLease:

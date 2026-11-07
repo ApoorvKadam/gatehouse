@@ -312,3 +312,20 @@ def test_the_outside_feed_still_decides_when_the_fms_sale_list_cannot_be_read(fm
         closed = [i for i in items(s, kind=OUTSIDE, state="closed") if i.subject_id.endswith("lease_WhitB1042")]
         listed = items(s, kind=LISTED_PAID)[0]
         assert len(closed) == 1 and listed.state == "open" and "Not freshly verified" in listed.note and result.failures
+
+
+def test_an_unreadable_listing_status_or_a_missing_feed_keeps_the_item_unverified(fms_url, sim, adapter):
+    from desk.adapter.base import ProviderAuctionEntry
+    from desk.sales import SalesPass, _outside
+    factory = world(adapter, fms_url)
+    with factory() as s:
+        orlando = s.scalar(select(Facility).where(Facility.provider_id == ORLANDO))
+        item = items(s, kind=OUTSIDE)[0]
+        o = item.observed
+        entry = ProviderAuctionEntry(o["auction_id"], o["auction_time"], o["lease_id"], None, None, "LISTED")
+        _outside(s, orlando, "local", entry, [{"auctionId": o["auction_id"], "leaseId": o["lease_id"], "status": None}], SalesPass())
+        s.commit()
+        assert item.state == "open" and "cannot read" in item.note
+        result = reconcile_sales(s, adapter, orlando, "local", None)        # no feed configured any more
+        s.refresh(item)
+        assert "is not configured" in item.note and any("not configured" in f for f in result.failures)

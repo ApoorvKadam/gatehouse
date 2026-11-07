@@ -46,6 +46,9 @@ SETTLED = ("NO_BIDS", "SOLD", "PAYMENT_RECEIVED", "COMPLETE")
 STATUS_WORDS = {"LISTED": "listed", "NO_BIDS": "settled with no bids", "SOLD": "sold", "PAYMENT_RECEIVED": "sold, and the bidder paid",
                 "COMPLETE": "complete", "CANCELLED": "cancelled"}
 CANCELLED_BY = "FMS lien cancellation verified"
+# an FMS answer that failed, or came back in a shape that cannot be read, decides nothing
+UNREADABLE = (FMSError, KeyError, TypeError, ValueError, AttributeError)
+FEED_STATUSES = ("LISTED", "WITHDRAWN")
 OUTSIDE_NOTE = ("Cancelling the lien in the FMS does not take down a listing on an outside auction site; that needs its "
                 "own evidence.")
 CLOSING = {
@@ -204,7 +207,7 @@ def reconcile_sales(session: Session, adapter: FMSAdapter, facility: Facility, r
     now = utcnow()
     try:
         entries = adapter.auction_entries(facility.provider_id)
-    except FMSError as exc:
+    except UNREADABLE as exc:
         # sale items decide nothing on this pass; the outside site's feed is its own evidence and is still read below
         entries = None
         for item in open_items:
@@ -215,11 +218,12 @@ def reconcile_sales(session: Session, adapter: FMSAdapter, facility: Facility, r
     for item in open_items:
         by_subject.setdefault(item.subject_id, []).append(item)
     listings = read_listings(feed_url, facility.provider_id)
-    if feed_url and listings is None:
+    if listings is None and any(i.kind == OUTSIDE for i in open_items):
+        why = "could not be read" if feed_url else "is not configured"
         for item in open_items:
             if item.kind == OUTSIDE:
-                item.note = f"Not freshly verified: the outside site's feed could not be read at {now:%b %-d, %H:%M} UTC."
-        result.failures.append(f"outside listings at {facility.provider_id}: the feed could not be read")
+                item.note = f"Not freshly verified: the outside site's feed {why} ({now:%b %-d, %H:%M} UTC)."
+        result.failures.append(f"outside listings at {facility.provider_id}: the feed {why}")
     decided: set[str] = set()
     for entry in entries or []:
         subject = subject_of(entry)
@@ -235,7 +239,7 @@ def reconcile_sales(session: Session, adapter: FMSAdapter, facility: Facility, r
             try:
                 ledger = adapter.ledger(entry.lease_provider_id)
                 payments = adapter.payments_for_lease(entry.lease_provider_id)
-            except FMSError as exc:
+            except UNREADABLE as exc:
                 for item in mine:
                     if item.kind != OUTSIDE:
                         item.note = f"Not freshly verified: the lease's ledger or payments could not be read at {now:%b %-d, %H:%M} UTC."
@@ -396,6 +400,11 @@ def _outside(session: Session, facility: Facility, run_id: str, entry: ProviderA
     item = session.scalar(select(WorkItem).where(WorkItem.run_id == run_id, WorkItem.facility_id == facility.id, WorkItem.kind == OUTSIDE,
                                                  WorkItem.subject_id == subject, WorkItem.state == "open"))
     now = utcnow()
+    if listing is not None and listing.get("status") not in FEED_STATUSES:
+        if item is not None:
+            item.note = (f"Not verified: the outside site's feed reported this listing with a status Gatehouse cannot read "
+                         f"({listing.get('status')!r}) at {now:%b %-d, %H:%M} UTC.")
+        return
     if listing is None:
         if item is not None:
             # a listing that drops out of the feed is not proof it was withdrawn
