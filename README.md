@@ -10,6 +10,14 @@ Gatehouse finds that work, keeps the evidence, and closes an item only when the 
 
 A 29-second loop of one lost payment, built from the app's own screens (click the frame for the video). Its source is in `film/`.
 
+## Screens
+
+| | |
+|---|---|
+| ![The overview, opening on the film](docs/screens/overview.png) **Overview.** What Gatehouse is, with the film and each built part. | ![Today's worklist](docs/screens/today.png) **Today.** Every open item at a facility, worst first, with what proves it done. |
+| ![A held payment](docs/screens/payment.png) **A held payment.** What the tenant agreed to, what was sent and heard back, and what the FMS shows now. | ![The account record](docs/screens/record.png) **The record.** Four lanes: what the FMS said, what Gatehouse observed and concluded, and what a person decided. |
+| ![A Florida lien file](docs/screens/lien.png) **A lien file.** Every requirement with its basis and evidence, and what changed since the last evaluation. | ![An access item](docs/screens/access.png) **An access item.** The recorded rule, the FMS task, and what the FMS shows unit by unit. |
+
 ## What is built and what is next
 
 | Part | Status | Done means |

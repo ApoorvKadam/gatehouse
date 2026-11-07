@@ -296,7 +296,10 @@ def closing(item: WorkItem, facts: dict[tuple[str, str], dict]) -> tuple[str, st
         # each review closes on its own evidence: the FMS stating in so many words what the rule says, or a readable date
         if item.kind == DISAGREE:
             return (CLOSED_BY, "Closed: the FMS and the recorded rule now agree on this unit.") if f.get("fms_agrees") else None
-        return (CLOSED_BY, "Closed: the FMS now sends a readable delinquency date.") if f.get("date_readable") else None
+        if item.evidence_source == DATE_SOURCE:
+            return (CLOSED_BY, "Closed: the FMS now sends a readable delinquency date.") if f.get("date_readable") else None
+        # any other lease review is held to the stricter evidence: the FMS stating what the rule says
+        return (CLOSED_BY, "Closed: the FMS and the recorded rule now agree on this unit.") if f.get("fms_agrees") else None
     allowed, expected = f.get("allowed"), f.get("expected")
     if allowed is None or expected is None:
         return None
