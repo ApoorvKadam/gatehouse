@@ -271,6 +271,13 @@ def reconcile_sales(session: Session, adapter: FMSAdapter, facility: Facility, r
             _apply(session, facility, run_id, mine, found, facts, result)
             decided.add(subject)
         _outside(session, facility, run_id, entry, listings, result)
+    # an outside listing whose sale no longer appears in auctions/search is still checked against the site's own feed
+    seen = {subject_of(e) for e in entries}
+    for item in open_items:
+        o = item.observed or {}
+        if item.kind == OUTSIDE and item.state == "open" and item.subject_id not in seen and o.get("auction_id") and o.get("lease_id"):
+            gone = ProviderAuctionEntry(o["auction_id"], o.get("auction_time") or "", o["lease_id"], None, None, o.get("status") or "LISTED")
+            _outside(session, facility, run_id, gone, listings, result)
     session.commit()
     for item in session.scalars(select(WorkItem).where(WorkItem.run_id == run_id, WorkItem.facility_id == facility.id,
                                                        WorkItem.kind.in_((LISTED_PAID, BALANCE_CHANGED, SETTLED_REVIEW)),

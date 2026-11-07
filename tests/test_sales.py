@@ -276,3 +276,21 @@ def test_a_listing_missing_from_the_feed_is_not_taken_as_withdrawn(fms_url, sim,
                  [], SalesPass())      # the feed answers, but without this listing
         s.commit()
         assert item.state == "open" and "not proof it was withdrawn" in item.note
+
+
+def test_an_outside_listing_is_checked_even_when_its_sale_left_the_fms_list(fms_url, sim, adapter):
+    factory = world(adapter, fms_url)
+
+    class NoSales:
+        def __getattr__(self, name):
+            return getattr(adapter, name)
+
+        def auction_entries(self, facility_id):
+            return []          # the FMS no longer lists the sale at all
+
+    with factory() as s:
+        assert sim.post("/sim/listings/withdraw", {"leaseId": "lease_WhitB1042"}).status_code == 200
+        sweep(s, NoSales(), fms_url)
+        closed = [i for i in items(s, kind=OUTSIDE, state="closed") if i.subject_id.endswith("lease_WhitB1042")]
+        still = [i for i in items(s, kind=OUTSIDE, state="open") if i.subject_id.endswith("lease_OkfrE0505")]
+        assert len(closed) == 1 and still and still[0].note is None
