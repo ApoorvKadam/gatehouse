@@ -82,14 +82,25 @@ def settle(session: Session, adapter: FMSAdapter, passes: int = 4) -> None:
         PaymentService(session, adapter).reconcile_all()
 
 
+def settle_until(session: Session, adapter: FMSAdapter, command, done, passes: int = 10) -> None:
+    """Reconcile, as the worker would, until the payment reaches the state the story needs. A slow FMS read only
+    costs another pass; a story that never gets there stops the seed instead of opening a different world."""
+    for _ in range(passes):
+        PaymentService(session, adapter).reconcile_all()
+        session.refresh(command)
+        if done(command):
+            return
+    raise RuntimeError(f"seed: payment {command.id} stopped at {command.state}")
+
+
 def lost_response(session: Session, adapter: FMSAdapter, sim: httpx.Client) -> None:
     """Dana pays her $240 balance by phone. The FMS takes the money and applies it, and the connection breaks before
     its answer arrives:
     the desk does not retry, does not tell her it went through, and holds the account for a person."""
     sim.post("/sim/behaviors", json={"leaseId": "lease_WhitB1042", "mode": "drop_after_charge"}).raise_for_status()
     case = case_of(session, "lease_WhitB1042")
-    pay_by_phone(session, adapter, case, IdentityClaim("Whitfield", "0142", "B-1042"), 24000)
-    settle(session, adapter)
+    command = pay_by_phone(session, adapter, case, IdentityClaim("Whitfield", "0142", "B-1042"), 24000)
+    settle_until(session, adapter, command, lambda c: c.state == "NEEDS_STAFF" and c.suggested_payment_id is not None)
 
 
 def returned_payment(session: Session, adapter: FMSAdapter, sim: httpx.Client) -> None:
@@ -97,10 +108,11 @@ def returned_payment(session: Session, adapter: FMSAdapter, sim: httpx.Client) -
     the account reopens, and the unit is past the facility's rule again with no lock on it."""
     case = case_of(session, "lease_BellC0207")
     command = pay_by_phone(session, adapter, case, IdentityClaim("Bell", "0187", "C-207"), 18500)
+    settle_until(session, adapter, command, lambda c: c.state == "CONFIRMED")     # it posts before anything else happens
     for lock in adapter.locks_for_lease("lease_BellC0207"):
         sim.post("/sim/locks/return", json={"lockId": lock.lock_id}).raise_for_status()
     sim.post("/sim/payments/return", json={"paymentId": command.provider_payment_id}).raise_for_status()
-    settle(session, adapter, passes=1)
+    settle_until(session, adapter, command, lambda c: c.state == "RETURNED")
 
 
 def changed_lien_file(session: Session, adapter: FMSAdapter, sim: httpx.Client) -> None:
