@@ -127,11 +127,13 @@ def returned_payment(session: Session, adapter: FMSAdapter, sim: httpx.Client) -
     the account reopens, and the unit is past the facility's rule again with no lock on it."""
     case = case_of(session, "lease_BellC0207")
     command = pay_by_phone(session, adapter, case, IdentityClaim("Bell", "0187", "C-207"), 18500)
-    settle_until(session, adapter, command, lambda c: c.state == "CONFIRMED")     # it posts before anything else happens
+    # it posts, and the account reads paid, before anything else happens
+    settle_until(session, adapter, command, lambda c: c.state == "CONFIRMED" and session.get(DelinquencyCase, c.case_id).state == "paid")
     for lock in adapter.locks_for_lease("lease_BellC0207"):
         sim.post("/sim/locks/return", json={"lockId": lock.lock_id}).raise_for_status()
     sim.post("/sim/payments/return", json={"paymentId": command.provider_payment_id}).raise_for_status()
-    settle_until(session, adapter, command, lambda c: c.state == "RETURNED")
+    # the account must read reopened before the next story syncs the facility, or that sync opens a second case for him
+    settle_until(session, adapter, command, lambda c: c.state == "RETURNED" and session.get(DelinquencyCase, c.case_id).state == "reopened")
 
 
 def changed_lien_file(session: Session, adapter: FMSAdapter, sim: httpx.Client) -> None:
