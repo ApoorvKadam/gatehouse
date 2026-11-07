@@ -1,10 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Unit {{ lease.unit_name }} | Gatehouse{% endblock %}
 {% block main %}
-<p class="crumbs"><a href="/?facility={{ facility.provider_id }}">Today at {{ facility.name }}</a></p>
-<div class="title">
+<div class="wrap">
+<p class="crumbs"><a href="/today?facility={{ facility.provider_id }}">Today at {{ facility.name }}</a></p>
+<div class="head">
   <h1>Unit {{ lease.unit_name }}</h1>
-  <p>{{ facility.name }} &middot; {{ lease.provider_id }}</p>
+  <p>{{ facility.name }} &middot; <span class="mono">{{ lease.provider_id }}</span></p>
 </div>
 <dl class="facts">
   <div><dt>Account</dt><dd>{{ case.state|capitalize }}</dd></div>
@@ -15,7 +16,7 @@
 {% if case.hold_reasons %}<p class="lede">{% for r in case.hold_reasons %}{{ sentence(r) }} {% endfor %}</p>{% endif %}
 <table class="docket">
   <caption class="visually-hidden">Everything on this account, one moment per row, in the lane of whoever said it</caption>
-  <thead><tr><th scope="col" class="when">Recorded</th>{% for key, label in lanes %}<th scope="col">{{ label }}</th>{% endfor %}</tr></thead>
+  <thead><tr><th scope="col" class="when">Recorded</th>{% for key, label in lanes %}<th scope="col"><span class="lane-dot lane-{{ key }}"></span>{{ label }}</th>{% endfor %}</tr></thead>
   <tbody>
   {% for e in entries %}
   <tr>
@@ -34,4 +35,5 @@
   {% endfor %}
   </tbody>
 </table>
+</div>
 {% endblock %}

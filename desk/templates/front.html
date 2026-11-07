@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+{% block title %}Gatehouse: unfinished work in self-storage, checked against the FMS{% endblock %}
+{% block main %}
+<section class="hero">
+  <div class="wrap">
+    <div class="split-head hero-head">
+      <div>
+        <p class="kicker">For self-storage operators</p>
+        <h1>Nothing is done until the FMS shows it.</h1>
+      </div>
+      <div>
+        <p>Gatehouse watches an operator's facility management system and the systems around it. It opens an item for every unfinished piece of work, names the fact that will close it, and sends disagreements to a person with the evidence.</p>
+        <div class="actions">
+          <a class="button primary" href="/today">Open today's work {% include "icons/arrow-right.svg" %}</a>
+          <a class="button" href="#built">See what is built</a>
+        </div>
+      </div>
+    </div>
+    <figure class="film">
+      <video id="film" autoplay muted loop playsinline preload="metadata" poster="{{ url_for('static', path='film/gatehouse-film.jpg') }}" aria-describedby="film-caption">
+        <source src="{{ url_for('static', path='film/gatehouse-film.webm') }}" type="video/webm">
+        <source src="{{ url_for('static', path='film/gatehouse-film.mp4') }}" type="video/mp4">
+      </video>
+      <figcaption id="film-caption">One lost payment, in Gatehouse's own screens: held without a retry, named by a person, confirmed from the FMS ledger, and only then described to the tenant as applied. In this read-only preview the decision is shown, not offered.</figcaption>
+    </figure>
+  </div>
+</section>
+<section class="feature band" id="built">
+  <div class="wrap">
+    <div data-reveal>
+      <p class="kicker" style="--c:var(--ink)">{% include "icons/list-checks.svg" %}Today</p>
+      <h2>One list of everything still open, worst first.</h2>
+      <p>Each item says what is wrong, what will prove it done and who acts. It leaves the list only when the system of record shows it, never because someone said so.</p>
+      <a class="open" href="/today">Open today's work {% include "icons/arrow-right.svg" %}</a>
+    </div>
+  <div class="frame" aria-label="Today, live" data-reveal>
+    <div class="frame-bar"><span><b>Today</b> &middot; {{ facility.name }}</span><span>{{ open_count }} open</span></div>
+    <table>
+      <tbody>
+      {% for i in items %}
+        <tr>
+          <td>{% set ic = 'scale' if 'Lien' in i.head else ('gavel' if 'Counsel' in i.head else ('rotate-ccw' if i.head in ('Payment returned', 'Payment refunded', 'Refund in progress', 'Payment disputed') else ('credit-card' if 'Payment' in i.head else 'clock-3'))) %}<span class="chip {{ 'act' if i.rank < 2 else ('wait' if i.rank < 4 else 'plain') }}">{% include "icons/" ~ ic ~ ".svg" %}{{ i.head }}</span><div class="small muted" style="margin-top:6px">Unit {{ i.unit }} &middot; {{ i.who }}</div></td>
+          <td class="num amount">{{ i.amount }}</td>
+          <td class="num"><a href="{{ i.link }}">Open</a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  </div>
+</section>
+
+
+{% if held %}
+<section class="feature wide">
+  <div class="wrap">
+    <div class="split-head" data-reveal>
+      <div>
+        <p class="kicker" style="--c:var(--brick)">{% include "icons/credit-card.svg" %}Payments</p>
+        <h2>A payment whose answer was lost is held, not retried.</h2>
+      </div>
+      <div>
+        <p>The tenant agreed to {{ money(held.amount) }} {{ "by phone" if (held.authorization or {}).get("channel") == "desk" else "in the tenant chat" }}. No usable answer came back from the FMS{% if held_answer %} ({{ held_answer }}){% endif %}, so nobody can say yet whether the card was charged. Gatehouse does not charge again and does not tell the tenant it worked. It points to an FMS payment that may be this one and waits for a person to decide.</p>
+        <a class="open" href="/payments/{{ held.id }}">Open this payment {% include "icons/arrow-right.svg" %}</a>
+      </div>
+    </div>
+    <div class="frame" data-reveal>
+      <div class="frame-bar"><span><b>Payment</b> &middot; unit {{ held_unit }}</span><span class="chip act">Outcome unknown</span></div>
+      <ol class="steps" data-reveal aria-label="What happened, in order">
+        <li class="done"><span class="dot">{% include "icons/user-check.svg" %}</span><b>Tenant agreed</b>{{ money(held.amount) }}, identity checked</li>
+        <li class="done"><span class="dot">{% include "icons/send.svg" %}</span><b>Sent once</b>after the intent was saved</li>
+        <li class="lost"><span class="dot">{% include "icons/unplug.svg" %}</span><b>No usable answer</b>outcome unknown</li>
+        <li class="held"><span class="dot">{% include "icons/hand.svg" %}</span><b>Held for a person</b>not retried</li>
+      </ol>
+      <div class="frame-body">
+        <dl class="kv pairs">
+          <dt>Tenant agreed to</dt><dd>{{ money(held.amount) }}, with a fresh identity check</dd>
+          <dt>Sent to the FMS</dt><dd>Once, after the intent was written down</dd>
+          <dt>Answer</dt><dd>None usable{% if held_answer %}: {{ held_answer }}{% endif %}</dd>
+          <dt>FMS shows</dt><dd>{{ held.suggested_payment_id or 'No matching payment yet' }}{% if held.suggested_payment_id %}, a possible match{% endif %}</dd>
+          {% if truth %}<dt>Simulator's own record</dt><dd>{{ truth.payments|length }} charge on the lease, {{ truth.payments[0].status if truth.payments else '' }}</dd>{% endif %}
+        </dl>
+      </div>
+    </div>
+  </div>
+</section>
+{% endif %}
+
+{% if record_case %}
+<section class="feature band flip">
+  <div class="wrap">
+    <div data-reveal>
+      <p class="kicker" style="--c:var(--navy)">{% include "icons/rows-3.svg" %}The record</p>
+      <h2>Every fact keeps its source.</h2>
+      <p>Each account's history is kept in four lanes: what the FMS said, what Gatehouse observed, what Gatehouse concluded, and what a person decided. Reading down a lane gives one source's account, so nobody has to guess who said a payment went through.</p>
+      <a class="open" href="/accounts/{{ record_case }}">Open the account record {% include "icons/arrow-right.svg" %}</a>
+    </div>
+    <div class="frame" data-reveal>
+      <div class="frame-bar"><span><b>Account record</b> &middot; unit {{ record_unit }}</span></div>
+      <div class="lanes4">
+        {% for key, label in lane_names %}
+        <div class="lane {{ key }}">
+          <h3>{{ label }}</h3>
+          {% for e in lanes.get(key, [])[:3] %}<p><time>{{ local(e.at) }}</time>{{ e.title }}</p>{% else %}<p class="muted">Nothing yet</p>{% endfor %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</section>
+{% endif %}
+
+{% if returned %}
+<section class="feature tight">
+  <div class="wrap">
+    <div data-reveal>
+      <p class="kicker" style="--c:var(--amber)">{% include "icons/rotate-ccw.svg" %}Returns and disputes</p>
+      <h2>A payment that comes back reopens the account.</h2>
+      <p>A payment that posted can still be returned by the bank, refunded or disputed weeks later. Gatehouse keeps watching confirmed payments, and when the FMS reports one reversed, the account opens again and the work goes back on Today.</p>
+      <a class="open" href="/payments/{{ returned.id }}">Open this payment {% include "icons/arrow-right.svg" %}</a>
+    </div>
+    <div class="frame" data-reveal>
+      <div class="frame-bar"><span><b>Payment</b> &middot; unit {{ returned_unit }}</span><span class="chip wait">Returned</span></div>
+      <div class="frame-body">
+        <dl class="kv">
+          <dt>Amount</dt><dd>{{ money(returned.amount) }}</dd>
+          <dt>Confirmed on the ledger</dt><dd>{{ local(returned.confirmed_at) if returned.confirmed_at else 'Never' }}</dd>
+          <dt>FMS now reports</dt><dd>{{ returned.provider_status }}</dd>
+          <dt>Account</dt><dd>Open again, back on Today</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+</section>
+{% endif %}
+
+{% if changed or counsel %}
+<section class="feature band wide">
+  <div class="wrap">
+    <div class="split-head" data-reveal>
+      {% if changed %}
+      <div>
+        <p class="kicker" style="--c:var(--teal)">{% include "icons/scale.svg" %}Lien files</p>
+        <h2>A lien file goes back to review when the account changes.</h2>
+      </div>
+      <div>
+        <p>For a Florida unit, every requirement of the lien statute is listed with its basis and the evidence recorded for it, and a missing record is an open item. A payment after the notice sends the file back to a person. The excerpt shows the recorded result of the latest evaluation. Gatehouse never says a unit may be sold.</p>
+        <a class="open" href="/accounts/{{ changed.case_id }}/lien">Open this lien file {% include "icons/arrow-right.svg" %}</a>
+      </div>
+      {% else %}
+      <div>
+        <p class="kicker" style="--c:var(--lilac)">{% include "icons/gavel.svg" %}Lien files</p>
+        <h2>Where no rules are reviewed, the file goes to counsel.</h2>
+      </div>
+      <div></div>
+      {% endif %}
+    </div>
+    <div class="lien-pair">
+      {% if changed %}
+      <div class="frame" data-reveal>
+        <div class="frame-bar"><span><b>Lien file</b> &middot; Florida &middot; evaluated {{ local(changed.evaluated_at) }}</span><span class="chip act">{{ changed.state }}</span></div>
+        <table>
+          <thead><tr><th>Requirement</th><th>Status</th></tr></thead>
+          <tbody>
+          {% for f in (changed.findings|rejectattr('status', 'equalto', 'met')|list)[:3] %}<tr><td>{{ sentence(f.detail) }}</td><td><span class="status {{ f.status }}">{{ f.status }}</span></td></tr>{% endfor %}
+          <tr><td class="muted">{{ changed.findings|selectattr('status', 'equalto', 'met')|list|length }} other requirements met, each with its record</td><td><span class="status met">met</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+      {% if counsel %}
+      <div class="frame counsel" data-reveal>
+        <div class="frame-bar"><span><b>Lien file</b> &middot; {{ counsel_state }}</span><span class="chip wait">Counsel review required</span></div>
+        <div class="frame-body">
+          <h3>Where no rules are reviewed, the file goes to counsel.</h3>
+          <p>Florida is the one reviewed rule set. A file from any other state ({{ counsel_state }} here) is not evaluated: it goes to counsel instead of getting a confident answer nobody checked.</p>
+          <p class="muted small">{{ counsel.summary }}</p>
+          <a class="open" href="/accounts/{{ counsel.case_id }}/lien">Open this file {% include "icons/arrow-right.svg" %}</a>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</section>
+{% endif %}
+
+<section class="feature next-band">
+  <div class="wrap">
+    <div class="split-head" data-reveal>
+      <div>
+        <p class="kicker">{% include "icons/calendar-clock.svg" %}Next</p>
+        <h2>The same check, across the rest of the operator's day.</h2>
+      </div>
+      <div>
+        <p>Each part closes work only on the fact that proves it, from the system that owns that fact.</p>
+        <a class="open" href="/limits">What this is and is not {% include "icons/arrow-right.svg" %}</a>
+      </div>
+    </div>
+    <ol class="next-cols" data-reveal>
+      <li>{% include "icons/door-open.svg" %}<b>Access and overlocks</b><span>Done when gate codes and overlocks in the FMS match what each tenant has paid, in both directions.</span></li>
+      <li>{% include "icons/phone.svg" %}<b>Leads and move-ins</b><span>Done when a missed call counts as recovered only once a specific lease is linked to it.</span></li>
+      <li>{% include "icons/trending-up.svg" %}<b>Rent changes</b><span>Done when an approved increase is saved, noticed and charged in the FMS, with what happened after.</span></li>
+    </ol>
+  </div>
+</section>
+{% endblock %}

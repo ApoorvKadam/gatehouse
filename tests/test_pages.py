@@ -26,17 +26,17 @@ def counts(app) -> dict:
 
 def test_today_lists_each_open_item_with_what_proves_it_done(fms_url, sim):
     with TestClient(preview(fms_url)) as visitor:
-        page = visitor.get("/").text
+        page = visitor.get("/today").text
         for head in ("Payment outcome unknown", "Lien file out of date", "Payment returned", "Past due"):
             assert head in page
         assert page.index("Payment outcome unknown") < page.index("Payment returned")
         assert "A person names the FMS payment that is this attempt" in page
         assert "Synthetic technical preview" in page
-        albany = visitor.get("/", params={"facility": "fac_NSalbany001"}).text
+        albany = visitor.get("/today", params={"facility": "fac_NSalbany001"}).text
         assert "Counsel review required" in albany and "Payment outcome unknown" not in albany
         # a facility id that is not ours is not quietly swapped for another facility
-        assert visitor.get("/", params={"facility": "fac_HBtampa0001"}).status_code == 404
-        assert visitor.get("/?facility=").status_code == 404
+        assert visitor.get("/today", params={"facility": "fac_HBtampa0001"}).status_code == 404
+        assert visitor.get("/today?facility=").status_code == 404
 
 
 def test_the_lost_payment_shows_both_sides_and_offers_no_payment_button(fms_url, sim):
@@ -70,7 +70,7 @@ def test_reading_every_page_writes_nothing(fms_url, sim):
     app = preview(fms_url)
     with TestClient(app) as visitor:
         before = counts(app)
-        pages = ["/", "/?facility=fac_NSalbany001", "/limits"]
+        pages = ["/", "/today", "/today?facility=fac_NSalbany001", "/limits"]
         for case_id in range(1, 7):
             pages += [f"/accounts/{case_id}", f"/accounts/{case_id}/lien"]
         pages += ["/payments/1", "/payments/2"]
@@ -84,7 +84,7 @@ def test_the_screens_exist_only_in_the_preview(fms_url, sim):
     settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=5.0,
                         reconcile_every_seconds=60, operator_token="op-token")
     with TestClient(create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 5.0), start_worker=False)) as c:
-        assert c.get("/").status_code == 404 and c.get("/payments/1").status_code == 404
+        assert c.get("/").status_code == 404 and c.get("/today").status_code == 404 and c.get("/payments/1").status_code == 404
 
 
 def test_a_payment_still_pending_at_the_fms_is_shown_as_in_progress(fms_url, sim):
@@ -98,7 +98,7 @@ def test_a_payment_still_pending_at_the_fms_is_shown_as_in_progress(fms_url, sim
         paid = desk.post(f"/api/cases/{case_id}/proposals/{proposal['proposal_id']}/confirm",
                          json={"confirmed_by": "J. Ortiz", "tenant_answer": "Yes"}).json()
         assert paid["state"] == "PENDING_AT_FMS"
-        page = visitor.get("/").text
+        page = visitor.get("/today").text
         unit = page[page.index("Unit A-012") - 400: page.index("Unit A-012") + 400]
         assert "Payment in progress" in unit and "No payment or lien step in progress" not in unit
 
@@ -110,8 +110,8 @@ def test_a_lien_file_shows_its_state_as_of_its_evaluation_beside_the_balance_now
         sim.post("/sim/payments/offline", {"allocations": {"lease_OkfrE0505": 11500}})
         assert desk.post("/api/reconcile").status_code == 200
         lien = visitor.get("/accounts/2/lien").text
-        assert "Account changed: re-review, as of" in lien and "Owed on this account, per the FMS: <b>$0.00</b>" in lien
-        page = visitor.get("/").text
+        assert "Account changed: re-review</span><span class=\"muted small\">as of" in lien and "Owed on this account, per the FMS: <b>$0.00</b>" in lien
+        page = visitor.get("/today").text
         unit = page[page.index("Unit E-505") - 400: page.index("Unit E-505") + 500]
         assert "Lien file out of date" in unit and "As of the evaluation on" in unit
 
@@ -119,4 +119,42 @@ def test_a_lien_file_shows_its_state_as_of_its_evaluation_beside_the_balance_now
 def test_the_seeded_lien_file_is_not_called_stale_by_its_own_payment(fms_url, sim):
     with TestClient(preview(fms_url)) as visitor:
         lien = visitor.get("/accounts/2/lien").text
-        assert "Account changed: re-review, as of" in lien and "not reflected here until the file is evaluated again" in lien
+        assert "Account changed: re-review</span><span class=\"muted small\">as of" in lien and "not reflected here until the file is evaluated again" in lien
+
+
+def test_the_front_page_shows_every_built_feature_with_a_link_into_it(fms_url, sim):
+    with TestClient(preview(fms_url)) as visitor:
+        page = visitor.get("/").text
+        for heading in ("A payment whose answer was lost is held, not retried.", "Every fact keeps its source.",
+                        "A payment that comes back reopens the account.", "A lien file goes back to review when the account changes.",
+                        "Where no rules are reviewed, the file goes to counsel."):
+            assert heading in page
+        for link in ("/today", "/payments/1", "/payments/2", "/accounts/2/lien", "/accounts/6/lien"):
+            assert f'href="{link}"' in page and visitor.get(link).status_code == 200
+        assert "cents" not in page   # amounts read as dollars
+
+
+def test_findings_are_written_in_dollars_and_dates_and_quote_records_as_they_are():
+    from desk.lien_files import ledger_changes
+    from desk.liens import dollars, on
+    assert dollars(16500) == "$165.00" and on("2026-11-06") == "Nov 6, 2026" and on("2026-02-30 rent") == "2026-02-30 rent"
+    then = {"bookEntries": [{"bookEntryId": "be1", "type": "CHARGE", "amount": 5000, "amountPaid": 0,
+                             "details": {"description": 'Fee "5000 cents 2026-10-06" late', "accruesOn": "2026-10-06"}}]}
+    now = {"bookEntries": [{"bookEntryId": "be1", "type": "CHARGE", "amount": 5000, "amountPaid": 5000,
+                            "details": {"description": 'Fee "5000 cents 2026-10-06" late', "accruesOn": "2026-10-07"}}]}
+    changes = ledger_changes(then, now)
+    # the description is quoted from the ledger exactly; only Gatehouse's own words carry dollars and dates
+    assert 'the Fee "5000 cents 2026-10-06" late charge\'s amount paid changed from $0.00 to $50.00' in changes
+    assert 'the Fee "5000 cents 2026-10-06" late charge\'s due date changed from Oct 6, 2026 to Oct 7, 2026' in changes
+
+
+
+def test_changed_since_never_pairs_two_different_findings():
+    from desk.web import changed_findings
+    a = {"requirement": "account unchanged since notice", "basis": "policy", "status": "review", "detail": "charge A paid", "action": "x"}
+    b = {"requirement": "account unchanged since notice", "basis": "policy", "status": "review", "detail": "charge B paid", "action": "x"}
+    assert changed_findings([a, b], [b, a]) == []                      # reordered, nothing changed
+    c = dict(b, detail="charge B waived")
+    assert changed_findings([a, b], [a, c]) == [(b, None), (None, c)]  # B's finding gone, a new one: not "B became C"
+    assert changed_findings([a], []) == [(a, None)]                    # a resolved finding still shows
+    assert changed_findings([], [a]) == [(None, a)]

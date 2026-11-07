@@ -4,6 +4,7 @@ Every page reads Gatehouse's own records and the simulator trace saved when the 
 FMS or writes anything, so a visitor can read freely without moving the world."""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -72,6 +73,24 @@ def local(when: datetime | None, zone: str = "America/New_York") -> str:
         return ""
     t = when.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(zone))
     return t.strftime("%b %-d, %-I:%M %p")
+
+
+def changed_findings(previous: list[dict], current: list[dict]) -> list[tuple[dict | None, dict | None]]:
+    """What differs between two evaluations, as (before, now) rows. Identical findings are matched first, by content.
+    Nothing else is paired: a requirement can carry one finding per charge, and pairing two different findings would
+    say one became the other. A finding that is gone shows as (it, None); a new one as (None, it)."""
+    content = lambda f: (f.get("requirement"), f.get("basis"), f.get("status"), f.get("detail"), f.get("action"))
+    gone = list(previous)
+    new = []
+    for f in current:
+        same = next((o for o in gone if content(o) == content(f)), None)
+        if same is not None:
+            gone.remove(same)
+        else:
+            new.append(f)
+    order = {f.get("requirement"): i for i, f in enumerate(list(current) + list(previous))}
+    rows = [(f, None) for f in gone] + [(None, f) for f in new]
+    return sorted(rows, key=lambda r: order.get((r[0] or r[1]).get("requirement"), 0))
 
 
 def sentence(text: str) -> str:
@@ -276,6 +295,48 @@ def router(pages: Pages) -> APIRouter:
         return case, lease, facility
 
     @r.get("/", response_class=HTMLResponse)
+    def front(request: Request):
+        """What Gatehouse is, and each built feature shown live on the seeded world, with a link into it."""
+        with session() as s:
+            facilities = pages.facilities(s)
+            if not facilities:
+                raise HTTPException(503, "No facility has been read from the FMS yet")
+            home = facilities[0]
+            items = pages.today(s, home)
+            # only accounts at the facilities this deployment is bound to, the same rule every other page applies
+            mine = select(DelinquencyCase.id).join(Lease, Lease.id == DelinquencyCase.lease_id).where(
+                Lease.facility_id.in_([f.id for f in facilities]))
+            commands = s.scalars(select(PaymentCommand).where(PaymentCommand.case_id.in_(mine)).order_by(PaymentCommand.id)).all()
+            lost = {e.detail.get("command"): e.detail for e in s.scalars(select(CaseEvent).where(
+                CaseEvent.kind == "payment submitted", CaseEvent.case_id.in_(mine))).all() if (e.detail or {}).get("fms_said") == "lost"}
+            # the example has to be what the overview says it is: held after a lost answer, with a possible FMS match
+            held = next((c for c in commands if c.state == "NEEDS_STAFF" and c.id in lost and c.provider_payment_id is None
+                         and c.suggested_payment_id), None)
+            returned = next((c for c in commands if c.state == "RETURNED" and c.confirmed_at is not None
+                             and s.get(DelinquencyCase, c.case_id).state != "paid"), None)
+            latest = {}
+            for e in s.scalars(select(LienEvaluation).where(LienEvaluation.case_id.in_(mine)).order_by(LienEvaluation.id)).all():
+                latest[e.case_id] = e   # the newest evaluation of each file, never an older one
+            changed = next((e for e in latest.values() if e.state == "Account changed: re-review"), None)
+            counsel = next((e for e in latest.values() if e.state == "Counsel review required" and not e.rule_version), None)
+            counsel_state = (s.get(Facility, s.get(Lease, s.get(DelinquencyCase, counsel.case_id).lease_id).facility_id).jurisdiction
+                             if counsel else None)
+            record_case = held.case_id if held else (items[0].case_id if items else None)
+            record_unit = s.get(Lease, s.get(DelinquencyCase, record_case).lease_id).unit_name if record_case is not None else None
+            lanes = {}
+            if record_case is not None:
+                for e in pages.record(s, s.get(DelinquencyCase, record_case)):
+                    lanes.setdefault(e.lane, []).append(e)
+            return templates.TemplateResponse(request, "front.html", {
+                "facility": home, "facilities": facilities, "items": items[:4], "open_count": len(items),
+                "held": held, "held_answer": (lost.get(held.id) or {}).get("detail") if held else None, "held_unit": s.get(Lease, held.lease_id).unit_name if held else None,
+                "returned": returned, "returned_unit": s.get(Lease, returned.lease_id).unit_name if returned else None,
+                "changed": changed, "counsel": counsel, "counsel_state": counsel_state, "record_case": record_case,
+                "record_unit": record_unit, "lanes": lanes, "lane_names": LANES,
+                "truth": pages.trace.get(s.get(Lease, held.lease_id).provider_id) if held else None,
+                "money": money, "local": local, "nav": "front"})
+
+    @r.get("/today", response_class=HTMLResponse)
     def today(request: Request, facility: str | None = None):
         with session() as s:
             facilities = pages.facilities(s)
@@ -326,9 +387,7 @@ def router(pages: Pages) -> APIRouter:
                 raise HTTPException(404, "This account has no lien file")
             current, previous = evaluations[0], (evaluations[1] if len(evaluations) > 1 else None)
             snap = s.get(LedgerSnapshot, case.last_snapshot_id) if case.last_snapshot_id else None
-            before = {f["requirement"]: f for f in previous.findings} if previous else {}
-            changed = [(before.get(f["requirement"]), f) for f in current.findings
-                       if previous and before.get(f["requirement"]) != f]
+            changed = changed_findings(previous.findings, current.findings) if previous else []
             order = {"blocked": 0, "review": 1, "missing": 2, "waiting": 3, "met": 9}
             findings = sorted(current.findings, key=lambda f: order.get(f["status"], 5))
             evidence = s.scalars(select(LienEvidence).where(LienEvidence.case_id == case.id).order_by(LienEvidence.id)).all()
