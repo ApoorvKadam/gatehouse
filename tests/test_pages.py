@@ -175,3 +175,4 @@ def test_lien_page_survives_a_document_name_without_text_and_marks_corrections(f
     page = client.get(f"/accounts/{case_id}/lien")
     assert page.status_code == 200
     assert "Document content not kept" in page.text and "Replaced by a later correction" in page.text
+    assert "Recorded after the evaluation shown" in page.text

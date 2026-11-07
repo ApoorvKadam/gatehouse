@@ -53,7 +53,7 @@
     {% if evidence %}
     <table>
       <thead><tr><th>Record</th><th>Entered</th><th>Document</th></tr></thead>
-      <tbody>{% for e in evidence %}<tr><td>{{ names.get(e.kind, e.kind) }}{% if e.kind == 'legal_check' %}: {{ e.facts.check|replace('_', ' ') }}{% endif %}{% if e.id in replaced %}<br><span class="muted small">Replaced by a later correction; not used</span>{% endif %}{% if e.supersedes_id %}<br><span class="muted small">Correction of an earlier record</span>{% endif %}</td><td>{{ e.entered_by }}, {{ local(e.entered_at) }}</td><td>{% if e.document_name %}{{ e.document_name }}<br>{% if e.document_sha256 %}<span class="hash">sha256 {{ e.document_sha256[:12] }}</span>{% else %}<span class="muted small">Document content not kept</span>{% endif %}{% endif %}</td></tr>{% endfor %}</tbody>
+      <tbody>{% for e in evidence %}<tr><td>{{ names.get(e.kind, e.kind) }}{% if e.kind == 'legal_check' %}: {{ e.facts.check|replace('_', ' ') }}{% endif %}{% if e.id in replaced %}<br><span class="muted small">Replaced by a later correction; later evaluations use the correction</span>{% endif %}{% if e.supersedes_id %}<br><span class="muted small">Correction of an earlier record</span>{% endif %}{% if e.entered_at > current.evaluated_at %}<br><span class="muted small">Recorded after the evaluation shown</span>{% endif %}</td><td>{{ e.entered_by }}, {{ local(e.entered_at) }}</td><td>{% if e.document_name %}{{ e.document_name }}<br>{% if e.document_sha256 %}<span class="hash">sha256 {{ e.document_sha256[:12] }}</span>{% else %}<span class="muted small">Document content not kept</span>{% endif %}{% endif %}</td></tr>{% endfor %}</tbody>
     </table>
     {% else %}<p>No evidence recorded.</p>{% endif %}
   </section>
