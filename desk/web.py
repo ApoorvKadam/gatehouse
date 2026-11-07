@@ -94,6 +94,18 @@ def changed_findings(previous: list[dict], current: list[dict]) -> list[tuple[di
     return sorted(rows, key=lambda r: order.get((r[0] or r[1]).get("requirement"), 0))
 
 
+def evaluation_report() -> dict | None:
+    """The report the image build wrote (desk/evaluate.py), or None when this build has none."""
+    import json
+    path = Path(__file__).parent / "static" / "evaluation.json"
+    try:
+        report = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    report["generated"] = datetime.fromisoformat(report["generated_at"]).replace(tzinfo=None)
+    return report
+
+
 def sentence(text: str) -> str:
     text = text.strip()
     return (text[0].upper() + text[1:] + ("" if text.endswith(".") else ".")) if text else ""
@@ -368,6 +380,7 @@ def router(pages: Pages) -> APIRouter:
                 "changed": changed, "counsel": counsel, "counsel_state": counsel_state, "record_case": record_case,
                 "record_unit": record_unit, "lanes": lanes, "lane_names": LANES, "access": access, "access_lease": access_lease,
                 "access_view": access_view.data if access_view else None, "access_policy": access_policy, "gate_rules": GATE_RULES,
+                "report": evaluation_report(),
                 "truth": pages.trace.get(s.get(Lease, held.lease_id).provider_id) if held else None,
                 "money": money, "local": local, "nav": "front"})
 
@@ -460,6 +473,12 @@ def router(pages: Pages) -> APIRouter:
                 "w": w, "facility": facility, "unit": unit, "label": label, "views": views, "cases": cases, "history": history,
                 "policy": policy, "gate_rules": GATE_RULES, "kind_names": KIND_NAMES, "physical": PHYSICAL, "closed_by": CLOSED_BY,
                 "local": local, "nav": "today", "facilities": pages.facilities(s)})
+
+    @r.get("/evaluation", response_class=HTMLResponse)
+    def evaluation(request: Request):
+        with session() as s:
+            return templates.TemplateResponse(request, "evaluation.html", {
+                "report": evaluation_report(), "nav": "evaluation", "facilities": pages.facilities(s), "local": local})
 
     @r.get("/limits", response_class=HTMLResponse)
     def limits(request: Request):
