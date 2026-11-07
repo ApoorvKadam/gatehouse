@@ -16,6 +16,7 @@
     <nav aria-label="Main">
       <a href="/" {% if nav == 'front' %}aria-current="page"{% endif %}>Overview</a>
       <a href="/today" {% if nav == 'today' %}aria-current="page"{% endif %}>Today</a>
+      <a href="/evaluation" {% if nav == 'evaluation' %}aria-current="page"{% endif %}>Evaluation</a>
       <a href="/limits" {% if nav == 'limits' %}aria-current="page"{% endif %}>Limits</a>
     </nav>
     {% if facilities and nav == 'today' %}

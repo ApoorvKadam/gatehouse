@@ -211,6 +211,29 @@
 </section>
 {% endif %}
 
+{% if report %}
+<section class="feature tight">
+  <div class="wrap">
+    <div data-reveal>
+      <p class="kicker" style="--c:var(--teal)">{% include "icons/circle-check.svg" %}Evaluation</p>
+      <h2>Every build runs the failures and stops on a red line.</h2>
+      <p>Each scenario runs against its own throwaway simulator: declines, pending answers, lost answers, returns, a paid tenant still locked out, a task marked done with the lock still on. Red lines such as a duplicate charge or an access change made by Gatehouse must be zero, and builds that are wrong on purpose must be caught.</p>
+      <a class="open" href="/evaluation">Open the evaluation {% include "icons/arrow-right.svg" %}</a>
+    </div>
+    <div class="frame" data-reveal>
+      <div class="frame-bar"><span><b>Evaluation</b> &middot; this build</span><span class="chip {{ 'done' if report.ok else 'act' }}">{{ 'Passed' if report.ok else 'Failed' }}</span></div>
+      <div class="frame-body">
+        <dl class="kv">
+          <dt>Scenarios</dt><dd>{{ report.rows|selectattr('passed')|list|length }} of {{ report.rows|length }} behaved as they should</dd>
+          <dt>Red lines</dt><dd>{{ report.red_lines|selectattr('count', 'equalto', 0)|list|length }} of {{ report.red_lines|length }} at zero</dd>
+          <dt>Wrong builds</dt><dd>{{ report.controls|selectattr('caught')|list|length }} of {{ report.controls|length }} caught</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+</section>
+{% endif %}
+
 <section class="feature next-band">
   <div class="wrap">
     <div class="split-head" data-reveal>

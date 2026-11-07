@@ -9,6 +9,9 @@ COPY pyproject.toml README.md ./
 COPY desk ./desk
 COPY fmssim ./fmssim
 RUN pip install --no-cache-dir ".[chat]" && mkdir -p /app/data
+# every build runs the evaluation against its own throwaway simulator; a red line that is not zero fails the build,
+# and the report is what /evaluation shows
+RUN python -m desk.evaluate --out /app/desk/static/evaluation.json
 
 COPY start.sh ./
 RUN useradd --create-home --uid 1000 gatehouse && chown -R gatehouse /app/data
