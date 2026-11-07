@@ -15,10 +15,11 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from .access import reconcile_access
 from .adapter import FMSAdapter
 from .cases import current_case, sync_facility
 from .lien_files import evaluate_case, record_evidence
-from .models import DelinquencyCase, Lease, LedgerSnapshot
+from .models import AccessPolicy, DelinquencyCase, Facility, Lease, LedgerSnapshot
 from .payments import IdentityClaim, PaymentService, check_identity, confirm, propose
 
 log = logging.getLogger("desk.demo")
@@ -29,7 +30,7 @@ DESK = "front desk (synthetic)"
 ID_SEED = "gatehouse-preview"
 
 
-def build(factory: sessionmaker[Session], adapter: FMSAdapter, fms_base_url: str) -> bool:
+def build(factory: sessionmaker[Session], adapter: FMSAdapter, fms_base_url: str, run_id: str = "local") -> bool:
     """Build the world if this database is empty. Returns False when there was already something to show."""
     with factory() as session:
         if session.scalar(select(Lease.id).limit(1)) is not None:
@@ -46,6 +47,7 @@ def build(factory: sessionmaker[Session], adapter: FMSAdapter, fms_base_url: str
         # one more pass, as the worker would make, so everything the FMS shows has been observed before the
         # world is opened: the worker then finds nothing new to record
         settle(session, adapter, passes=2)
+        access_world(session, adapter, sim, run_id)
     sim.close()
     log.info("synthetic world built")
     return True
@@ -91,9 +93,12 @@ def lost_response(session: Session, adapter: FMSAdapter, sim: httpx.Client) -> N
 
 
 def returned_payment(session: Session, adapter: FMSAdapter, sim: httpx.Client) -> None:
-    """Marcus pays $185 and it posts. Days later the bank returns it; the account reopens."""
+    """Marcus pays $185 and it posts, so staff take the overlock off C-207. Days later the bank returns the payment;
+    the account reopens, and the unit is past the facility's rule again with no lock on it."""
     case = case_of(session, "lease_BellC0207")
     command = pay_by_phone(session, adapter, case, IdentityClaim("Bell", "0187", "C-207"), 18500)
+    for lock in adapter.locks_for_lease("lease_BellC0207"):
+        sim.post("/sim/locks/return", json={"lockId": lock.lock_id}).raise_for_status()
     sim.post("/sim/payments/return", json={"paymentId": command.provider_payment_id}).raise_for_status()
     settle(session, adapter, passes=1)
 
@@ -161,3 +166,31 @@ def new_york_file(session: Session, adapter: FMSAdapter) -> None:
     """Teo's unit is in Albany. New York has no reviewed rule version here, so the file goes to counsel."""
     evaluate_case(session, adapter, case_of(session, "lease_VargD0310"))
     session.commit()
+
+
+# Northstar's lockout rule as its operations manual states it (synthetic). Albany has none recorded, on purpose: a
+# facility without a stated rule gets a review item, not a verdict.
+ORLANDO_RULE = dict(lockout_days=30, gate_rule="deny_if_any_unit_restricted", version="ORL-access-1",
+                    source="Northstar operations manual, section 4.2 (synthetic)", approved_by="regional manager (synthetic)")
+
+
+def access_world(session: Session, adapter: FMSAdapter, sim: httpx.Client, run_id: str) -> None:
+    """Access after the stories above, read the way the worker reads it:
+    - B-1042: Dana's money reached the ledger, so the FMS turned her gate code back on, but the overlock staff put on
+      in October is still recorded on her unit. Gatehouse opens an item and one FMS task; staff mark the task done
+      without taking the lock off, and the item stays open, because the FMS still records the lock.
+    - C-207: staff took the overlock off when Marcus paid; the payment came back, and the unit is past the rule again
+      with no lock. Gatehouse flags it for a person and does not lock anyone out.
+    - A-012 and A-013: Priya's payment arrangement pauses A-012's overlock; A-013 is past the rule and locked, and her
+      shared gate code is off. The FMS matches the rule, so there is nothing to do.
+    - Albany: no rule recorded, so one review item."""
+    orlando = session.scalar(select(Facility).where(Facility.provider_id == ORLANDO))
+    session.add(AccessPolicy(facility_id=orlando.id, effective_on=date(2026, 1, 1), **ORLANDO_RULE))
+    session.commit()
+    facilities = session.scalars(select(Facility).where(Facility.provider_id.in_((ORLANDO, ALBANY))).order_by(Facility.id)).all()
+    for facility in facilities:
+        reconcile_access(session, adapter, facility, run_id)
+    for task in adapter.tasks_for("unitId", "unit_WhitB1042"):
+        sim.post("/sim/tasks/complete", json={"taskId": task.task_id}).raise_for_status()
+    for facility in facilities:
+        reconcile_access(session, adapter, facility, run_id)

@@ -21,6 +21,8 @@ class Settings:
     public_view: bool = False
     # build the synthetic preview world at startup when the database is empty (desk/demo.py)
     demo_seed: bool = False
+    # names this database's work items, so a reset under a new run never collides with kept history
+    run_id: str = "local"
 
     @staticmethod
     def from_env() -> "Settings":
@@ -36,4 +38,5 @@ class Settings:
             staff_token=os.environ.get("DESK_STAFF_TOKEN") or None,
             public_view=os.environ.get("DESK_PUBLIC_VIEW") == "1",
             demo_seed=os.environ.get("DESK_DEMO_SEED") == "1",
+            run_id=os.environ.get("DESK_RUN_ID", "local"),
         )

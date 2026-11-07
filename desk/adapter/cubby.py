@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 import httpx
 
 from .base import (
-    FMSError, NotFound, PermissionDenied, ProviderCustomer, ProviderLease, ProviderLedger, ProviderPayment, SubmitOutcome,
+    AccessCheck, FMSError, NotFound, PermissionDenied, ProviderAccessCode, ProviderCustomer, ProviderExemption, ProviderLease,
+    ProviderLedger, ProviderLock, ProviderPayment, ProviderTask, SubmitOutcome, TaskCreateOutcome,
 )
 
 
@@ -71,7 +72,8 @@ class CubbyAdapter:
         return ProviderLease(provider_id=raw["leaseId"], facility_provider_id=raw["facilityId"],
                              customer_provider_id=raw["customerId"], unit_name=raw.get("unitName") or "",
                              billing_cycle=raw.get("billingCycle") or "MONTHLY", total_due=int(raw.get("totalDue") or 0),
-                             delinquent_since=raw.get("delinquencyStartDate"))
+                             delinquent_since=raw.get("delinquencyStartDate"), unit_id=raw.get("unitId"),
+                             overlock_needed=raw.get("overlockNeeded") if isinstance(raw.get("overlockNeeded"), bool) else None)
 
     def facilities(self) -> list[dict]:
         return self._read("/v1/facilities/search", {}).get("facilities", [])
@@ -119,6 +121,69 @@ class CubbyAdapter:
 
     def payment_methods(self, customer_provider_id: str) -> list[dict]:
         return self._read("/v1/payment-methods/search", {"customerId": customer_provider_id}).get("paymentMethods", [])
+
+    def leases(self, facility_provider_id: str) -> list[ProviderLease]:
+        return [self._lease(raw) for raw in self._read("/v1/leases/search", {"facilityId": facility_provider_id}).get("leases", [])]
+
+    # ------------------------------------------------------------------ access: reads only, plus one kind of task
+    def access_codes(self, facility_provider_id: str, customer_provider_id: str) -> list[ProviderAccessCode]:
+        rows = self._read("/v1/access-codes/search", {"facilityId": facility_provider_id, "customerId": customer_provider_id}).get("accessCodes")
+        if not isinstance(rows, list):
+            raise FMSError("/v1/access-codes/search: the answer has no accessCodes list")
+        return [ProviderAccessCode(code=str(r["code"]), enabled=bool(r["enabled"]), customer_provider_id=r.get("customerId") or "")
+                for r in rows if r.get("customerId") == customer_provider_id]
+
+    def check_code(self, facility_provider_id: str, code: str) -> AccessCheck:
+        try:
+            response = self._http.post("/v1/access-codes/check", json={"facilityId": facility_provider_id, "code": code})
+        except httpx.HTTPError as exc:
+            raise FMSError(f"/v1/access-codes/check: {exc.__class__.__name__}") from exc
+        data = self._unwrap("/v1/access-codes/check", response)
+        if not isinstance(data.get("accessAllowed"), bool):
+            raise FMSError("/v1/access-codes/check: no accessAllowed in the answer")
+        return AccessCheck(allowed=data["accessAllowed"], message=str(data.get("message") or ""))
+
+    def locks_for_lease(self, lease_provider_id: str) -> list[ProviderLock]:
+        rows = self._read("/v1/locks/search", {"leaseId": lease_provider_id}).get("locks")
+        if not isinstance(rows, list):
+            raise FMSError("/v1/locks/search: the answer has no locks list")
+        return [ProviderLock(lock_id=r.get("lockId") or r.get("id") or "", status=r.get("status") or "", attached_to=r.get("attachedTo"),
+                             serial=r.get("serial") or "") for r in rows]
+
+    def exemptions_for_customer(self, customer_provider_id: str) -> list[ProviderExemption]:
+        rows = self._read("/v1/delinquency-exemptions/search", {"customerId": customer_provider_id}).get("delinquencyExemptions")
+        if not isinstance(rows, list):
+            raise FMSError("/v1/delinquency-exemptions/search: the answer has no delinquencyExemptions list")
+        return [ProviderExemption(lease_provider_id=r["leaseId"], reason=r.get("reason") or "", end_date=r.get("endDate") or "",
+                                  pause_overlock=bool(r.get("pauseOverlock")), note=r.get("note")) for r in rows]
+
+    def tasks_for(self, scope: str, value: str) -> list[ProviderTask]:
+        rows = self._read("/v1/tasks/search", {scope: value}).get("tasks")
+        if not isinstance(rows, list):
+            raise FMSError("/v1/tasks/search: the answer has no tasks list")
+        return [ProviderTask(task_id=r.get("taskId") or r.get("id") or "", title=r.get("title") or "", description=r.get("description"),
+                             status=r.get("status") or "", customer_provider_id=r.get("customerId"), unit_id=r.get("unitId"),
+                             updated_at=_parse_time(r.get("updatedAt"))) for r in rows]
+
+    def create_task(self, facility_provider_id: str, title: str, description: str, *, unit_id: str | None = None,
+                    customer_provider_id: str | None = None) -> TaskCreateOutcome:
+        body = {"facilityId": facility_provider_id, "title": title, "description": description}
+        body.update({"unitId": unit_id} if unit_id else {"customerId": customer_provider_id})
+        try:
+            response = self._http.post("/v1/tasks/create", json=body)
+        except httpx.TimeoutException:
+            return TaskCreateOutcome(kind="lost", detail="no response before the timeout")
+        except httpx.TransportError as exc:
+            log.info("task request lost after sending: %s", exc.__class__.__name__)
+            return TaskCreateOutcome(kind="lost", detail="the connection broke before the answer arrived")
+        payload = _json(response)
+        if 400 <= response.status_code < 500 and "errors" in payload:
+            return TaskCreateOutcome(kind="rejected", detail=f"HTTP {response.status_code}: {'; '.join(payload.get('errors') or [])}")
+        task_id = (payload.get("data") or {}).get("taskId") if response.status_code == 200 else None
+        if not task_id:
+            # a 5xx, a gateway page or a 200 without an id: the task may or may not exist
+            return TaskCreateOutcome(kind="lost", detail=f"HTTP {response.status_code} without a task id")
+        return TaskCreateOutcome(kind="created", task_id=task_id)
 
     # ------------------------------------------------------------------ the one write
     def make_payment(self, lease_provider_id: str, payment_method_id: str, amount: int) -> SubmitOutcome:
