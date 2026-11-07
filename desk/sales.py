@@ -219,10 +219,6 @@ def reconcile_sales(session: Session, adapter: FMSAdapter, facility: Facility, r
             if item.kind == OUTSIDE:
                 item.note = f"Not freshly verified: the outside site's feed could not be read at {now:%b %-d, %H:%M} UTC."
         result.failures.append(f"outside listings at {facility.provider_id}: the feed could not be read")
-    elif listings is not None:
-        for item in open_items:
-            if item.kind == OUTSIDE and (item.note or "").startswith("Not freshly verified"):
-                item.note = None
     decided: set[str] = set()
     for entry in entries:
         subject = subject_of(entry)
@@ -389,11 +385,17 @@ def _outside(session: Session, facility: Facility, run_id: str, entry: ProviderA
         return
     subject = subject_of(entry)
     listing = next((x for x in listings if x.get("auctionId") == entry.auction_id and x.get("leaseId") == entry.lease_provider_id), None)
-    if listing is None:
-        return
     item = session.scalar(select(WorkItem).where(WorkItem.run_id == run_id, WorkItem.facility_id == facility.id, WorkItem.kind == OUTSIDE,
                                                  WorkItem.subject_id == subject, WorkItem.state == "open"))
     now = utcnow()
+    if listing is None:
+        if item is not None:
+            # a listing that drops out of the feed is not proof it was withdrawn
+            item.note = (f"Not verified: the outside site's feed did not list this sale at {now:%b %-d, %H:%M} UTC. A listing "
+                         "missing from the feed is not proof it was withdrawn.")
+        return
+    if item is not None and (item.note or "").startswith(("Not freshly verified", "Not verified")):
+        item.note = None   # the feed reported this listing on this pass
     if listing.get("status") == "WITHDRAWN":
         if item is not None:
             item.state, item.closed_at, item.updated_at = "closed", now, now

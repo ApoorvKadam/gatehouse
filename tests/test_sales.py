@@ -262,3 +262,17 @@ def test_the_outside_feed_still_decides_when_the_ledger_cannot_be_read(fms_url, 
         sweep(s, LedgerDown(), fms_url)
         closed = [i for i in items(s, kind=OUTSIDE, state="closed") if i.subject_id.endswith("lease_WhitB1042")]
         assert dana and len(closed) == 1 and closed[0].verification == "Confirmed by the outside site's feed"
+
+
+def test_a_listing_missing_from_the_feed_is_not_taken_as_withdrawn(fms_url, sim, adapter):
+    from desk.adapter.base import ProviderAuctionEntry
+    from desk.sales import SalesPass, _outside
+    factory = world(adapter, fms_url)
+    with factory() as s:
+        orlando = s.scalar(select(Facility).where(Facility.provider_id == ORLANDO))
+        item = items(s, kind=OUTSIDE)[0]
+        o = item.observed
+        _outside(s, orlando, "local", ProviderAuctionEntry(o["auction_id"], o["auction_time"], o["lease_id"], None, None, "LISTED"),
+                 [], SalesPass())      # the feed answers, but without this listing
+        s.commit()
+        assert item.state == "open" and "not proof it was withdrawn" in item.note
