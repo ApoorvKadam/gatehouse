@@ -8,6 +8,8 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections import deque
+from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -43,6 +45,8 @@ class Worker:
         # monotonic time of the last pass that succeeded; readiness reads it
         self.last_ok: float | None = None
         self.last_error: str | None = None
+        # the last passes, newest last: when each started (UTC), how long it took, what it checked, what failed
+        self.passes: deque[dict] = deque(maxlen=30)
 
     def start(self) -> None:
         self._thread.start()
@@ -61,8 +65,11 @@ class Worker:
     def _loop(self) -> None:
         # the first pass runs at once, so readiness can be earned right after startup
         while True:
+            started, clock = datetime.now(timezone.utc).replace(tzinfo=None), time.monotonic()
+            record = {"started_at": started, "seconds": None, "checked": None, "failures": None, "error": None}
             try:
                 checked, failed = run_once(self.factory, self.adapter, self.run_id)
+                record.update(checked=checked, failures=failed)
                 if failed:
                     # the pass went on with the other cases, but it did not do its whole job
                     self.last_error = f"{failed} FMS read(s) failed"
@@ -74,7 +81,10 @@ class Worker:
             except Exception as exc:
                 # a bad FMS read must not kill the loop; the next pass tries again
                 self.last_error = type(exc).__name__
+                record["error"] = type(exc).__name__
                 log.exception("reconcile pass failed")
+            record["seconds"] = round(time.monotonic() - clock, 2)
+            self.passes.append(record)
             if self._stop.wait(self.every):
                 return
 

@@ -197,6 +197,7 @@ def describe(e: CaseEvent, commands: dict[int, PaymentCommand], evidence: dict[i
 class Pages:
     factory: sessionmaker[Session]
     trace: dict = field(default_factory=dict)   # simulator truth saved when the world was built, keyed by lease
+    worker: object | None = None                 # the reconciliation worker in this process, for the operations page
 
     def facilities(self, s: Session) -> list[Facility]:
         binding = s.get(DeskBinding, 1)
@@ -479,6 +480,52 @@ def router(pages: Pages) -> APIRouter:
         with session() as s:
             return templates.TemplateResponse(request, "evaluation.html", {
                 "report": evaluation_report(), "nav": "evaluation", "facilities": pages.facilities(s), "local": local})
+
+    @r.get("/operations", response_class=HTMLResponse)
+    def operations(request: Request):
+        """How the running system is doing, from its own records: the worker's recent passes, the latest readings, and
+        the open work in each part with its oldest item. It reads the database only, never the FMS."""
+        import time as _time
+        from sqlalchemy import func
+        with session() as s:
+            facilities = pages.facilities(s)
+            ids = [f.id for f in facilities]
+            mine = select(DelinquencyCase.id).join(Lease, Lease.id == DelinquencyCase.lease_id).where(Lease.facility_id.in_(ids))
+            commands = s.scalars(select(PaymentCommand).where(PaymentCommand.case_id.in_(mine)).order_by(PaymentCommand.created_at)).all()
+            groups = [("Payments", "Held for a person", [c for c in commands if c.state == "NEEDS_STAFF"], "/payments/{}"),
+                      ("Payments", "Outcome being checked", [c for c in commands if c.state in IN_FLIGHT], "/payments/{}"),
+                      ("Payments", "Returned, refunded or disputed", [c for c in commands if c.state in REVERSED], "/payments/{}")]
+            latest: dict[int, LienEvaluation] = {}
+            for e in s.scalars(select(LienEvaluation).where(LienEvaluation.case_id.in_(mine)).order_by(LienEvaluation.id)):
+                latest[e.case_id] = e
+            for state in sorted({e.state for e in latest.values()}):
+                rows = sorted((e for e in latest.values() if e.state == state), key=lambda e: e.evaluated_at)
+                groups.append(("Lien files", state, rows, "/accounts/{}/lien"))
+            work = s.scalars(select(WorkItem).where(WorkItem.facility_id.in_(ids), WorkItem.state == "open",
+                                                    WorkItem.kind.in_(KIND_NAMES)).order_by(WorkItem.opened_at)).all()
+            for kind, name in KIND_NAMES.items():
+                rows = [w for w in work if w.kind == kind]
+                if rows:
+                    groups.append(("Access", name if kind != "access_rule_disagreement" else "The FMS and the rule disagree", rows, "/access/{}"))
+            open_work = []
+            for part, label, rows, link in groups:
+                if not rows:
+                    continue
+                first = rows[0]
+                since = getattr(first, "opened_at", None) or getattr(first, "evaluated_at", None) or getattr(first, "created_at", None)
+                ident = first.case_id if link.endswith("/lien") else first.id
+                open_work.append({"part": part, "label": label, "count": len(rows), "since": since, "link": link.format(ident)})
+            readings = {"Ledger, from the FMS": s.scalar(select(func.max(LedgerSnapshot.observed_at))),
+                        "Access, from the FMS": s.scalar(select(func.max(AccessView.observed_at)))}
+            w = pages.worker
+            worker = None
+            if w is not None:
+                ago = (_time.monotonic() - w.last_ok) if w.last_ok is not None else None
+                worker = {"alive": w.alive(), "every": w.every, "last_ok_ago": ago, "last_error": w.last_error,
+                          "passes": list(reversed(list(w.passes)))}
+            return templates.TemplateResponse(request, "operations.html", {
+                "worker": worker, "open_work": open_work, "readings": readings, "nav": "operations",
+                "facilities": facilities, "local": local})
 
     @r.get("/limits", response_class=HTMLResponse)
     def limits(request: Request):

@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Operations | Gatehouse{% endblock %}
+{% block main %}
+<div class="wrap">
+<div class="head">
+  <h1>Operations</h1>
+  <p>From this service's own records; this page never calls the FMS</p>
+</div>
+<p class="lede">How the running preview is doing: whether the worker is passing, how fresh its readings of the FMS are, and the oldest open item in each part. Health checks for a load balancer are at <a href="/health/live">/health/live</a> and <a href="/health/ready">/health/ready</a>.</p>
+<dl class="facts">
+  <div><dt>Worker</dt><dd>{% if not worker %}Not running in this process{% elif worker.alive %}Passing{% else %}Not passing{% endif %}</dd></div>
+  <div><dt>Last good pass</dt><dd>{% if worker and worker.last_ok_ago is not none %}{{ worker.last_ok_ago|round|int }} s ago{% else %}None yet{% endif %}</dd></div>
+  <div><dt>Passes every</dt><dd>{% if worker %}{{ worker.every|round|int }} s{% else %}n/a{% endif %}</dd></div>
+  <div><dt>Last error</dt><dd>{{ worker.last_error if worker and worker.last_error else 'None' }}</dd></div>
+</dl>
+
+<div class="grid2 top">
+  <section class="panel">
+    <h2><span class="lane-dot lane-concluded"></span>Open work, oldest first</h2>
+    {% if open_work %}
+    <table>
+      <thead><tr><th>Part</th><th>What</th><th class="num">Open</th><th>Oldest since</th></tr></thead>
+      <tbody>{% for o in open_work %}<tr><td>{{ o.part }}</td><td><a href="{{ o.link }}">{{ o.label }}</a></td><td class="num">{{ o.count }}</td><td class="small muted">{{ local(o.since) }}</td></tr>{% endfor %}</tbody>
+    </table>
+    {% else %}<p class="muted">Nothing open.</p>{% endif %}
+  </section>
+  <section class="panel">
+    <h2><span class="lane-dot lane-fms"></span>Latest readings</h2>
+    <dl class="kv">{% for name, at in readings.items() %}<dt>{{ name }}</dt><dd>{{ local(at) if at else 'None yet' }}</dd>{% endfor %}</dl>
+    <p class="note">A reading is what the worker last saw at the FMS. A failed read leaves the last good one in place and is counted in the pass that failed.</p>
+  </section>
+</div>
+
+<section class="panel" style="margin-top:var(--s5)">
+  <h2><span class="lane-dot lane-observed"></span>Recent worker passes, newest first</h2>
+  {% if worker and worker.passes %}
+  <table>
+    <thead><tr><th>Started</th><th class="num">Seconds</th><th class="num">Payments checked</th><th class="num">FMS reads failed</th><th>Error</th></tr></thead>
+    <tbody>{% for p in worker.passes %}<tr><td class="small">{{ local(p.started_at) }}</td><td class="num">{{ p.seconds }}</td><td class="num">{{ p.checked if p.checked is not none else '' }}</td><td class="num"><span class="status {{ 'met' if p.failures == 0 else 'review' }}">{{ p.failures if p.failures is not none else '' }}</span></td><td class="small">{{ p.error or '' }}</td></tr>{% endfor %}</tbody>
+  </table>
+  <p class="note">Kept in memory for the last 30 passes; the free host sleeps when idle, and a restart starts the list again.</p>
+  {% else %}<p class="muted">No passes recorded in this process yet.</p>{% endif %}
+</section>
+</div>
+{% endblock %}
