@@ -30,11 +30,13 @@
   --frame: #d5d5cf;
   --blue: #3450c8;
   --brick: #b9462f;      /* a person has to act */
-  --brick-wash: #f7e7e2;
   --teal: #23716b;       /* the system of record confirms it */
-  --teal-wash: #e3f0ee;
-  --amber: #a86b00;      /* waiting on a source */
-  --amber-wash: #faefd9;
+  --amber: #8a5700;      /* waiting on a source */
+  /* chip colors: the error, warning and success pairs from Astryx's neutral theme (MIT, see astryx-LICENSE.txt).
+     Each is a pale surface with the text color made for it, at 4.5:1 or better */
+  --chip-act: #ffc4be;   --chip-act-ink: #76000c;
+  --chip-wait: #fae19e;  --chip-wait-ink: #4b3900;
+  --chip-done: #bce0bb;  --chip-done-ink: #00490b;
   --navy: #22345a;       /* what the FMS said */
   --lilac: #6f63b8;      /* what Gatehouse observed */
   --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px; --s8: 72px;
@@ -69,11 +71,11 @@
     --frame: #353a37;
     --blue: #93a6ff;
     --brick: #ff8f78;
-    --brick-wash: rgba(255,143,120,.14);
     --teal: #63c8be;
-    --teal-wash: rgba(99,200,190,.14);
     --amber: #f0b54a;
-    --amber-wash: rgba(240,181,74,.14);
+    --chip-act: #ff98903d;   --chip-act-ink: #ffaea7;
+    --chip-wait: #e2b6233d;  --chip-wait-ink: #eec448;
+    --chip-done: #90ca903d;  --chip-done-ink: #90ca90;
     --navy: #8aa3e0;
     --lilac: #a99ff0;
     --bar: #171a19;
@@ -157,9 +159,9 @@ footer .wrap { padding-top: var(--s5); padding-bottom: var(--s6); display: flex;
 .chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .chip .icon { width: 14px; height: 14px; margin-left: -2px; }
 .chip:has(.icon)::before { display: none; }
-.chip.act { color: var(--brick); background: var(--brick-wash); }
-.chip.done { color: var(--teal); background: var(--teal-wash); }
-.chip.wait { color: var(--amber); background: var(--amber-wash); }
+.chip.act { color: var(--chip-act-ink); background: var(--chip-act); }
+.chip.done { color: var(--chip-done-ink); background: var(--chip-done); }
+.chip.wait { color: var(--chip-wait-ink); background: var(--chip-wait); }
 .chip.plain { color: var(--ink-2); background: var(--band); }
 
 /* framed product views */
@@ -222,7 +224,7 @@ dl.kv { display: grid; grid-template-columns: 11rem 1fr; gap: var(--s2) var(--s4
 dl.kv dt { color: var(--ink-3); }
 dl.kv dd { margin: 0; }
 .told { background: var(--band); border-radius: 8px; padding: var(--s3) var(--s4); margin-top: var(--s2); font-size: var(--t-body); }
-.told b { display: block; font-size: var(--t-xs); color: var(--ink-3); font-weight: 600; margin-bottom: 2px; }
+.told b { display: block; font-size: var(--t-xs); color: var(--ink-2); font-weight: 600; margin-bottom: 2px; }
 .note { font-size: var(--t-xs); color: var(--ink-3); margin-top: var(--s3); max-width: 75ch; }
 .decisions { list-style: none; padding: 0; margin: 0; }
 .decisions li { padding: var(--s3) 0; border-bottom: 1px solid var(--rule); }
@@ -315,7 +317,8 @@ dl.kv dd { margin: 0; }
 
 @media (max-width: 900px) {
   .top .wrap { flex-wrap: wrap; height: auto; padding-top: var(--s2); padding-bottom: var(--s2); gap: var(--s2) var(--s5); }
-  .top nav a { padding: var(--s2) 0; }
+  .top nav a { padding: 10px 0; }
+  select, .button { min-height: 44px; }
   .top form { margin-left: 0; width: 100%; }
   .top select { flex: 1 1 auto; min-width: 0; }
   .head { flex-direction: column; align-items: flex-start; gap: var(--s1); }
@@ -411,11 +414,17 @@ dl.kv.pairs { grid-template-columns: 11rem minmax(0, 1fr) 11rem minmax(0, 1fr); 
 }
 .wide-prose { max-width: none; } .wide-prose .lede { max-width: 70ch; } .wide-prose section { max-width: 64ch; }
 .next-cols.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-/* phones: the nav scrolls sideways instead of pushing the page wider, and a wide table scrolls inside its panel */
+/* up to 900 px the nav scrolls sideways instead of pushing the page wider (the next block spreads it at 520 px and below), and a wide table scrolls inside its panel */
 .panel { overflow-x: auto; }
 @media (max-width: 900px) {
   .top nav { gap: var(--s5); max-width: 100%; overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
   .top nav::-webkit-scrollbar { display: none; }
 }
+/* narrow phones: the five page links spread across the row, so every one is on screen without sideways scrolling and each is 44 px tall */
+@media (max-width: 520px) {
+  .top nav { display: flex; justify-content: space-between; gap: 0; width: 100%; overflow: visible; font-size: clamp(0.75rem, 3.2vw, 0.9375rem); }
+  .top nav a { padding: 12px 4px; }
+}
+@media (max-width: 340px) { .top nav a { padding: 12px 2px; } }
 
 @media (max-width: 640px) { .film video { aspect-ratio: 4 / 5; } .open-col { display: none; } }
