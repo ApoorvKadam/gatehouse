@@ -370,8 +370,9 @@ def router(pages: Pages) -> APIRouter:
             current, previous = evaluations[0], (evaluations[1] if len(evaluations) > 1 else None)
             snap = s.get(LedgerSnapshot, case.last_snapshot_id) if case.last_snapshot_id else None
             before = {f["requirement"]: f for f in previous.findings} if previous else {}
+            same = lambda a, b: a is not None and all(a.get(k) == b.get(k) for k in ("basis", "status", "detail", "action"))
             changed = [(before.get(f["requirement"]), f) for f in current.findings
-                       if previous and before.get(f["requirement"]) != f]
+                       if previous and not same(before.get(f["requirement"]), f)]
             order = {"blocked": 0, "review": 1, "missing": 2, "waiting": 3, "met": 9}
             findings = sorted(current.findings, key=lambda f: order.get(f["status"], 5))
             evidence = s.scalars(select(LienEvidence).where(LienEvidence.case_id == case.id).order_by(LienEvidence.id)).all()

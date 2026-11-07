@@ -485,7 +485,7 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
             basis = "statute 83.806(1)" if m.delivered_on else "policy"
             deliveries.append((when, f"e-mail to {m.sent_to}, {m.confirmation} from the same address, delivery dated {on(when)}"
                                      + ("" if m.delivered_on else " by the confirmation (policy)")))
-            out.append(Finding("e-mail confirmation", basis, "met", f"{m.confirmation} from {m.confirmation_from}"))
+            out.append(Finding("e-mail confirmation", basis, "met", f"confirmed by {m.confirmation} from {m.confirmation_from}"))
         else:
             unconfirmed_email = True
             unconfirmed_sent = max(unconfirmed_sent or m.sent_on, m.sent_on)
@@ -589,7 +589,7 @@ def _evaluate_fl(facts: CaseFacts) -> Evaluation:
     for p in pubs:
         if p.general_circulation_in_facility_area != "yes":
             out.append(Finding("newspaper of general circulation in the area", "statute 83.806(4)", "review",
-                               f"{p.newspaper}: {p.general_circulation_in_facility_area} ({p.circulation_source})", "send to review"))
+                               f"general circulation of {p.newspaper}: {p.general_circulation_in_facility_area} ({p.circulation_source})", "send to review"))
         lacking = [name for name, ok in (("property description", p.includes_property_description), ("facility address", p.includes_facility_address),
                                          ("tenant name", p.includes_tenant_name), ("time, place and manner of sale", p.includes_sale_time_place_manner)) if not ok]
         if lacking:

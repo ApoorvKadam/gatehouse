@@ -163,7 +163,9 @@ def ledger_changes(then: dict, now: dict) -> list[str]:
         if not e.get("bookEntryId"):
             out.append("a claimed charge has no entry id, so it cannot be compared with the current ledger")
             continue
-        name = ((e.get("details") or {}).get("description") or (e.get("details") or {}).get("category") or e["bookEntryId"]).lower()
+        # a description exactly as the ledger has it (a name can be an identifier); a bare category code reads as a word
+        details = e.get("details") or {}
+        name = details.get("description") or str(details.get("category") or "").lower() or e["bookEntryId"]
         later = current.get(e["bookEntryId"])
         if later is None:
             out.append(f"the {name} charge is no longer on the ledger")
@@ -180,7 +182,7 @@ def ledger_changes(then: dict, now: dict) -> list[str]:
     known = {e.get("bookEntryId") for e in then_entries if isinstance(e, dict)}
     for e in now_entries:
         if isinstance(e, dict) and e.get("bookEntryId") not in known and e.get("type") not in (None, "CHARGE"):
-            out.append(f"a {str(e.get('type')).lower()} of {e.get('amount', 0)} cents was posted after the notice")
+            out.append(f"a {str(e.get('type')).lower()} of {dollars(e.get('amount', 0))} was posted after the notice")
     return out
 
 

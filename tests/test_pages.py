@@ -144,5 +144,5 @@ def test_findings_are_written_in_dollars_and_dates_and_quote_records_as_they_are
                             "details": {"description": 'Fee "5000 cents 2026-10-06" late', "accruesOn": "2026-10-07"}}]}
     changes = ledger_changes(then, now)
     # the description is quoted from the ledger exactly; only Gatehouse's own words carry dollars and dates
-    assert 'the fee "5000 cents 2026-10-06" late charge\'s amount paid changed from $0.00 to $50.00' in changes
-    assert 'the fee "5000 cents 2026-10-06" late charge\'s due date changed from Oct 6, 2026 to Oct 7, 2026' in changes
+    assert 'the Fee "5000 cents 2026-10-06" late charge\'s amount paid changed from $0.00 to $50.00' in changes
+    assert 'the Fee "5000 cents 2026-10-06" late charge\'s due date changed from Oct 6, 2026 to Oct 7, 2026' in changes
