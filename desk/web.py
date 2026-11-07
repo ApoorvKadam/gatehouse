@@ -75,6 +75,24 @@ def local(when: datetime | None, zone: str = "America/New_York") -> str:
     return t.strftime("%b %-d, %-I:%M %p")
 
 
+def changed_findings(previous: list[dict], current: list[dict]) -> list[tuple[dict | None, dict]]:
+    """Findings of the current evaluation that differ from the previous one, each beside what it replaced.
+    A requirement can have several findings (one per charge), so unchanged ones are matched first, by content, and
+    only what is left is paired, in order."""
+    content = lambda f: (f.get("basis"), f.get("status"), f.get("detail"), f.get("action"))
+    left: dict[str, list[dict]] = {}
+    for f in previous:
+        left.setdefault(f["requirement"], []).append(f)
+    new = []
+    for f in current:
+        same = next((o for o in left.get(f["requirement"], []) if content(o) == content(f)), None)
+        if same is not None:
+            left[f["requirement"]].remove(same)
+        else:
+            new.append(f)
+    return [((left.get(f["requirement"]) or [None]).pop(0) if left.get(f["requirement"]) else None, f) for f in new]
+
+
 def sentence(text: str) -> str:
     text = text.strip()
     return (text[0].upper() + text[1:] + ("" if text.endswith(".") else ".")) if text else ""
@@ -369,10 +387,7 @@ def router(pages: Pages) -> APIRouter:
                 raise HTTPException(404, "This account has no lien file")
             current, previous = evaluations[0], (evaluations[1] if len(evaluations) > 1 else None)
             snap = s.get(LedgerSnapshot, case.last_snapshot_id) if case.last_snapshot_id else None
-            before = {f["requirement"]: f for f in previous.findings} if previous else {}
-            same = lambda a, b: a is not None and all(a.get(k) == b.get(k) for k in ("basis", "status", "detail", "action"))
-            changed = [(before.get(f["requirement"]), f) for f in current.findings
-                       if previous and not same(before.get(f["requirement"]), f)]
+            changed = changed_findings(previous.findings, current.findings) if previous else []
             order = {"blocked": 0, "review": 1, "missing": 2, "waiting": 3, "met": 9}
             findings = sorted(current.findings, key=lambda f: order.get(f["status"], 5))
             evidence = s.scalars(select(LienEvidence).where(LienEvidence.case_id == case.id).order_by(LienEvidence.id)).all()

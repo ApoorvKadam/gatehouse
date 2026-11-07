@@ -146,3 +146,14 @@ def test_findings_are_written_in_dollars_and_dates_and_quote_records_as_they_are
     # the description is quoted from the ledger exactly; only Gatehouse's own words carry dollars and dates
     assert 'the Fee "5000 cents 2026-10-06" late charge\'s amount paid changed from $0.00 to $50.00' in changes
     assert 'the Fee "5000 cents 2026-10-06" late charge\'s due date changed from Oct 6, 2026 to Oct 7, 2026' in changes
+
+
+
+def test_changed_since_matches_unchanged_findings_before_pairing_changes():
+    from desk.web import changed_findings
+    a = {"requirement": "account unchanged since notice", "basis": "policy", "status": "review", "detail": "charge A paid", "action": "x"}
+    b = {"requirement": "account unchanged since notice", "basis": "policy", "status": "review", "detail": "charge B paid", "action": "x"}
+    assert changed_findings([a, b], [b, a]) == []                      # reordered, nothing changed
+    c = dict(b, basis="statute 83.806(1)")
+    assert changed_findings([a, b], [a, c]) == [(b, c)]                # only the finding that changed, beside its old self
+    assert changed_findings([], [a]) == [(None, a)]
