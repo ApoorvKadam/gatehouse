@@ -324,3 +324,41 @@ def test_an_unreadable_date_is_shown_as_unknown_not_as_unrestricted(session, ada
     view = session.get(AccessView, lease.id).data
     assert view["should_restrict"] is None and view["standing"].startswith("unknown") and view["operator_locks"]
     assert ("access_review_required", "lease_RamnA0013") in {(w.kind, w.subject_id) for w in open_items(session)}
+
+
+class ChattyCheck(CubbyAdapter):
+    def check_code(self, facility_provider_id, code):
+        from desk.adapter.base import AccessCheck
+        real = super().check_code(facility_provider_id, code)
+        return AccessCheck(real.allowed, f"{real.message} for code {code}")    # free text that carries the code
+
+
+def test_only_known_check_answers_are_kept_never_the_fms_free_text(session, adapter, sim, fms_url):
+    from desk.models import AccessView
+    pay_in_full(sim, "lease_RamnA0012", 9500)
+    facility = orlando(session, adapter, gate_rule="allow_if_any_unit_in_good_standing")
+    chatty = ChattyCheck(fms_url, FULL_KEY, 5.0)
+    reconcile_access(session, chatty, facility, RUN)
+    chatty.close()
+    stored = " ".join(str(v.data) for v in session.scalars(select(AccessView))) + " ".join(
+        w.problem + str(w.observed) for w in session.scalars(select(WorkItem)))
+    assert "2265" not in stored and "for code" not in stored
+    assert all("for code" not in t["description"] for t in access_truth(fms_url)["tasks"])
+
+
+class SilentOverlock(CubbyAdapter):
+    def leases(self, facility_provider_id):
+        from dataclasses import replace
+        return [replace(pl, overlock_needed=None) for pl in super().leases(facility_provider_id)]
+
+
+def test_a_missing_fms_signal_is_never_presented_as_corroboration(session, adapter, sim, fms_url):
+    paid = sim.post("/sim/payments/offline", {"allocations": {"lease_BellC0207": 18500}}).json()["data"]["payment"]
+    sim.post("/sim/locks/return", {"lockId": locks_on(fms_url, "lease_BellC0207")[0]["lockId"]})
+    sim.post("/sim/payments/return", {"paymentId": paid["paymentId"]})
+    facility = orlando(session, adapter)
+    silent = SilentOverlock(fms_url, FULL_KEY, 5.0)
+    reconcile_access(session, silent, facility, RUN)
+    silent.close()
+    (item,) = [w for w in open_items(session) if w.subject_id == "lease_BellC0207"]
+    assert "did not say whether an overlock is needed" in item.problem and "calls for an overlock" not in item.problem

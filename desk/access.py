@@ -39,6 +39,7 @@ GATE_RULES = {
 PHYSICAL = ("Physical outcome not verified: the FMS records configuration, not whether the gate opened or a lock came "
             "off. That needs the gate log or a staff note.")
 CLOSED_BY = "FMS access reconciled"
+KNOWN_CHECK_MESSAGES = ("Access allowed", "Code not found", "Code disabled")
 
 
 @dataclass
@@ -116,7 +117,7 @@ def assess_customer(adapter: FMSAdapter, facility: Facility, policy: AccessPolic
             restricted[pl.provider_id] = None
             views[pl.provider_id] = {**view, "standing": "unknown: the FMS sent a delinquency date that cannot be read",
                                      "overdue_days": None, "should_restrict": None}
-            facts[("lease", pl.provider_id)] = {"locked": bool(operator_locks), "should_restrict": None}
+            facts[("lease", pl.provider_id)] = {"locked": bool(operator_locks), "should_restrict": None, "fms_agrees": False}
             out.append(Discrepancy(REVIEW, "lease", pl.provider_id,
                                    f"Unit {unit}: the FMS sent a delinquency date Gatehouse cannot read ({pl.delinquent_since!r}), "
                                    "so whether the unit should be restricted is unknown.",
@@ -130,11 +131,13 @@ def assess_customer(adapter: FMSAdapter, facility: Facility, policy: AccessPolic
         why_not = ("the FMS shows no balance due" if overdue is None
                    else f"its delinquency is paused by a {ex.reason.replace('_', ' ').lower()} exemption until {ex.end_date}" if exempt and ex
                    else f"it is {overdue} days overdue, under the {policy.lockout_days}-day rule")
-        views[pl.provider_id] = {**view, "standing": standing, "overdue_days": overdue, "should_restrict": should_restrict}
         disagree = pl.overlock_needed is not None and pl.overlock_needed != should_restrict
         if disagree:
             restricted[pl.provider_id] = None   # unsettled: the shared gate code is not judged on it either
-        facts[("lease", pl.provider_id)] = {"locked": bool(operator_locks), "should_restrict": None if disagree else should_restrict}
+        views[pl.provider_id] = {**view, "standing": standing, "overdue_days": overdue,
+                                 "should_restrict": None if disagree else should_restrict}
+        facts[("lease", pl.provider_id)] = {"locked": bool(operator_locks), "should_restrict": None if disagree else should_restrict,
+                                            "fms_agrees": pl.overlock_needed is not None and not disagree}
         observed = {"standing": standing, "operator_locks": [k.serial for k in operator_locks], "overlock_needed": pl.overlock_needed,
                     "exempt": exempt, "rule_days": policy.lockout_days, "policy": policy.version}
         if disagree:
@@ -161,7 +164,8 @@ def assess_customer(adapter: FMSAdapter, facility: Facility, policy: AccessPolic
             out.append(Discrepancy(
                 MISSING, "lease", pl.provider_id,
                 f"Unit {unit} is {overdue} days overdue, past the facility's {policy.lockout_days}-day rule, and the FMS records "
-                "no operator lock on it. The FMS itself calls for an overlock. Gatehouse does not lock anyone out; a person decides.",
+                f"no operator lock on it.{' The FMS itself calls for an overlock.' if pl.overlock_needed is True else ' The FMS did not say whether an overlock is needed.'} "
+                "Gatehouse does not lock anyone out; a person decides.",
                 "locks/search by lease", "Locks Search shows an operator lock on the unit, or the account is no longer past the rule.",
                 "Facility manager", observed,
                 (f"Decide on an overlock for unit {unit}",
@@ -179,15 +183,17 @@ def assess_customer(adapter: FMSAdapter, facility: Facility, policy: AccessPolic
             "access-codes/search", "Exactly one gate code on file for the customer.", "Facility manager", {"codes": len(codes)}))
     elif len(judged) == len(restricted):
         check = checks[codes[0].code]
+        # only known answers are kept or shown: free text from the FMS could carry a code
+        message = check.message if check.message in KNOWN_CHECK_MESSAGES else ("Access allowed" if check.allowed else "Access not allowed")
         expected = {"deny_if_any_unit_restricted": not any(judged),
                     "allow_if_any_unit_in_good_standing": not all(judged)}.get(policy.gate_rule)
-        gate.update({"allowed": check.allowed, "message": check.message, "expected_allowed": expected})
+        gate.update({"allowed": check.allowed, "message": message, "expected_allowed": expected})
         facts[("customer", customer)] = {"allowed": check.allowed, "expected": expected}
         past = [pl.unit_name for pl in leases if restricted.get(pl.provider_id)]
         good = [pl.unit_name for pl in leases if restricted.get(pl.provider_id) is False]
         units_past = ", ".join(past) or "none"
         rule = GATE_RULES.get(policy.gate_rule, policy.gate_rule)
-        observed = {"check": check.message, "allowed": check.allowed, "expected_allowed": expected,
+        observed = {"check": message, "allowed": check.allowed, "expected_allowed": expected,
                     "restricted_units": units_past, "gate_rule": policy.gate_rule, "policy": policy.version}
         if expected is None:
             out.append(Discrepancy(REVIEW, "customer", customer, f"The recorded gate rule {policy.gate_rule!r} is not one Gatehouse knows.",
@@ -197,11 +203,11 @@ def assess_customer(adapter: FMSAdapter, facility: Facility, policy: AccessPolic
                       else "none of the customer's units here is past the rule")
             out.append(Discrepancy(
                 NOT_RESTORED, "customer", customer,
-                f"The FMS reports the customer's gate code as \"{check.message}\", but under the recorded rule ({rule}) the FMS "
+                f"The FMS reports the customer's gate code as \"{message}\", but under the recorded rule ({rule}) the FMS "
                 f"should allow it: {reason}.",
                 "access-codes/check", "Check Access Code answers Access allowed, on a later complete reading.", "Facility manager", observed,
                 ("Check this customer's gate code",
-                 f"The FMS reports the gate code as \"{check.message}\". Under the facility's recorded rule ({rule}) it should be "
+                 f"The FMS reports the gate code as \"{message}\". Under the facility's recorded rule ({rule}) it should be "
                  f"allowed, because {reason}. Re-enable it in the FMS if that is right.", None, customer)))
         elif not expected and check.allowed:
             out.append(Discrepancy(
@@ -271,20 +277,19 @@ def closing(item: WorkItem, facts: dict[tuple[str, str], dict]) -> tuple[str, st
         return (CLOSED_BY, "Closed: an access rule is now recorded for the facility.") if f.get("policy") else None
     if item.subject_type == "lease":
         locked, restrict = f.get("locked"), f.get("should_restrict")
+        if item.kind in (NOT_RESTORED, MISSING) and restrict is None:
+            return None   # what the unit should be is not known on this reading: nothing closes on it
         if item.kind == NOT_RESTORED:
-            if not locked:
-                return CLOSED_BY, f"Closed: Locks Search shows no operator lock on the unit. {PHYSICAL}"
             if restrict:
                 return ("No longer applies", "Closed without the lock coming off: the FMS now shows the unit past the rule, so the "
                         "recorded lock is what the rule expects.")
-            return None
+            return (CLOSED_BY, f"Closed: Locks Search shows no operator lock on the unit. {PHYSICAL}") if not locked else None
         if item.kind == MISSING:
-            if locked:
-                return CLOSED_BY, f"Closed: Locks Search shows an operator lock on the unit. {PHYSICAL}"
-            if restrict is False:
+            if not restrict:
                 return "No longer applies", "Closed: the FMS no longer shows the unit past the rule."
-            return None
-        return (CLOSED_BY, "Closed: the FMS and the recorded rule now agree on this unit.") if restrict is not None else None
+            return (CLOSED_BY, f"Closed: Locks Search shows an operator lock on the unit. {PHYSICAL}") if locked else None
+        # a review item closes only when the FMS said, in so many words, what the rule says
+        return (CLOSED_BY, "Closed: the FMS and the recorded rule now agree on this unit.") if f.get("fms_agrees") else None
     allowed, expected = f.get("allowed"), f.get("expected")
     if allowed is None or expected is None:
         return None
