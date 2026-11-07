@@ -230,9 +230,15 @@ def test_an_unreadable_outside_feed_is_said_on_its_item(fms_url, sim, adapter):
         assert any("outside listings" in f for f in result.failures)
 
 
-def test_a_malformed_auction_answer_is_an_fms_error():
+@pytest.mark.parametrize("answer", [
+    {"status": 200, "data": {"auctions": ["not an auction"]}},
+    {"status": 200, "data": {"auctions": [{"auctionId": "a", "auctionTime": 5, "auctionedLeases": []}]}},
+    {"status": 200, "data": {"auctions": [{"auctionId": "a", "auctionTime": "2026-11-08T10:00:00",
+                                           "auctionedLeases": [{"leaseId": "l", "status": "LISTED", "unitId": 7}]}]}},
+    {"status": 200, "data": []},
+])
+def test_a_malformed_auction_answer_is_an_fms_error(answer):
     from desk.adapter.cubby import CubbyAdapter
-    answer = {"status": 200, "data": {"auctions": ["not an auction"]}}
     broken = CubbyAdapter("http://fms.invalid", "key", 1.0, transport=httpx.MockTransport(lambda r: httpx.Response(200, json=answer)))
     with pytest.raises(FMSError):
         broken.auction_entries(ORLANDO)

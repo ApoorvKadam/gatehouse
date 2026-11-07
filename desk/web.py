@@ -513,8 +513,12 @@ def router(pages: Pages) -> APIRouter:
                                                        WorkItem.kind.in_(sales.KIND_NAMES), WorkItem.id != w.id).order_by(WorkItem.id)).all()
             sale_at = datetime.fromisoformat(o["sale_at"]) if o.get("sale_at") else None
             hours = (sale_at - datetime.now(timezone.utc).replace(tzinfo=None)).total_seconds() / 3600 if sale_at else None
-            read_at = datetime.fromisoformat(o["read_at"]) if o.get("read_at") else None
-            listed_at = (datetime.fromisoformat(o["listing"]["observedAt"]) if (o.get("listing") or {}).get("observedAt") else None)
+            def when(value):
+                try:
+                    return datetime.fromisoformat(value) if isinstance(value, str) else None
+                except ValueError:
+                    return None   # shown as the feed sent it
+            read_at, listed_at = when(o.get("read_at")), when((o.get("listing") or {}).get("observedAt"))
             return templates.TemplateResponse(request, "sale.html", {
                 "w": w, "o": o, "facility": facility, "case_id": case_id, "related": related, "hours": hours,
                 "read_at": read_at, "listed_at": listed_at, "on": on,
