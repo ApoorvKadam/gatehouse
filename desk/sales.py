@@ -205,11 +205,12 @@ def reconcile_sales(session: Session, adapter: FMSAdapter, facility: Facility, r
     try:
         entries = adapter.auction_entries(facility.provider_id)
     except FMSError as exc:
+        # sale items decide nothing on this pass; the outside site's feed is its own evidence and is still read below
+        entries = None
         for item in open_items:
-            item.note = f"Not freshly verified: auctions/search could not be read at {now:%b %-d, %H:%M} UTC."
-        session.commit()
+            if item.kind != OUTSIDE:
+                item.note = f"Not freshly verified: auctions/search could not be read at {now:%b %-d, %H:%M} UTC."
         result.failures.append(f"auctions at {facility.provider_id}: {exc}")
-        return result
     by_subject: dict[str, list[WorkItem]] = {}
     for item in open_items:
         by_subject.setdefault(item.subject_id, []).append(item)
@@ -220,7 +221,7 @@ def reconcile_sales(session: Session, adapter: FMSAdapter, facility: Facility, r
                 item.note = f"Not freshly verified: the outside site's feed could not be read at {now:%b %-d, %H:%M} UTC."
         result.failures.append(f"outside listings at {facility.provider_id}: the feed could not be read")
     decided: set[str] = set()
-    for entry in entries:
+    for entry in entries or []:
         subject = subject_of(entry)
         mine = by_subject.get(subject, [])
         if entry.status == "CANCELLED":
@@ -272,7 +273,7 @@ def reconcile_sales(session: Session, adapter: FMSAdapter, facility: Facility, r
             decided.add(subject)
         _outside(session, facility, run_id, entry, listings, result)
     # an outside listing whose sale no longer appears in auctions/search is still checked against the site's own feed
-    seen = {subject_of(e) for e in entries}
+    seen = {subject_of(e) for e in entries or []}
     for item in open_items:
         o = item.observed or {}
         if item.kind == OUTSIDE and item.state == "open" and item.subject_id not in seen and o.get("auction_id") and o.get("lease_id"):

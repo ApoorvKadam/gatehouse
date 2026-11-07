@@ -294,3 +294,21 @@ def test_an_outside_listing_is_checked_even_when_its_sale_left_the_fms_list(fms_
         closed = [i for i in items(s, kind=OUTSIDE, state="closed") if i.subject_id.endswith("lease_WhitB1042")]
         still = [i for i in items(s, kind=OUTSIDE, state="open") if i.subject_id.endswith("lease_OkfrE0505")]
         assert len(closed) == 1 and still and still[0].note is None
+
+
+def test_the_outside_feed_still_decides_when_the_fms_sale_list_cannot_be_read(fms_url, sim, adapter):
+    factory = world(adapter, fms_url)
+
+    class SalesDown:
+        def __getattr__(self, name):
+            return getattr(adapter, name)
+
+        def auction_entries(self, facility_id):
+            raise FMSError("/v1/auctions/search: ReadTimeout")
+
+    with factory() as s:
+        assert sim.post("/sim/listings/withdraw", {"leaseId": "lease_WhitB1042"}).status_code == 200
+        result = sweep(s, SalesDown(), fms_url)
+        closed = [i for i in items(s, kind=OUTSIDE, state="closed") if i.subject_id.endswith("lease_WhitB1042")]
+        listed = items(s, kind=LISTED_PAID)[0]
+        assert len(closed) == 1 and listed.state == "open" and "Not freshly verified" in listed.note and result.failures
