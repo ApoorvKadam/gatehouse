@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import httpx
+import pytest
 from sqlalchemy import select
 
 from desk import demo
@@ -71,6 +72,20 @@ def fresh(adapter, fms_url):
         import_stitch(s)
     demo.build(factory, adapter, fms_url)
     return factory
+
+
+def test_a_world_whose_build_stopped_part_way_is_refused_on_the_next_start(fms_url, sim, adapter, monkeypatch):
+    factory = make_session_factory("sqlite:///:memory:")
+    ensure_append_only(factory.kw["bind"])
+
+    def stuck(*_):
+        raise RuntimeError("seed: payment 2 stopped at AWAITING_APPLICATION")
+    monkeypatch.setattr(demo, "changed_lien_file", stuck)
+    with pytest.raises(RuntimeError, match="stopped at"):
+        demo.build(factory, adapter, fms_url)
+    monkeypatch.undo()
+    with pytest.raises(RuntimeError, match="did not finish"):
+        demo.build(factory, adapter, fms_url)
 
 
 def test_two_boots_give_the_same_world_and_the_worker_cannot_move_it(fms_url, sim, adapter):
