@@ -108,7 +108,9 @@ class AccessRun:
     def start(self):
         self.sim("/sim/reset")
         session = make_session_factory("sqlite:///:memory:")()
-        adapter = CubbyAdapter(self.url, KEY, timeout_seconds=5.0)
+        recording = Recording()
+        adapter = CubbyAdapter(self.url, KEY, timeout_seconds=5.0, transport=recording)
+        adapter.recording = recording
         sync_facility(session, adapter, ORLANDO)
         facility = session.scalar(select(Facility).where(Facility.provider_id == ORLANDO))
         session.add(AccessPolicy(facility_id=facility.id, lockout_days=30, gate_rule="deny_if_any_unit_restricted",
@@ -136,7 +138,8 @@ def expected_mismatches(adapter) -> set[tuple[str, str, str]]:
     """Every mismatch the FMS shows against the evaluation's rule, worked out here, apart from desk/access.py: a unit
     past the rule with no operator lock, a unit not past it with one, a gate code that disagrees with the rule.
     Units where the FMS's own overlockNeeded disagrees with the rule are left to the review path."""
-    today = datetime.now(timezone.utc).astimezone().date()
+    from zoneinfo import ZoneInfo
+    today = datetime.now(ZoneInfo("America/New_York")).date()   # Orlando's own date, as the rule counts days
     out = set()
     by_customer: dict[str, list] = {}
     for pl in adapter.leases(ORLANDO):
@@ -144,11 +147,12 @@ def expected_mismatches(adapter) -> set[tuple[str, str, str]]:
     for customer, leases in by_customer.items():
         exempt = {e.lease_provider_id for e in adapter.exemptions_for_customer(customer)
                   if e.pause_overlock and e.end_date >= today.isoformat()}
-        eligible = {}
+        eligible, unsettled = {}, False
         for pl in leases:
             overdue = (today - date.fromisoformat(pl.delinquent_since[:10])).days if pl.delinquent_since else None
             eligible[pl.provider_id] = overdue is not None and overdue >= RULE_DAYS and pl.provider_id not in exempt
             if pl.overlock_needed is not None and pl.overlock_needed != eligible[pl.provider_id]:
+                unsettled = True
                 continue
             locked = any(k.status == "OPERATOR_USE" for k in adapter.locks_for_lease(pl.provider_id))
             if locked and not eligible[pl.provider_id]:
@@ -156,7 +160,7 @@ def expected_mismatches(adapter) -> set[tuple[str, str, str]]:
             if eligible[pl.provider_id] and not locked:
                 out.add((MISSING, "lease", pl.provider_id))
         codes = adapter.access_codes(ORLANDO, customer)
-        if len(codes) == 1:
+        if len(codes) == 1 and not unsettled:
             allowed = adapter.check_code(ORLANDO, codes[0].code).allowed
             should = not any(eligible.values())
             if should and not allowed:
@@ -180,6 +184,23 @@ def access_red_lines(session, adapter) -> dict[str, int]:
             "a mismatch (lock, missing lock or gate code) left without a work item after a pass": unflagged}
 
 
+# what Gatehouse may send to the FMS during an access pass: reads, and one kind of write (a task for a person)
+ALLOWED = {"/v1/facilities/search", "/v1/leases/search", "/v1/ledgers/search", "/v1/payments/search", "/v1/customers/search",
+           "/v1/payment-methods/search", "/v1/access-codes/search", "/v1/access-codes/check", "/v1/locks/search",
+           "/v1/delinquency-exemptions/search", "/v1/tasks/search", "/v1/tasks/create"}
+
+
+class Recording(httpx.BaseTransport):
+    """Gatehouse's transport to the FMS, writing down every path it sends a request to."""
+
+    def __init__(self):
+        self.inner, self.paths = httpx.HTTPTransport(), []
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        self.paths.append(request.url.path)
+        return self.inner.handle_request(request)
+
+
 class Tally:
     """Runs each access pass and checks the red lines right after it, and counts any gate-code or lock change that
     happened during the pass itself (Gatehouse may only create tasks)."""
@@ -187,18 +208,15 @@ class Tally:
     def __init__(self, run: AccessRun):
         self.run, self.totals, self.access_writes = run, {}, 0
 
-    def state(self) -> tuple:
-        truth = self.run.truth()
-        return (sorted((c["customerId"], c["enabled"]) for c in truth["codes"]),
-                sorted((l["leaseId"], tuple(sorted((k["lockId"], k["status"]) for k in l["locks"]))) for l in truth["leases"]))
-
-    def reconcile(self, session, adapter, facility, passes: int = 1) -> None:
+    def reconcile(self, session, adapter, facility, passes: int = 1, judged: bool = True) -> None:
+        """judged=False for a facility without a rule: nothing is judged there, so mismatches are not counted."""
         for _ in range(passes):
-            before = self.state()
+            sent = len(adapter.recording.paths)
             reconcile_access(session, adapter, facility, "eval")
-            self.access_writes += int(self.state() != before)
+            self.access_writes += sum(1 for path in adapter.recording.paths[sent:] if path not in ALLOWED)
             for k, v in access_red_lines(session, adapter).items():
-                self.totals[k] = self.totals.get(k, 0) + v
+                if judged or "mismatch" not in k:
+                    self.totals[k] = self.totals.get(k, 0) + v
 
 
 def access_scenarios(url: str) -> tuple[list[Row], dict[str, int], int]:
@@ -248,16 +266,16 @@ def access_scenarios(url: str) -> tuple[list[Row], dict[str, int], int]:
     ok = len(tasks) == 1 and items(session)[0].task_state == "created"
     rows.append(Row("Access", "Task answer lost", "makes the task, then the answer breaks", f"found it by its marker; {len(tasks)} task in the FMS",
                     "Facility manager: one task", ok))
-    # 5. no rule recorded (no access red lines apply: nothing is judged)
-    session = make_session_factory("sqlite:///:memory:")()
-    adapter = CubbyAdapter(url, KEY, timeout_seconds=5.0)
+    # 5. no rule recorded: nothing is judged, but the red lines that apply are still counted
     run.sim("/sim/reset")
+    session = make_session_factory("sqlite:///:memory:")()
+    recording = Recording()
+    adapter = CubbyAdapter(url, KEY, timeout_seconds=5.0, transport=recording)
+    adapter.recording = recording
     sync_facility(session, adapter, ORLANDO)
     facility = session.scalar(select(Facility).where(Facility.provider_id == ORLANDO))
     run.sim("/sim/payments/offline", {"allocations": {"lease_WhitB1042": 24000}})
-    before = tally.state()
-    reconcile_access(session, adapter, facility, "eval")
-    tally.access_writes += int(tally.state() != before)
+    tally.reconcile(session, adapter, facility, judged=False)
     kinds = [(w.kind, w.subject_type) for w in items(session)]
     ok = kinds == [("access_review_required", "facility")] and not run.tasks("lease_WhitB1042")
     rows.append(Row("Access", "No rule recorded", "a paid unit is still locked, but the facility has no stated rule",
@@ -287,17 +305,27 @@ def applied_on_ledger(url: str, lease_id: str) -> bool:
 
 
 def payment_rows(url: str) -> tuple[list[Row], int, int]:
-    """Each payment scenario, then two red lines read from the simulator's own record after it: card charges beyond
-    the ones the tenant agreed to, and a tenant told "applied" while no card payment reached the ledger."""
+    """Each payment scenario, and two red lines read from the simulator's own record: card charges beyond the ones the
+    tenant agreed to, counted after the scenario; and a tenant sentence that says "applied", judged against the ledger
+    at the moment the sentence is written, whenever that is in the scenario."""
     run = scenarios.Run(url)
-    rows, duplicates, applied_without_proof = [], 0, 0
-    for fn in scenarios.SCENARIOS:
-        desk, told, passed = fn(run)
-        rows.append(Row("Payments", fn.title, fn.fms, desk, told, passed))
-        duplicates += max(0, card_charges(url, scenarios.DANA) - EXPECTED_CARD_CHARGES[fn.title])
-        if "applied" in told.lower() and not applied_on_ledger(url, scenarios.DANA):
-            applied_without_proof += 1
-    return rows, applied_without_proof, duplicates
+    rows, duplicates, unproven = [], 0, []
+    original = scenarios.tenant_message
+
+    def judged(command):
+        sentence = original(command)
+        if "applied" in sentence.lower() and not applied_on_ledger(url, scenarios.DANA):
+            unproven.append(sentence)
+        return sentence
+    scenarios.tenant_message = judged
+    try:
+        for fn in scenarios.SCENARIOS:
+            desk, told, passed = fn(run)
+            rows.append(Row("Payments", fn.title, fn.fms, desk, told, passed))
+            duplicates += max(0, card_charges(url, scenarios.DANA) - EXPECTED_CARD_CHARGES[fn.title])
+    finally:
+        scenarios.tenant_message = original
+    return rows, len(unproven), duplicates
 
 
 # ------------------------------------------------------------------ negative controls
@@ -339,7 +367,8 @@ def evaluate(url: str) -> Report:
     report.red_lines += [RedLine("Payments", "a duplicate charge", duplicates),
                          RedLine("Payments", "a tenant told a payment was applied without FMS proof", applied_without_proof)]
     report.red_lines += [RedLine("Access", line, n) for line, n in access_totals.items()]
-    report.red_lines.append(RedLine("Access", "an access change made by Gatehouse", access_writes))
+    report.red_lines.append(RedLine("Access", "a request from Gatehouse that could change access (anything but a read or a task)",
+                                    access_writes))
     report.controls += [control_retry(url), control_task_closes(url)]
     return report
 
