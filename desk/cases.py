@@ -69,12 +69,17 @@ def reversed_at_fms(session: Session, lease: Lease, case: DelinquencyCase, was_p
     found when a new case opens does not mark that case reopened."""
     since = case.resolved_at or case.opened_at
     rows = session.scalars(select(ObservedPayment).where(ObservedPayment.status.in_(FMS_REVERSAL_STATUSES))).all()
+    # the desk's own payments carry the time it saw them reversed; a slow read can store the FMS's record of the same
+    # payment only later, and that later first sighting must not make an old return look new
+    known = {c.provider_payment_id: c.reversed_at for c in session.scalars(select(PaymentCommand).where(
+        PaymentCommand.lease_id == lease.id, PaymentCommand.reversed_at.is_not(None), PaymentCommand.provider_payment_id.is_not(None)))}
     for r in rows:
         if lease.provider_id not in r.lease_provider_ids:
             continue
-        if r.status_changed_at is not None and (since is None or r.status_changed_at >= since):
+        when = r.status_changed_at or known.get(r.provider_payment_id)
+        if when is not None and (since is None or when >= since):
             return True
-        if r.status_changed_at is None and was_paid and case.resolved_at is not None and r.first_seen_at >= case.resolved_at:
+        if when is None and was_paid and case.resolved_at is not None and r.first_seen_at >= case.resolved_at:
             return True
     return False
 
