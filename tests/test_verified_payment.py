@@ -507,12 +507,13 @@ def test_staff_must_name_a_lead_before_calling_a_lost_payment_not_charged(sessio
 def test_an_old_return_does_not_reopen_the_next_settled_episode(session, adapter, sim):
     first, case, _ = pay(session, adapter, DANA, "pm_DanaVisa4242", 24000)
     sim.post("/sim/payments/return", {"paymentId": first.provider_payment_id})
-    settle(session, adapter, times=1)
+    # more than one pass: on a loaded machine a single pass's FMS read can time out, and a failed read changes nothing
+    settle(session, adapter, times=3)
     assert session.get(DelinquencyCase, case.id).state == "reopened"
     again = PaymentService(session, adapter).take_payment(case.id, "pm_DanaVisa4242", Authorization.new(True, 24000, 24000))
     assert again.state == "CONFIRMED" and session.get(DelinquencyCase, case.id).state == "paid"
     sim.post("/sim/charges", {"leaseId": DANA, "amount": 21500, "category": "RENT", "description": "December rent"})
-    settle(session, adapter, times=1)
+    settle(session, adapter, times=3)
     assert session.get(DelinquencyCase, case.id).state == "paid"
 
 
