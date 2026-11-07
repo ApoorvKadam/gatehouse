@@ -9,8 +9,15 @@ import httpx
 
 from .base import (
     AccessCheck, FMSError, NotFound, PermissionDenied, ProviderAccessCode, ProviderCustomer, ProviderExemption, ProviderLease,
-    ProviderLedger, ProviderLock, ProviderPayment, ProviderTask, SubmitOutcome, TaskCreateOutcome,
+    ProviderAuctionEntry, ProviderLedger, ProviderLock, ProviderPayment, ProviderTask, SubmitOutcome, TaskCreateOutcome,
 )
+
+AUCTION_STATUSES = ("LISTED", "NO_BIDS", "SOLD", "PAYMENT_RECEIVED", "COMPLETE", "CANCELLED")
+
+
+def _text(value, optional: bool = False) -> bool:
+    """A non-empty string, or (optional) nothing at all."""
+    return (optional and value is None) or (isinstance(value, str) and bool(value))
 
 
 def _parse_time(value: str | None) -> datetime | None:
@@ -65,7 +72,12 @@ class CubbyAdapter:
             raise PermissionDenied("; ".join(body.get("errors", [])) or path)
         if response.status_code != 200:
             raise FMSError(f"{path}: HTTP {response.status_code} {body.get('errors')}")
-        return body.get("data") or {}
+        data = body.get("data")
+        if data is None:
+            return {}
+        if not isinstance(data, dict):
+            raise FMSError(f"{path}: the answer's data is not an object")
+        return data
 
     @staticmethod
     def _lease(raw: dict) -> ProviderLease:
@@ -164,6 +176,23 @@ class CubbyAdapter:
         return [ProviderTask(task_id=r.get("taskId") or r.get("id") or "", title=r.get("title") or "", description=r.get("description"),
                              status=r.get("status") or "", customer_provider_id=r.get("customerId"), unit_id=r.get("unitId"),
                              updated_at=_parse_time(r.get("updatedAt"))) for r in rows]
+
+    def auction_entries(self, facility_provider_id: str) -> list[ProviderAuctionEntry]:
+        auctions = self._read("/v1/auctions/search", {"facilityId": facility_provider_id}).get("auctions")
+        if not isinstance(auctions, list):
+            raise FMSError("/v1/auctions/search: the answer has no auctions list")
+        out = []
+        for a in auctions:
+            if (not isinstance(a, dict) or not _text(a.get("auctionId")) or not _text(a.get("auctionTime"))
+                    or not isinstance(a.get("auctionedLeases"), list)):
+                raise FMSError("/v1/auctions/search: an auction without its id, time or leases")
+            for e in a["auctionedLeases"]:
+                if (not isinstance(e, dict) or not _text(e.get("leaseId")) or e.get("status") not in AUCTION_STATUSES
+                        or not _text(e.get("unitId"), optional=True) or not _text(e.get("lienStartDate"), optional=True)):
+                    raise FMSError("/v1/auctions/search: an auctioned lease without its id, a known status or readable fields")
+                out.append(ProviderAuctionEntry(auction_id=a["auctionId"], auction_time=a["auctionTime"], lease_provider_id=e["leaseId"],
+                                                unit_id=e.get("unitId"), lien_start_date=e.get("lienStartDate"), status=e["status"]))
+        return out
 
     def create_task(self, facility_provider_id: str, title: str, description: str, *, unit_id: str | None = None,
                     customer_provider_id: str | None = None) -> TaskCreateOutcome:

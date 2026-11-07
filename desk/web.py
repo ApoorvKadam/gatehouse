@@ -17,6 +17,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from .access import CLOSED_BY, GATE_RULES, KIND_NAMES, MISSING, NOT_RESTORED, PHYSICAL, policy_for, facility_today
+from . import sales
+from .liens import on
 from .models import (
     AccessPolicy, AccessView, CaseEvent, DelinquencyCase, DeskBinding, Facility, IdentityCheck, Lease, LedgerSnapshot,
     LienEvaluation, LienEvidence, PaymentCommand, PaymentProposal, WorkItem,
@@ -268,6 +270,7 @@ class Pages:
                                   f"{money(owed)} owed. No payment or lien step in progress.",
                                   "The FMS ledger shows the balance paid.", "Front desk", f"/accounts/{case.id}", money(owed)))
         items.extend(self.access_items(s, facility))
+        items.extend(self.sale_items(s, facility))
         return sorted(items, key=lambda i: (i.rank, i.since))
 
     def subject_label(self, s: Session, w: WorkItem) -> tuple[str | None, str | None]:
@@ -291,6 +294,20 @@ class Pages:
                     "sending": " FMS task: being created.", "rejected": " FMS task: refused by the FMS."}.get(w.task_state, "")
             out.append(Item(rank, KIND_NAMES[w.kind], unit or "", 0, w.opened_at, w.problem + task + (f" {w.note}" if w.note else ""),
                             w.closing_evidence + " " + PHYSICAL, w.who_acts, f"/access/{w.id}", "", label=label))
+        return out
+
+    def sale_items(self, s: Session, facility: Facility) -> list[Item]:
+        out = []
+        for w in s.scalars(select(WorkItem).where(WorkItem.facility_id == facility.id, WorkItem.state == "open",
+                                                  WorkItem.kind.in_(sales.KIND_NAMES)).order_by(WorkItem.id)):
+            rank = {sales.LISTED_PAID: 0, sales.SETTLED_REVIEW: 0, sales.BALANCE_CHANGED: 1, sales.AFTER_NOTICE: 1}.get(w.kind, 2)
+            o = w.observed or {}
+            task = {"created": f" FMS task: {(w.task_status or 'open').lower()}.", "outcome_unknown": " FMS task: outcome unknown.",
+                    "sending": " FMS task: being created.", "rejected": " FMS task: refused by the FMS."}.get(w.task_state, "")
+            out.append(Item(rank, sales.KIND_NAMES[w.kind], o.get("unit") or o.get("lease_id", ""), 0, w.opened_at,
+                            w.problem + task + (f" {o['task_warning']}" if o.get("task_warning") else "") + (f" {w.note}" if w.note else ""),
+                            w.closing_evidence, w.who_acts, f"/sales/{w.id}",
+                            money(o["owed"]) if isinstance(o.get("owed"), int) else ""))
         return out
 
     def record(self, s: Session, case: DelinquencyCase) -> list[Entry]:
@@ -370,6 +387,11 @@ def router(pages: Pages) -> APIRouter:
             access_lease = s.scalar(select(Lease).where(Lease.provider_id == access.subject_id)) if access else None
             access_view = s.get(AccessView, access_lease.id) if access_lease else None
             access_policy = policy_for(s, s.get(Facility, access.facility_id), facility_today(s.get(Facility, access.facility_id))) if access else None
+            # the sales example: a sale still listed while the FMS ledger shows nothing owed
+            sale = s.scalars(select(WorkItem).where(WorkItem.facility_id.in_([f.id for f in facilities]), WorkItem.state == "open",
+                                                    WorkItem.kind == sales.LISTED_PAID).order_by(WorkItem.id)).first()
+            sale_outside = s.scalars(select(WorkItem).where(WorkItem.kind == sales.OUTSIDE, WorkItem.subject_id == sale.subject_id)
+                                     .order_by(WorkItem.id.desc())).first() if sale else None
             lanes = {}
             if record_case is not None:
                 for e in pages.record(s, s.get(DelinquencyCase, record_case)):
@@ -380,6 +402,7 @@ def router(pages: Pages) -> APIRouter:
                 "returned": returned, "returned_unit": s.get(Lease, returned.lease_id).unit_name if returned else None,
                 "changed": changed, "counsel": counsel, "counsel_state": counsel_state, "record_case": record_case,
                 "record_unit": record_unit, "lanes": lanes, "lane_names": LANES, "access": access, "access_lease": access_lease,
+                "sale": sale, "sale_outside": sale_outside, "sale_words": sales.STATUS_WORDS, "on": on,
                 "access_view": access_view.data if access_view else None, "access_policy": access_policy, "gate_rules": GATE_RULES,
                 "report": evaluation_report(),
                 "truth": pages.trace.get(s.get(Lease, held.lease_id).provider_id) if held else None,
@@ -475,6 +498,33 @@ def router(pages: Pages) -> APIRouter:
                 "policy": policy, "gate_rules": GATE_RULES, "kind_names": KIND_NAMES, "physical": PHYSICAL, "closed_by": CLOSED_BY,
                 "local": local, "nav": "today", "facilities": pages.facilities(s)})
 
+    @r.get("/sales/{item_id}", response_class=HTMLResponse)
+    def sale_item(request: Request, item_id: int):
+        with session() as s:
+            w = s.get(WorkItem, item_id)
+            facility = s.get(Facility, w.facility_id) if w is not None else None
+            if w is None or w.kind not in sales.KIND_NAMES or facility not in pages.facilities(s):
+                raise HTTPException(404, "No such sale item")
+            o = w.observed or {}
+            lease = s.scalar(select(Lease).where(Lease.provider_id == o.get("lease_id"))) if o.get("lease_id") else None
+            case_id = (s.scalar(select(DelinquencyCase.id).where(DelinquencyCase.lease_id == lease.id).order_by(DelinquencyCase.id.desc()).limit(1))
+                       if lease else None)
+            related = s.scalars(select(WorkItem).where(WorkItem.facility_id == w.facility_id, WorkItem.subject_id == w.subject_id,
+                                                       WorkItem.kind.in_(sales.KIND_NAMES), WorkItem.id != w.id).order_by(WorkItem.id)).all()
+            sale_at = datetime.fromisoformat(o["sale_at"]) if o.get("sale_at") else None
+            hours = (sale_at - datetime.now(timezone.utc).replace(tzinfo=None)).total_seconds() / 3600 if sale_at else None
+            def when(value):
+                try:
+                    return datetime.fromisoformat(value) if isinstance(value, str) else None
+                except ValueError:
+                    return None   # shown as the feed sent it
+            read_at, listed_at = when(o.get("read_at")), when((o.get("listing") or {}).get("observedAt"))
+            return templates.TemplateResponse(request, "sale.html", {
+                "w": w, "o": o, "facility": facility, "case_id": case_id, "related": related, "hours": hours,
+                "read_at": read_at, "listed_at": listed_at, "on": on,
+                "kind_names": sales.KIND_NAMES, "status_words": sales.STATUS_WORDS, "cancelled_by": sales.CANCELLED_BY,
+                "outside_note": sales.OUTSIDE_NOTE, "money": money, "local": local, "nav": "today", "facilities": pages.facilities(s)})
+
     @r.get("/evaluation", response_class=HTMLResponse)
     def evaluation(request: Request):
         with session() as s:
@@ -494,7 +544,8 @@ def router(pages: Pages) -> APIRouter:
             for f in facilities:
                 for i in pages.today(s, f):
                     part = ("Payments" if i.link.startswith("/payments/") else "Lien files" if i.link.endswith("/lien")
-                            else "Access" if i.link.startswith("/access/") else "Collections")
+                            else "Access" if i.link.startswith("/access/") else "Lien sales" if i.link.startswith("/sales/")
+                            else "Collections")
                     groups.setdefault((part, i.head), []).append(i)
             open_work = sorted(({"part": part, "label": head, "count": len(rows), "since": min(r.since for r in rows),
                                  "link": min(rows, key=lambda r: r.since).link} for (part, head), rows in groups.items()),

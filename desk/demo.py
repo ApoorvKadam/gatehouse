@@ -21,6 +21,7 @@ from .cases import current_case, sync_facility
 from .lien_files import evaluate_case, record_evidence
 from .models import AccessPolicy, DelinquencyCase, DemoSeed, Facility, Lease, LedgerSnapshot
 from .payments import IdentityClaim, PaymentService, check_identity, confirm, propose
+from .sales import reconcile_sales
 
 log = logging.getLogger("desk.demo")
 
@@ -30,7 +31,8 @@ DESK = "front desk (synthetic)"
 ID_SEED = "gatehouse-preview"
 
 
-def build(factory: sessionmaker[Session], adapter: FMSAdapter, fms_base_url: str, run_id: str = "local") -> bool:
+def build(factory: sessionmaker[Session], adapter: FMSAdapter, fms_base_url: str, run_id: str = "local",
+          feed_url: str | None = None) -> bool:
     """Build the world if this database is empty. Returns False when the world is already built, and refuses a
     database where an earlier build stopped part-way."""
     with factory() as session:
@@ -43,6 +45,7 @@ def build(factory: sessionmaker[Session], adapter: FMSAdapter, fms_base_url: str
     with factory() as session:
         sync_facility(session, adapter, ORLANDO)
         sync_facility(session, adapter, ALBANY)
+        schedule_sale(sim)
         lost_response(session, adapter, sim)
         returned_payment(session, adapter, sim)
         changed_lien_file(session, adapter, sim)
@@ -51,11 +54,22 @@ def build(factory: sessionmaker[Session], adapter: FMSAdapter, fms_base_url: str
         # world is opened: the worker then finds nothing new to record
         settle(session, adapter, passes=2)
         access_world(session, adapter, sim, run_id)
+        for facility in session.scalars(select(Facility).where(Facility.provider_id.in_((ORLANDO, ALBANY))).order_by(Facility.id)):
+            reconcile_sales(session, adapter, facility, run_id, feed_url)
         session.add(DemoSeed(id=1))
         session.commit()
     sim.close()
     log.info("synthetic world built")
     return True
+
+
+def schedule_sale(sim: httpx.Client) -> None:
+    """Orlando's next lien sale, two days out at 10 AM, with Dana's B-1042 and Gina's E-505 in it, advertised on an
+    outside auction site. The notices went out 28 days ago; Gina's lien file below records hers."""
+    today = datetime.now(ZoneInfo("America/New_York")).date()
+    sim.post("/sim/auctions/schedule", json={
+        "facilityId": ORLANDO, "auctionTime": f"{today + timedelta(days=2)}T10:00:00", "leaseIds": ["lease_WhitB1042", "lease_OkfrE0505"],
+        "lienStartDate": (today - timedelta(days=28)).isoformat(), "marketplace": "Online auction site (synthetic)"}).raise_for_status()
 
 
 def trace(fms_base_url: str) -> dict:
@@ -113,11 +127,13 @@ def returned_payment(session: Session, adapter: FMSAdapter, sim: httpx.Client) -
     the account reopens, and the unit is past the facility's rule again with no lock on it."""
     case = case_of(session, "lease_BellC0207")
     command = pay_by_phone(session, adapter, case, IdentityClaim("Bell", "0187", "C-207"), 18500)
-    settle_until(session, adapter, command, lambda c: c.state == "CONFIRMED")     # it posts before anything else happens
+    # it posts, and the account reads paid, before anything else happens
+    settle_until(session, adapter, command, lambda c: c.state == "CONFIRMED" and session.get(DelinquencyCase, c.case_id).state == "paid")
     for lock in adapter.locks_for_lease("lease_BellC0207"):
         sim.post("/sim/locks/return", json={"lockId": lock.lock_id}).raise_for_status()
     sim.post("/sim/payments/return", json={"paymentId": command.provider_payment_id}).raise_for_status()
-    settle_until(session, adapter, command, lambda c: c.state == "RETURNED")
+    # the account must read reopened before the next story syncs the facility, or that sync opens a second case for him
+    settle_until(session, adapter, command, lambda c: c.state == "RETURNED" and session.get(DelinquencyCase, c.case_id).state == "reopened")
 
 
 def changed_lien_file(session: Session, adapter: FMSAdapter, sim: httpx.Client) -> None:

@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from . import access, seed
+from . import access, auctions, seed
 from .store import (
     ApiKey, BookEntry, Customer, Facility, Lease, LeaseBehavior, Payment, PaymentMethod,
     apply_to_lease, lease_total_due, make_session_factory, new_id, reverse_on_lease, unit_id_of, utcnow,
@@ -317,6 +317,7 @@ def create_app(database_url: str | None = None, lose_response_seconds: float = 8
         return ok({"totalDue": lease_total_due(session, lease.lease_id)})
 
     access.register(app, db, caller, own_lease, ok, iso, ApiError)
+    auctions.register(app, db, caller, own_lease, ok, iso, ApiError)
 
     with factory() as session:
         if session.scalars(select(Facility)).first() is None:

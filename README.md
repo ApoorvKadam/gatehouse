@@ -25,6 +25,7 @@ A 29-second loop of one lost payment, built from the app's own screens (click th
 | Collections and payments | Built | The FMS shows the payment succeeded and the ledger shows the money on the charges the tenant agreed to pay |
 | Florida lien evidence | Built | Every requirement has a record; the best a file reaches is a packet for a person to review |
 | Access and overlocks | Built | The FMS's gate code and unit locks match the facility's recorded lockout rule, in both directions, on a complete reading |
+| Lien sales | Built | A sale still listed after the account was paid is cancelled in the FMS (auctions/search shows it), and an outside listing is withdrawn by that site's own report |
 | Leads and move-ins | Planned | A missed call counts as recovered only when a specific lease is linked to it |
 | Rent changes | Planned | An approved increase is saved, noticed and charged in the FMS, with what happened after |
 
@@ -45,6 +46,13 @@ The hosted preview is read-only and runs on synthetic data. Its home page shows 
 - **Both directions are work.** Each pass reads every customer's gate code and its check, the locks on each unit, the lease's overlockNeeded and any exemption from the FMS. A tenant who is current or exempt but still has an operator lock or a disabled code, and an account past the rule whose code the FMS still allows or whose unit has no lock, each open an item. A lock in operator use says the unit is restricted, not why, so the task asks a person to check before taking it off.
 - **A task is a request, not proof.** Gatehouse asks for a person through one FMS task per item, recording the intent and a marker before the call. If the answer is lost, it looks the task up by its marker and never creates another while the outcome is unknown. A task marked completed does not close the item; only a later complete FMS reading showing the expected state does. A failed read changes nothing.
 - **Configuration is not the physical world.** The FMS records codes and locks. Whether the gate opened or the lock came off needs the gate log or a staff note, and every access item says so.
+
+## Lien sales
+
+- **The sale is read again with the account.** Each pass reads the facility's sales from auctions/search and, for every listed or settled unit, the ledger and payments in the same pass. A stored reading never decides a sale, and a failed read decides nothing and says the item was not freshly verified.
+- **Nothing owed, still listed.** That opens the most urgent item on Today and one FMS task asking staff to cancel the sale or say why it stands. A zero balance with no payment since the notice is not called a tenant payment; a credit or waiver may explain it.
+- **A payment is not a legal conclusion.** A payment after the notice that leaves a balance, and a sale already settled on an account with nothing owed or payments since the notice, go to a person and counsel. The FMS does not say whether a sale came before or after a payment, so Gatehouse claims no order, and a bidder's payment is never read as the tenant's.
+- **Closing needs its own evidence.** "FMS lien cancellation verified" means auctions/search shows that auction and lease cancelled, and nothing more; a completed task closes nothing. If a payment comes back before the cancellation, the item moves to review and its task is marked as resting on the older reading. A listing on an outside auction site is its own item, closed only by that site's feed. Gatehouse never cancels, settles or completes a sale.
 
 ## How it is built
 
