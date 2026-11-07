@@ -6,7 +6,7 @@ import time
 from datetime import date, datetime
 
 from fastapi import Depends, FastAPI, Header, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -18,7 +18,7 @@ from .store import (
 
 PII_FIELDS = ("name", "firstName", "lastName", "phone", "email")
 PAYMENT_MODES = {"approve", "decline", "fail", "pending_then_succeed", "pending_then_decline",
-                 "late_application", "lose_response", "server_error", "gateway_error", "reject"}
+                 "late_application", "lose_response", "drop_after_charge", "server_error", "gateway_error", "reject"}
 
 
 class ApiError(Exception):
@@ -221,12 +221,32 @@ def create_app(database_url: str | None = None, lose_response_seconds: float = 8
         if mode == "lose_response":
             # the money is taken and applied, then the response never arrives in time
             time.sleep(app.state.lose_response_seconds)
+        if mode == "drop_after_charge":
+            # the money is taken and applied, then the connection breaks before the answer is complete: the same
+            # unknown outcome as a timeout, without depending on how fast this machine is
+            def broken():
+                yield b'{"status": 200, "data": {"payment": '
+                raise ConnectionResetError("connection dropped after charging")
+            return StreamingResponse(broken(), media_type="application/json")
         return ok({"payment": payment_json(payment)})
 
     # ---------------- simulator controls ----------------
+    @app.get("/sim/truth")
+    def sim_truth(leaseId: str, session: Session = Depends(db)):
+        """What really happened on a lease, for a judge: every payment that touched it and the ledger balance.
+        Unlike Payments Search it settles nothing, so reading it never changes the answer."""
+        lease = control_lease(session, leaseId)
+        rows = session.scalars(select(Payment).order_by(Payment.created_at)).all()
+        return ok({"leaseId": lease.lease_id, "totalDue": lease_total_due(session, lease.lease_id),
+                   "payments": [{**payment_json(p), "applied": p.applied, "allocations": p.allocations}
+                                for p in rows if lease.lease_id in p.allocations]})
+
     @app.post("/sim/reset")
-    def sim_reset(session: Session = Depends(db)):
-        seed.reset(session)
+    def sim_reset(body: dict | None = None, session: Session = Depends(db)):
+        id_seed = (body or {}).get("idSeed")
+        if id_seed is not None and not isinstance(id_seed, str):
+            raise ApiError(400, "idSeed must be a string")
+        seed.reset(session, id_seed)
         return ok({"reset": True})
 
     # test controls answer a bad request with 400 or 404, never a 500 that looks like the simulated server_error mode

@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Payment of {{ money(cmd.amount) }}, unit {{ lease.unit_name }} | Gatehouse{% endblock %}
+{% block main %}
+<div class="wrap">
+<p class="crumbs"><a href="/today?facility={{ facility.provider_id }}">Today at {{ facility.name }}</a> / <a href="/accounts/{{ case.id }}">Unit {{ lease.unit_name }}</a></p>
+<div class="head">
+  <h1>{{ money(cmd.amount) }} card payment, unit {{ lease.unit_name }}</h1>
+  <p>Attempt {{ cmd.id }} &middot; started {{ local(cmd.created_at) }}</p>
+</div>
+{% set held = cmd.state in ('NEEDS_STAFF', 'OUTCOME_UNKNOWN') %}
+<div class="state"><span class="chip {{ 'act' if held else ('wait' if cmd.state in ('RETURNED', 'REFUNDED', 'REFUND_PENDING', 'DISPUTED') else ('done' if cmd.state == 'CONFIRMED' else 'plain')) }}">{% if cmd.state == 'NEEDS_STAFF' and not cmd.provider_payment_id %}Outcome unknown: held for a person
+  {% elif cmd.state == 'RETURNED' %}{% if cmd.confirmed_at %}Confirmed, then returned{% else %}Returned before Gatehouse confirmed it{% endif %}
+  {% elif cmd.state == 'CONFIRMED' %}Confirmed by the FMS ledger
+  {% else %}{{ cmd.state|replace('_', ' ')|capitalize }}{% endif %}</span></div>
+{% if case.hold_reasons %}<p class="lede">{% for r in case.hold_reasons %}{{ sentence(r) }} {% endfor %}</p>{% endif %}
+
+<div class="grid2">
+  <section class="panel">
+    <h2><span class="lane-dot lane-decided"></span>What the tenant agreed to</h2>
+    {% if proposal %}
+    <dl class="kv">
+      <dt>Amount</dt><dd>{{ money(proposal.amount) }}, card ending {{ proposal.card_last4 }}</dd>
+      <dt>Balance read to them</dt><dd>{{ money(proposal.balance_seen) }}</dd>
+      <dt>Identity</dt><dd>{% if check and check.verified %}Checked {{ local(check.created_at) }}: last name, phone and unit matched the FMS{% else %}Not verified{% endif %}</dd>
+      <dt>Their words</dt><dd>&ldquo;{{ proposal.tenant_answer }}&rdquo;</dd>
+      <dt>Heard by</dt><dd>{{ proposal.confirmed_by }}</dd>
+    </dl>
+    {% else %}<p>No recorded agreement.</p>{% endif %}
+  </section>
+
+  <section class="panel">
+    <h2><span class="lane-dot lane-observed"></span>What Gatehouse sent and heard back</h2>
+    <dl class="kv">
+      <dt>Written down first</dt><dd>{{ local(cmd.created_at) }}, before the FMS was called</dd>
+      <dt>Sent to the FMS</dt><dd>{{ local(cmd.submitted_at) or 'Not sent' }}</dd>
+      <dt>Answer at the time</dt><dd>{% if not sent %}{{ 'Not recorded' if cmd.submitted_at else 'Not sent' }}{% elif sent.fms_said == 'lost' %}No usable answer: {{ sent.detail or 'the outcome was not confirmed' }}{% else %}{{ sent.status or sent.fms_said|capitalize }}{% if sent.detail %} ({{ sent.detail }}){% endif %}{% endif %}</dd>
+      <dt>Status at the FMS now</dt><dd>{% if cmd.provider_payment_id %}{{ cmd.provider_payment_id }}, {{ cmd.provider_status }}{% else %}No FMS payment identified as this attempt{% endif %}</dd>
+      <dt>Checks since</dt><dd>{{ cmd.checks }}, last {{ local(cmd.last_checked_at) or 'not yet' }}</dd>
+      <dt>Retried</dt><dd>No. A payment whose outcome is unknown is never sent again.</dd>
+    </dl>
+  </section>
+
+  <section class="panel">
+    <h2><span class="lane-dot lane-fms"></span>What the FMS shows now</h2>
+    <dl class="kv">
+      {% if cmd.suggested_payment_id %}<dt>Possible match</dt><dd>{{ cmd.suggested_payment_id }}: same lease and amount, created after this attempt. Not matched automatically.</dd>{% endif %}
+      {# these two are read just before sending; an attempt that was never sent has no such read #}
+      <dt>Payments read before sending</dt><dd>{% if not cmd.submitted_at %}Not sent{% elif cmd.fms_payments_before %}{{ cmd.fms_payments_before|length }} on this lease{% else %}None on this lease{% endif %}</dd>
+      <dt>Balance read before sending</dt><dd>{% if cmd.submitted_at %}{{ money(cmd.balance_before) }}{% else %}Not sent{% endif %}</dd>
+      <dt>Balance now</dt><dd>{{ money(snap.total_due) if snap else 'Not read' }}{% if snap %}, read {{ local(snap.observed_at) }}{% endif %}</dd>
+    </dl>
+    <p class="note">Cubby's ledger does not say which payment paid which charge. When the balance drops but the answer was lost, the ledger alone cannot prove this attempt is the payment that dropped it.</p>
+  </section>
+
+  <section class="panel">
+    <h2><span class="lane-dot lane-concluded"></span>What Gatehouse tells the tenant</h2>
+    <p class="told"><b>For this payment as it stands now</b>{{ told }}</p>
+    <p class="note">Gatehouse writes every sentence a tenant reads about a payment. It says "applied" only after the FMS ledger shows the money. At the desk, staff read this sentence out; in the chat, Gatehouse sends it.</p>
+  </section>
+
+  {% if cmd.state == 'NEEDS_STAFF' %}
+  <section class="panel wide">
+    <h2><span class="lane-dot lane-decided"></span>What a person can decide</h2>
+    <ul class="decisions">
+      <li><b>This is the payment</b><span>Name the FMS payment that is this attempt. Gatehouse confirms it only once the ledger shows it applied.</span></li>
+      <li><b>Not charged</b><span>Refused while the FMS shows this payment as anything but declined, failed or rejected, or while any possible match is pending. Every possible match has to be named, with why it is another payment.</span></li>
+      <li><b>Keep open</b><span>Leave the account held and record what was checked.</span></li>
+    </ul>
+    <p class="note">Each decision needs a signed-in operator and a written note of what was checked. This preview is read-only, so the decisions are listed, not offered.</p>
+  </section>
+  {% endif %}
+
+  {% if truth %}
+  <section class="panel wide truth">
+    <h2>The simulator's own record, from {{ truth.recorded_at }}</h2>
+    <dl class="kv">
+      <dt>Payments on this lease</dt><dd>{{ truth.payments|length }}</dd>
+      {% for p in truth.payments %}<dt>{{ p.paymentId }}</dt><dd>{{ money(p.amount) }}, {{ p.status }}{% if p.applied %}, applied to the ledger{% endif %}{% if p.paymentId == cmd.provider_payment_id %} (this attempt){% elif p.paymentId == cmd.suggested_payment_id %} (possible match){% endif %}</dd>{% endfor %}
+      <dt>Balance at the simulator</dt><dd>{{ money(truth.totalDue) }}</dd>
+    </dl>
+    <p>A real FMS cannot show this: the simulator keeps its own record of what it did. It was saved when this preview started, before anyone opened a page.
+    {% if cmd.state == 'NEEDS_STAFF' and truth.payments|length == 1 %} It shows one payment on this lease, and Gatehouse sent this payment once and did not retry it.{% endif %}</p>
+  </section>
+  {% endif %}
+</div>
+</div>
+{% endblock %}

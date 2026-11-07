@@ -1,12 +1,28 @@
-# Past Due Desk
+# Gatehouse
 
-Collections reconciliation for storage FMS.
+Operations reconciliation for self-storage, checked against the FMS.
 
-Past Due Desk works the delinquent accounts of a self-storage operator against the facility management system (FMS) that holds the truth about them. It takes a payment, a promise or a lien step, checks the FMS until the outcome is known, and keeps the account in an explicit exception state whenever the two disagree. Nothing is reported as done until the FMS shows it.
+Self-storage operators already run a facility management system (FMS), a payment processor, a gate system, a call service and often a lien vendor. The expensive failures happen between them: work one system reports done that another never finished. A card is charged and the FMS never shows it. A returned payment leaves the account closed. A lien file stays built on a balance that has changed. A paid tenant is still locked out.
 
-It exists because the expensive failures in collections are not missing features. They are a payment that timed out and got charged twice, a "paid" message sent before the money was applied to the lease, a returned payment that never reopened the account, and a lien file that moved toward auction with a notice nobody can prove was delivered.
+Gatehouse finds that work, keeps the evidence, and closes an item only when the system of record shows the fact that proves it done. When the systems disagree, a person decides from the evidence. When one fact changes, Gatehouse checks again every piece of work it touches.
 
-## What it does
+[![One lost payment in Gatehouse: held without a retry, named by a person, confirmed from the FMS ledger, then described to the tenant as applied](desk/static/film/gatehouse-film.jpg)](desk/static/film/gatehouse-film.mp4)
+
+A 29-second loop of one lost payment, built from the app's own screens (click the frame for the video). Its source is in `film/`.
+
+## What is built and what is next
+
+| Part | Status | Done means |
+|---|---|---|
+| Collections and payments | Built | The FMS shows the payment succeeded and the ledger shows the money on the charges the tenant agreed to pay |
+| Florida lien evidence | Built | Every requirement has a record; the best a file reaches is a packet for a person to review |
+| Access and overlocks | Next | Gate codes and overlocks in the FMS match what each tenant has paid, in both directions |
+| Leads and move-ins | Planned | A missed call counts as recovered only when a specific lease is linked to it |
+| Rent changes | Planned | An approved increase is saved, noticed and charged in the FMS, with what happened after |
+
+The hosted preview is read-only and runs on synthetic data. Its home page shows each built part with a live excerpt, and Today lists the open work at a facility. Each item opens to the record behind it, kept in four lanes: what the FMS said, what Gatehouse observed, what Gatehouse concluded, and what a person decided. The lost payment also shows the simulator's own record of what happened, which a real FMS cannot show.
+
+## Collections and payments, and lien evidence
 
 - **Past-due queue.** One worklist per facility: what is owed, what was last attempted, what is blocking the account and who has to act.
 - **Payments the tenant actually agreed to.** After a fresh identity check, the desk builds a proposal from the FMS balance and the tenant's saved cards, and a payment can only be taken by confirming one, with the name of the person who heard the tenant's yes and the tenant's words; anything but a clear yes is refused. Confirming it twice returns the same payment.
@@ -26,10 +42,14 @@ It exists because the expensive failures in collections are not missing features
 
 ```bash
 cp .env.example .env            # set DESK_OPERATOR_TOKEN to a long random string
-docker compose up --build       # desk on :8000, FMS simulator on :8100, reconciliation worker
+docker compose up --build       # one container: Gatehouse and its worker on :8000, the FMS simulator on its loopback
 ```
 
-There are no migrations yet: after pulling schema changes, start from fresh volumes (`docker compose down -v`).
+`start.sh` is what the container runs: the simulator listens on 127.0.0.1:8100 inside it and is never published, Gatehouse listens on `$PORT` (8000 by default), and if either process stops the container stops. `/health/live` says the process answers; `/health/ready` checks the database, the FMS and the worker.
+
+The hosted preview sets `DESK_DEMO_SEED=1` and `DESK_PUBLIC_VIEW=1`: on an empty database Gatehouse builds a synthetic world by running its own flows against the simulator (a payment whose answer was lost, a returned payment, a Florida lien file reopened by a payment, a New York file sent to counsel), and anyone may read it without a token. Every change still needs the operator token, and the public view refuses to start against anything but the local simulator.
+
+There are no migrations yet: after pulling schema changes, start from fresh volumes (`docker compose down -v`). That includes moving from the earlier three-service compose file, whose `desk-data` and `fms-data` volumes the single container does not use.
 
 Every desk route expects `X-Desk-Token: <DESK_OPERATOR_TOKEN>`; resolving a payment held for staff also needs `X-Staff-Token: <DESK_STAFF_TOKEN>`. Taking a payment at the front desk:
 
@@ -52,10 +72,10 @@ curl -X POST -H "$H" -H "$J" localhost:8000/api/cases/1/chat \
   -d '{"sender": "+14075550142", "text": "Hi, how much do I owe on my unit?"}'
 ```
 
-To watch the desk handle each FMS failure, run the scenarios against the simulator:
+To watch the desk handle each FMS failure, run the scenarios against the simulator (they reset it first):
 
 ```bash
-python -m desk.scenarios --fms http://localhost:8100
+docker compose exec gatehouse python -m desk.scenarios --fms http://127.0.0.1:8100
 ```
 
 ```
@@ -119,4 +139,4 @@ Not covered: checking what a kept document actually says (a person does that), s
 - All tenants, facilities and payments are synthetic.
 - The FMS simulator follows Cubby's public API documentation. It is a simulation, not an official integration, and implies no endorsement.
 - State lien-law reference data comes from the Stitch Storage self-storage lien law dataset (https://stitchstorage.com/self-storage-lien-laws/data), licensed CC BY 4.0. It is stored as published and used as reference material only.
-- Past Due Desk does not determine legal compliance, process real payments, send statutory notices or authorize property sales. Jurisdiction-specific rules require independent legal review before any operational use.
+- Gatehouse does not determine legal compliance, process real payments, send statutory notices or authorize property sales. Jurisdiction-specific rules require independent legal review before any operational use.

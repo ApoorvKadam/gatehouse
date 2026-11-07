@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from desk.adapter.cubby import CubbyAdapter
 from desk.api import create_app
 from desk.config import Settings
+from desk.models import DelinquencyCase
 
 from .conftest import FULL_KEY, ORLANDO
 
@@ -18,8 +19,8 @@ YES = {"confirmed_by": "J. Ortiz", "tenant_answer": "Yes, go ahead"}
 @pytest.fixture
 def client(fms_url, sim, request):
     settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY,
-                        fms_timeout_seconds=2.0, reconcile_every_seconds=60, operator_token=TOKEN, staff_token=STAFF)
-    app = create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 2.0), start_worker=False, chat_client=getattr(request, "param", None))
+                        fms_timeout_seconds=5.0, reconcile_every_seconds=60, operator_token=TOKEN, staff_token=STAFF)
+    app = create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 5.0), start_worker=False, chat_client=getattr(request, "param", None))
     with TestClient(app, headers={"X-Desk-Token": TOKEN}) as c:
         yield c
 
@@ -38,10 +39,90 @@ def test_the_desk_refuses_calls_without_the_operator_token(client):
 
 def test_a_desk_with_no_token_configured_refuses_everything(fms_url, sim):
     settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY,
-                        fms_timeout_seconds=2.0, reconcile_every_seconds=60, operator_token=None)
-    with TestClient(create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 2.0), start_worker=False)) as c:
+                        fms_timeout_seconds=5.0, reconcile_every_seconds=60, operator_token=None)
+    with TestClient(create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 5.0), start_worker=False)) as c:
         assert c.get(f"/api/facilities/{ORLANDO}/queue").status_code == 503
-        assert c.get("/api/health").status_code == 200
+        assert c.get("/health/live").status_code == 200
+        ready = c.get("/health/ready")   # this test runs without the worker, so the desk is not ready
+        assert ready.status_code == 503
+        assert ready.json()["checks"] == {"database": "ok", "fms": "ok", "worker": "not running in this process"}
+
+
+def preview_settings(fms_url, **kw) -> Settings:
+    return Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=5.0,
+                    reconcile_every_seconds=60, operator_token=TOKEN, staff_token=STAFF, public_view=True, **kw)
+
+
+def test_the_public_preview_reads_without_a_token_but_changes_nothing(fms_url, sim):
+    app = create_app(preview_settings(fms_url, demo_seed=True), CubbyAdapter(fms_url, FULL_KEY, 5.0), start_worker=False)
+    with TestClient(app) as visitor:
+        rows = visitor.get(f"/api/facilities/{ORLANDO}/queue").json()["rows"]
+        case_id = next(r for r in rows if r["lease"] == "lease_WhitB1042")["case_id"]
+        detail = visitor.get(f"/api/cases/{case_id}").json()
+        assert detail["payments"][0]["state"] == "NEEDS_STAFF"
+        assert visitor.get(f"/api/payments/{detail['payments'][0]['id']}").status_code == 200
+        # every change, and the lien route that records an evaluation, still needs the operator token
+        assert visitor.post(f"/api/facilities/{ORLANDO}/sync").status_code == 401
+        assert visitor.post(f"/api/cases/{case_id}/identity",
+                            json={"last_name": "Whitfield", "phone_last4": "0142", "unit_name": "B-1042"}).status_code == 401
+        assert visitor.get(f"/api/cases/{case_id}/lien").status_code == 401
+        assert visitor.post("/api/reconcile").status_code == 401
+        # a wrong token is refused, not treated as a visitor
+        assert visitor.get(f"/api/facilities/{ORLANDO}/queue", headers={"X-Desk-Token": "wrong"}).status_code == 401
+        # reading changed nothing: same case, same payment state, one charge at the FMS
+        assert visitor.get(f"/api/cases/{case_id}").json() == detail
+        assert len(sim.payments("lease_WhitB1042")) == 1
+
+
+def test_the_public_preview_refuses_to_start_on_anything_but_the_synthetic_world(fms_url, sim, tmp_path):
+    adapter = CubbyAdapter(fms_url, FULL_KEY, 5.0)
+    with pytest.raises(RuntimeError, match="synthetic world"):
+        create_app(preview_settings(fms_url), adapter, start_worker=False)
+    with pytest.raises(RuntimeError, match="synthetic world"):
+        create_app(preview_settings("https://fms.example.com", demo_seed=True), adapter, start_worker=False)
+    # changes must always need a token, whatever the laptop setting says
+    for loose in ({"operator_token": None}, {"allow_without_token": True}):
+        settings = Settings(**{**preview_settings(fms_url, demo_seed=True).__dict__, **loose})
+        with pytest.raises(RuntimeError, match="operator token"):
+            create_app(settings, adapter, start_worker=False)
+    # the preview never opens the configured database: whatever another run left there is not served
+    db = f"sqlite:///{tmp_path / 'desk.db'}"
+    with TestClient(create_app(Settings(**{**preview_settings(fms_url).__dict__, "public_view": False, "database_url": db}),
+                               adapter, start_worker=False), headers={"X-Desk-Token": TOKEN}) as desk:
+        assert desk.post(f"/api/facilities/{ORLANDO}/sync").status_code == 200
+        with desk.app.state.session_factory() as s:
+            from desk.cases import record
+            record(s, s.get(DelinquencyCase, 1), "private note", {"text": "kept by an earlier run"})
+            s.commit()
+    preview = create_app(Settings(**{**preview_settings(fms_url, demo_seed=True).__dict__, "database_url": db}), adapter, start_worker=False)
+    assert str(preview.state.session_factory.kw["bind"].url) != db
+    with TestClient(preview) as visitor:
+        for row in visitor.get(f"/api/facilities/{ORLANDO}/queue").json()["rows"]:
+            history = visitor.get(f"/api/cases/{row['case_id']}").json()["history"]
+            assert all(h["kind"] != "private note" for h in history)
+    # and a second preview started on the same settings builds its own world again instead of refusing to start
+    assert create_app(Settings(**{**preview_settings(fms_url, demo_seed=True).__dict__, "database_url": db}), adapter, start_worker=False)
+
+
+def test_the_preview_reads_the_same_after_the_worker_runs(fms_url, sim):
+    """The worker keeps checking the held payment and the ledgers, and says so; nothing else a visitor sees moves."""
+    app = create_app(preview_settings(fms_url, demo_seed=True), CubbyAdapter(fms_url, FULL_KEY, 5.0), start_worker=False)
+
+    def everything(c) -> dict:
+        rows = c.get(f"/api/facilities/{ORLANDO}/queue").json()
+        cases = {r["case_id"]: c.get(f"/api/cases/{r['case_id']}").json() for r in rows["rows"]}
+        for case in cases.values():
+            for p in case["payments"]:
+                p.pop("checks")            # how many times the worker asked the FMS
+            if case["ledger"]:
+                case["ledger"].pop("observed_at")   # when it last read the ledger
+        return {"queue": rows, "cases": cases}
+
+    with TestClient(app) as visitor, TestClient(app, headers={"X-Desk-Token": TOKEN}) as desk:
+        before = everything(visitor)
+        for _ in range(4):
+            assert desk.post("/api/reconcile").status_code == 200
+        assert everything(visitor) == before
 
 
 def test_queue_shows_what_is_owed_and_who_has_to_act(client):
@@ -134,10 +215,10 @@ def test_staff_can_release_a_held_payment_only_with_a_note(client, sim):
 
 def test_a_database_set_up_for_one_fms_account_refuses_another(fms_url, sim, tmp_path):
     url = f"sqlite:///{tmp_path / 'desk.db'}"
-    first = Settings(database_url=url, fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=2.0,
+    first = Settings(database_url=url, fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=5.0,
                      reconcile_every_seconds=60, operator_token=TOKEN)
     create_app(first, start_worker=False)
-    other = Settings(database_url=url, fms_base_url=fms_url, fms_api_key="sim_org_harbor_full", fms_timeout_seconds=2.0,
+    other = Settings(database_url=url, fms_base_url=fms_url, fms_api_key="sim_org_harbor_full", fms_timeout_seconds=5.0,
                      reconcile_every_seconds=60, operator_token=TOKEN)
     with pytest.raises(RuntimeError, match="another FMS account"):
         create_app(other, start_worker=False)
@@ -156,7 +237,7 @@ def test_an_fms_outage_is_a_502_not_a_crash(fms_url, sim):
 
     down = Down(fms_url, FULL_KEY, 2.0)
     settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY,
-                        fms_timeout_seconds=2.0, reconcile_every_seconds=60, operator_token=TOKEN)
+                        fms_timeout_seconds=5.0, reconcile_every_seconds=60, operator_token=TOKEN)
     with TestClient(create_app(settings, down, start_worker=False), headers={"X-Desk-Token": TOKEN}) as c:
         cid = dana_case(c)["case_id"]
         check = c.post(f"/api/cases/{cid}/identity", json={"last_name": "Whitfield", "phone_last4": "0142", "unit_name": "B-1042"}).json()
@@ -177,7 +258,7 @@ def test_a_database_with_records_but_no_account_refuses_to_start(fms_url, sim, t
         s.add(Lease(facility_id=f.id, provider="cubby", provider_id="lease_x", provider_customer_id="cust_x", unit_name="A1",
                     billing_cycle="MONTHLY"))
         s.commit()
-    settings = Settings(database_url=url, fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=2.0,
+    settings = Settings(database_url=url, fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=5.0,
                         reconcile_every_seconds=60, operator_token=TOKEN)
     with pytest.raises(RuntimeError, match="no FMS account"):
         create_app(settings, start_worker=False)

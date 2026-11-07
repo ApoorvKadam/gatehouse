@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Gatehouse{% endblock %}</title>
+<link rel="preload" href="{{ url_for('static', path='geist.woff2') }}" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="{{ url_for('static', path='source-serif-4.woff2') }}" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="{{ url_for('static', path='gatehouse.css') }}">
+<script>document.documentElement.classList.add("js")</script>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="/"><span class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>Gatehouse</a>
+    <nav aria-label="Main">
+      <a href="/" {% if nav == 'front' %}aria-current="page"{% endif %}>Overview</a>
+      <a href="/today" {% if nav == 'today' %}aria-current="page"{% endif %}>Today</a>
+      <a href="/limits" {% if nav == 'limits' %}aria-current="page"{% endif %}>Limits</a>
+    </nav>
+    {% if facilities and nav == 'today' %}
+    <form method="get" action="/today">
+      <label for="facility">Facility</label>
+      <select id="facility" name="facility">
+        {% for f in facilities %}<option value="{{ f.provider_id }}" {% if facility and f.id == facility.id %}selected{% endif %}>{{ f.name }} ({{ f.jurisdiction }})</option>{% endfor %}
+      </select>
+      <button class="button" type="submit">Show</button>
+    </form>
+    {% endif %}
+  </div>
+</header>
+<div class="preview-note"><div class="wrap"><b>Synthetic technical preview.</b>Every tenant, payment and document is made up, the FMS is a simulator, and nothing on these pages changes anything. <a href="/limits">What this is and is not</a></div></div>
+<main>
+{% block main %}{% endblock %}
+</main>
+<footer><div class="wrap"><span>Gatehouse</span><span>FMS shapes follow Cubby's public Operator API. Not an official integration.</span></div></footer>
+<script>
+// Reveal each marked block the first time it reaches the screen. Without this script, or with reduced motion,
+// everything is simply visible.
+(function () {
+  var marked = document.querySelectorAll("[data-reveal]");
+  if (!("IntersectionObserver" in window)) { marked.forEach(function (el) { el.classList.add("in"); }); return; }
+  var seen = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add("in"); seen.unobserve(e.target); } });
+  }, { threshold: 0.2 });
+  marked.forEach(function (el) { seen.observe(el); });
+})();
+</script>
+{% if nav == 'front' %}<script>
+  // the film plays on its own unless the visitor asked for less motion; then it waits on its poster with controls
+  (function () { var v = document.getElementById("film"); if (!v) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) { v.removeAttribute("autoplay"); v.pause(); v.controls = true; } })();
+</script>{% endif %}
+</body>
+</html>

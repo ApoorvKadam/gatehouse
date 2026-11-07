@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import random
 import secrets
 import string
 from datetime import date, datetime, timezone
@@ -11,9 +12,19 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 from sqlalchemy.pool import StaticPool
 
 
+_ALPHABET = string.ascii_letters + string.digits
+_ids: random.Random = secrets.SystemRandom()
+
+
+def restart_ids(seed: str | None = None) -> None:
+    """With a seed, every reset hands out the same ids in the same order, so a seeded demo, a scenario and a
+    screenshot all name the same payment. Without one, ids are random, like a real FMS."""
+    global _ids
+    _ids = random.Random(seed) if seed else secrets.SystemRandom()
+
+
 def new_id(prefix: str) -> str:
-    alphabet = string.ascii_letters + string.digits
-    return f"{prefix}_" + "".join(secrets.choice(alphabet) for _ in range(11))
+    return f"{prefix}_" + "".join(_ids.choice(_ALPHABET) for _ in range(11))
 
 
 def utcnow() -> datetime:
