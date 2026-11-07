@@ -110,6 +110,19 @@ class ProviderTask:
 
 
 @dataclass(frozen=True)
+class ProviderAuctionEntry:
+    """One lease in a lien sale, as auctions/search reports it. auction_time is the facility's local time, unparsed
+    beyond the ISO form; turning it into an instant needs the facility's time zone."""
+
+    auction_id: str
+    auction_time: str
+    lease_provider_id: str
+    unit_id: str | None
+    lien_start_date: str | None
+    status: str                 # LISTED, NO_BIDS, SOLD, PAYMENT_RECEIVED, COMPLETE, CANCELLED
+
+
+@dataclass(frozen=True)
 class TaskCreateOutcome:
     """'created' carries the task id; 'lost' means the task may exist but its id never arrived; 'rejected' means the
     FMS refused the request and made nothing."""
@@ -136,5 +149,6 @@ class FMSAdapter(Protocol):
     def locks_for_lease(self, lease_provider_id: str) -> list[ProviderLock]: ...
     def exemptions_for_customer(self, customer_provider_id: str) -> list[ProviderExemption]: ...
     def tasks_for(self, scope: str, value: str) -> list[ProviderTask]: ...
+    def auction_entries(self, facility_provider_id: str) -> list[ProviderAuctionEntry]: ...
     def create_task(self, facility_provider_id: str, title: str, description: str, *, unit_id: str | None = None,
                     customer_provider_id: str | None = None) -> TaskCreateOutcome: ...

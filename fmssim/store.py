@@ -221,6 +221,48 @@ class AccessFault(Base):
     customer_id: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
+class Auction(Base):
+    """A facility's lien sale. auctionTime is the facility's local time, as Cubby gives it."""
+
+    __tablename__ = "auctions"
+    auction_id: Mapped[str] = mapped_column(String, primary_key=True)
+    facility_id: Mapped[str] = mapped_column(ForeignKey("facilities.facility_id"))
+    auction_time: Mapped[datetime] = mapped_column(DateTime)
+    advertisement_deadline: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    lease_configuration_id: Mapped[str] = mapped_column(String)
+
+
+class AuctionedLease(Base):
+    """One lease in an auction. LISTED, NO_BIDS, SOLD, PAYMENT_RECEIVED, COMPLETE or CANCELLED. Who changed it and when
+    is kept for the truth reader; Cubby's own response does not carry it."""
+
+    __tablename__ = "auctioned_leases"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    auction_id: Mapped[str] = mapped_column(ForeignKey("auctions.auction_id"))
+    lease_id: Mapped[str] = mapped_column(ForeignKey("leases.lease_id"))
+    unit_id: Mapped[str] = mapped_column(String)
+    lien_start_date: Mapped[date] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(String, default="LISTED")
+    winning_bidder_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    bid_amount: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    changed_by: Mapped[str | None] = mapped_column(String, nullable=True)   # "api" or the staff member, for the truth reader
+    changed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class ExternalListing(Base):
+    """A listing on an outside auction site, as that site's own feed reports it. Not part of the FMS: cancelling the
+    lien in the FMS leaves it as it is."""
+
+    __tablename__ = "external_listings"
+    listing_id: Mapped[str] = mapped_column(String, primary_key=True)
+    marketplace: Mapped[str] = mapped_column(String)
+    facility_id: Mapped[str] = mapped_column(String)
+    auction_id: Mapped[str] = mapped_column(String)
+    lease_id: Mapped[str] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String, default="LISTED")   # LISTED or WITHDRAWN
+    observed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 def unit_id_of(lease: "Lease") -> str:
     return "unit_" + lease.lease_id.removeprefix("lease_")
 
