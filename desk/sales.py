@@ -41,6 +41,7 @@ KIND_NAMES = {
     OUTSIDE: "Outside listing not confirmed withdrawn",
 }
 SALE_KINDS = (LISTED_PAID, BALANCE_CHANGED, AFTER_NOTICE, SETTLED_REVIEW)
+LISTED_KINDS = (LISTED_PAID, BALANCE_CHANGED, AFTER_NOTICE)
 SETTLED = ("NO_BIDS", "SOLD", "PAYMENT_RECEIVED", "COMPLETE")
 STATUS_WORDS = {"LISTED": "listed", "NO_BIDS": "settled with no bids", "SOLD": "sold", "PAYMENT_RECEIVED": "sold, and the bidder paid",
                 "COMPLETE": "complete", "CANCELLED": "cancelled"}
@@ -153,13 +154,18 @@ def assess(f: SaleFacts) -> Finding | None:
                        "listed. Whether the notice's claim was satisfied is for a person and counsel; Gatehouse draws no "
                        "conclusion about it.", observed)
     if status in SETTLED and (f.owed == 0 or f.payments):
-        owed = "nothing owed" if f.owed == 0 else f"{dollars(f.owed)} owed"
-        paid = f" It reports payments {since}: {_paid(f)}." if f.payments else ""
-        return Finding(SETTLED_REVIEW, subject,
-                       f"The FMS records this sale as {STATUS_WORDS[status]}, and its ledger shows {owed}.{paid} The FMS does "
-                       "not say whether the sale came before or after these payments, so Gatehouse makes no claim about the "
-                       "order. A bidder's payment is not the tenant's.", observed)
+        return settled_review(f)
     return None
+
+
+def settled_review(f: SaleFacts) -> Finding:
+    since = f"since the notice ({f.notice_source}, {on(f.notice_on)})" if f.notice_on else "since the notice (no notice date known)"
+    owed = "nothing owed" if f.owed == 0 else f"{dollars(f.owed)} owed"
+    paid = f" It reports payments {since}: {_paid(f)}." if f.payments else ""
+    return Finding(SETTLED_REVIEW, subject_of(f.entry),
+                   f"The FMS records this sale as {STATUS_WORDS[f.entry.status]}, and its ledger shows {owed}.{paid} The FMS does "
+                   "not say whether the sale came before or after these payments, so Gatehouse makes no claim about the "
+                   "order. A bidder's payment is not the tenant's.", observed_of(f))
 
 
 def notice_date(session: Session, lease: Lease | None, entry: ProviderAuctionEntry) -> tuple[str | None, str]:
@@ -180,10 +186,12 @@ def read_listings(feed_url: str | None, facility_provider_id: str) -> list[dict]
         return None
     try:
         r = httpx.get(f"{feed_url.rstrip('/')}/marketplace/v1/listings", params={"facilityId": facility_provider_id}, timeout=5.0)
-        rows = r.json().get("data", {}).get("listings") if r.status_code == 200 else None
+        body = r.json() if r.status_code == 200 else None
     except (httpx.HTTPError, ValueError):
         return None
-    return rows if isinstance(rows, list) else None
+    data = body.get("data") if isinstance(body, dict) else None
+    rows = data.get("listings") if isinstance(data, dict) else None
+    return [x for x in rows if isinstance(x, dict)] if isinstance(rows, list) else None
 
 
 def reconcile_sales(session: Session, adapter: FMSAdapter, facility: Facility, run_id: str, feed_url: str | None = None) -> SalesPass:
@@ -204,6 +212,12 @@ def reconcile_sales(session: Session, adapter: FMSAdapter, facility: Facility, r
     for item in open_items:
         by_subject.setdefault(item.subject_id, []).append(item)
     listings = read_listings(feed_url, facility.provider_id)
+    if feed_url and listings is None:
+        for item in open_items:
+            if item.kind == OUTSIDE:
+                item.note = f"Not freshly verified: the outside site's feed could not be read at {now:%b %-d, %H:%M} UTC."
+        result.failures.append(f"outside listings at {facility.provider_id}: the feed could not be read")
+    decided: set[str] = set()
     for entry in entries:
         subject = subject_of(entry)
         mine = by_subject.get(subject, [])
@@ -242,12 +256,19 @@ def reconcile_sales(session: Session, adapter: FMSAdapter, facility: Facility, r
                               lease.unit_name if lease else (entry.unit_id or entry.lease_provider_id), facility.time_zone)
             if entry.status == "LISTED" and ledger.total_due > 0:
                 _balance_changed(session, mine, facts, now)   # before the new finding, so it updates this item, not a second one
-            _apply(session, facility, run_id, mine, assess(facts), facts, result)
+            found = assess(facts)
+            if found is None and entry.status in SETTLED and any(i.kind in LISTED_KINDS for i in mine):
+                found = settled_review(facts)   # a sale that settled under an open item is reviewed, whatever the balance now
+            _apply(session, facility, run_id, mine, found, facts, result)
+            decided.add(subject)
         _outside(session, facility, run_id, entry, listings, result)
     session.commit()
     for item in session.scalars(select(WorkItem).where(WorkItem.run_id == run_id, WorkItem.facility_id == facility.id,
                                                        WorkItem.kind.in_((LISTED_PAID, BALANCE_CHANGED)), WorkItem.state == "open")):
-        ensure_task(session, adapter, facility, item, item.observed.get("task") if item.kind == LISTED_PAID else None, result.failures)
+        task = item.observed.get("task")
+        if item.task_state == "none" and not (item.kind == LISTED_PAID and item.subject_id in decided):
+            task = None   # a new task only on this pass's fresh reading; a task already sent is still looked up by its marker
+        ensure_task(session, adapter, facility, item, task, result.failures)
     return result
 
 
@@ -292,6 +313,15 @@ def _apply(session: Session, facility: Facility, run_id: str, mine: list[WorkIte
         current = next((i for i in mine if i.kind == AFTER_NOTICE), None)
         if current is not None:
             _retitle(session, current, LISTED_PAID)
+    if current is None and found.kind == SETTLED_REVIEW:
+        # the sale settled under an open item: that item becomes the review, keeping its history and task
+        current = next((i for i in mine if i.kind in LISTED_KINDS), None)
+        if current is not None:
+            _retitle(session, current, SETTLED_REVIEW)
+            current.problem, current.observed, current.updated_at = found.problem, dict(observed, task=current.observed.get("task")), now
+            current.note = ("This item was opened while the sale was listed. The FMS now records it as "
+                            f"{STATUS_WORDS[facts.entry.status]}; any FMS task asking for a cancellation rests on the earlier reading.")
+            return
     if current is None and found.kind in (LISTED_PAID, AFTER_NOTICE):
         # once the balance changed under an open item, a person owns it: it carries the current facts, nothing new opens
         current = next((i for i in mine if i.kind == BALANCE_CHANGED), None)

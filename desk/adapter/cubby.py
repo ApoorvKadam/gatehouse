@@ -173,10 +173,10 @@ class CubbyAdapter:
             raise FMSError("/v1/auctions/search: the answer has no auctions list")
         out = []
         for a in auctions:
-            if not a.get("auctionId") or not a.get("auctionTime") or not isinstance(a.get("auctionedLeases"), list):
+            if not isinstance(a, dict) or not a.get("auctionId") or not a.get("auctionTime") or not isinstance(a.get("auctionedLeases"), list):
                 raise FMSError("/v1/auctions/search: an auction without its id, time or leases")
             for e in a["auctionedLeases"]:
-                if not e.get("leaseId") or e.get("status") not in AUCTION_STATUSES:
+                if not isinstance(e, dict) or not e.get("leaseId") or e.get("status") not in AUCTION_STATUSES:
                     raise FMSError("/v1/auctions/search: an auctioned lease without its id or a known status")
                 out.append(ProviderAuctionEntry(auction_id=a["auctionId"], auction_time=a["auctionTime"], lease_provider_id=e["leaseId"],
                                                 unit_id=e.get("unitId"), lien_start_date=e.get("lienStartDate"), status=e["status"]))

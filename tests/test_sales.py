@@ -171,3 +171,36 @@ def test_gatehouse_never_cancels_a_sale_itself(fms_url, sim, adapter):
     world(adapter, fms_url)
     entries = httpx.get(f"{fms_url}/sim/auctions/truth", params={"facilityId": ORLANDO}).json()["data"]["entries"]
     assert entries and all(e["status"] == "LISTED" and e["changedBy"] != "api" for e in entries)
+
+
+def test_a_sale_that_settles_under_an_open_item_turns_that_item_into_the_review(fms_url, sim, adapter):
+    sale_for(sim, "lease_BellC0207")
+    sim.post("/sim/payments/offline", {"allocations": {"lease_BellC0207": 18500}})
+    factory = plain(adapter)
+    with factory() as s:
+        sweep(s, adapter, fms_url)
+        item = items(s, kind=LISTED_PAID)[0]
+        assert sim.post("/sim/auctions/settle", {"leaseId": "lease_BellC0207", "outcome": "SOLD", "bidAmount": 40000,
+                                                 "winningBidderId": "cust_MarcBell01", "force": True}).status_code == 200
+        sweep(s, adapter, fms_url)
+        s.refresh(item)
+        assert item.kind == SETTLED_REVIEW and item.state == "open" and "earlier reading" in item.note
+        assert [i.id for i in items(s, state="open")] == [item.id]
+
+
+def test_an_unreadable_outside_feed_is_said_on_its_item(fms_url, sim, adapter):
+    factory = world(adapter, fms_url)
+    with factory() as s:
+        orlando = s.scalar(select(Facility).where(Facility.provider_id == ORLANDO))
+        result = reconcile_sales(s, adapter, orlando, "local", "http://127.0.0.1:9")
+        outside = items(s, kind=OUTSIDE)
+        assert outside and all(i.state == "open" and "outside site's feed could not be read" in i.note for i in outside)
+        assert any("outside listings" in f for f in result.failures)
+
+
+def test_a_malformed_auction_answer_is_an_fms_error():
+    from desk.adapter.cubby import CubbyAdapter
+    answer = {"status": 200, "data": {"auctions": ["not an auction"]}}
+    broken = CubbyAdapter("http://fms.invalid", "key", 1.0, transport=httpx.MockTransport(lambda r: httpx.Response(200, json=answer)))
+    with pytest.raises(FMSError):
+        broken.auction_entries(ORLANDO)
