@@ -14,9 +14,9 @@ def test_the_evaluation_runs_clean_and_its_wrong_builds_are_caught(tmp_path):
     out = tmp_path / "evaluation.json"
     assert evaluate.main(["--out", str(out)]) == 0
     report = json.loads(out.read_text())
-    assert report["ok"] and all(r["passed"] for r in report["rows"]) and len(report["rows"]) >= 17
+    assert report["ok"] and all(r["passed"] for r in report["rows"]) and len(report["rows"]) >= 26
     assert all(r["count"] == 0 for r in report["red_lines"]) and all(c["caught"] for c in report["controls"])
-    assert {r["module"] for r in report["rows"]} == {"Payments", "Access"}
+    assert {r["module"] for r in report["rows"]} == {"Payments", "Access", "Lien sales"}
 
 
 def test_the_page_shows_the_report_or_says_there_is_none(fms_url, sim, monkeypatch, tmp_path):

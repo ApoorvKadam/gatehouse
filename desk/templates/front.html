@@ -40,9 +40,9 @@
       <tbody>
       {% for i in items %}
         <tr>
-          <td>{% set ic = 'scale' if 'Lien' in i.head else ('gavel' if 'Counsel' in i.head else ('rotate-ccw' if i.head in ('Payment returned', 'Payment refunded', 'Refund in progress', 'Payment disputed') else ('credit-card' if 'Payment' in i.head else 'clock-3'))) %}<span class="chip {{ 'act' if i.rank < 2 else ('wait' if i.rank < 4 else 'plain') }}">{% include "icons/" ~ ic ~ ".svg" %}{{ i.head }}</span><div class="small muted" style="margin-top:6px">Unit {{ i.unit }} &middot; {{ i.who }}</div></td>
+          <td>{% set ic = 'door-open' if i.link.startswith('/access/') else ('gavel' if i.link.startswith('/sales/') else ('scale' if 'Lien' in i.head else ('gavel' if 'Counsel' in i.head else ('rotate-ccw' if i.head in ('Payment returned', 'Payment refunded', 'Refund in progress', 'Payment disputed') else ('credit-card' if 'Payment' in i.head else 'clock-3'))))) %}<span class="chip {{ 'act' if i.rank < 2 else ('wait' if i.rank < 4 else 'plain') }}">{% include "icons/" ~ ic ~ ".svg" %}{{ i.head }}</span><div class="small muted" style="margin-top:6px"><a href="{{ i.link }}">{{ i.label or ('Unit ' ~ i.unit) }}</a> &middot; {{ i.who }}</div></td>
           <td class="num amount">{{ i.amount }}</td>
-          <td class="num"><a href="{{ i.link }}">Open</a></td>
+          <td class="num open-col"><a href="{{ i.link }}">Open</a></td>
         </tr>
       {% endfor %}
       </tbody>
@@ -207,6 +207,31 @@
         </div>
       </div>
       {% endif %}
+    </div>
+  </div>
+</section>
+{% endif %}
+
+{% if sale %}
+{% set so = sale.observed %}
+<section class="feature flip">
+  <div class="wrap">
+    <div data-reveal>
+      <p class="kicker" style="--c:var(--brick)">{% include "icons/gavel.svg" %}Lien sales</p>
+      <h2>A sale still listed after the account was paid is the first thing on Today.</h2>
+      <p>Every pass reads the facility's lien sales and, for each listed unit, the ledger and payments again. Nothing owed with the sale still listed opens an item and one FMS task: cancel it, or say why it stands. A payment after the notice that leaves a balance goes to a person and counsel, and a sale already settled on a paid account is reviewed without guessing which came first. It closes only when the FMS shows the lien cancelled; a listing on an outside auction site stays open until that site reports it withdrawn.</p>
+      <a class="open" href="/sales/{{ sale.id }}">Open this sale {% include "icons/arrow-right.svg" %}</a>
+    </div>
+    <div class="frame" data-reveal>
+      <div class="frame-bar"><span><b>Lien sale</b> &middot; unit {{ so.get('unit') }}</span><span class="chip act">Still listed</span></div>
+      <div class="frame-body">
+        <dl class="kv">
+          <dt>FMS ledger</dt><dd>{{ money(so.get('owed', 0)) }} owed{% if so.get('payments') %}, after {{ money(so.payments[-1].amount) }} paid {{ on(so.payments[-1].get('on') or so.payments[-1].when[:10]) }}{% endif %}</dd>
+          <dt>Sale</dt><dd>{{ sale_words.get(so.get('status'), so.get('status'))|capitalize }}, {{ so.get('sale_local') or so.get('auction_time') }} facility time</dd>
+          <dt>FMS task</dt><dd>{% if sale.task_state == 'created' %}{{ (sale.task_status or 'OPEN')|lower|capitalize }}; a completed task does not close it{% else %}{{ sale.task_state|replace('_', ' ') }}{% endif %}</dd>
+          <dt>Outside site</dt><dd>{% if sale_outside %}{{ 'Listing still up' if sale_outside.state == 'open' else 'Withdrawal confirmed by its feed' }}{% else %}Status unknown{% endif %}</dd>
+        </dl>
+      </div>
     </div>
   </div>
 </section>

@@ -517,6 +517,24 @@ def test_an_old_return_does_not_reopen_the_next_settled_episode(session, adapter
     assert session.get(DelinquencyCase, case.id).state == "paid"
 
 
+def test_an_old_return_first_stored_late_still_does_not_reopen_the_next_episode(session, adapter, sim):
+    """What a slow read used to cause about one run in ten: the FMS's record of the returned payment is stored only after
+    the next payment settled the case, with no change time. The desk's own record of when it saw the return decides."""
+    from desk.db import utcnow
+    from desk.models import ObservedPayment
+    first, case, _ = pay(session, adapter, DANA, "pm_DanaVisa4242", 24000)
+    sim.post("/sim/payments/return", {"paymentId": first.provider_payment_id})
+    settle(session, adapter, times=3)
+    again = PaymentService(session, adapter).take_payment(case.id, "pm_DanaVisa4242", Authorization.new(True, 24000, 24000))
+    assert again.state == "CONFIRMED" and session.get(DelinquencyCase, case.id).state == "paid"
+    row = session.scalar(select(ObservedPayment).where(ObservedPayment.provider_payment_id == first.provider_payment_id))
+    row.status_changed_at, row.first_seen_at = None, utcnow()
+    session.commit()
+    sim.post("/sim/charges", {"leaseId": DANA, "amount": 21500, "category": "RENT", "description": "December rent"})
+    settle(session, adapter, times=2)
+    assert session.get(DelinquencyCase, case.id).state == "paid"
+
+
 def test_a_reopened_case_stays_reopened_on_the_next_pass(session, adapter, sim):
     case, _ = case_for(session, adapter, DANA)
     counter = sim.post("/sim/payments/offline", {"allocations": {DANA: 24000}}).json()["data"]["payment"]

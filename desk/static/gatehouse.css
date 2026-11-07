@@ -418,4 +418,4 @@ dl.kv.pairs { grid-template-columns: 11rem minmax(0, 1fr) 11rem minmax(0, 1fr); 
   .top nav::-webkit-scrollbar { display: none; }
 }
 
-@media (max-width: 640px) { .film video { aspect-ratio: 4 / 5; } }
+@media (max-width: 640px) { .film video { aspect-ratio: 4 / 5; } .open-col { display: none; } }

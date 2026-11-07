@@ -86,7 +86,9 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         # anyone may read the preview, so it never opens a database that existed before this process: each start
         # gets a new one and builds the synthetic world in it (a configured database is left untouched)
         preview_dir = tempfile.mkdtemp(prefix="gatehouse-preview-")
-        settings = dataclasses.replace(settings, database_url=f"sqlite:///{preview_dir}/desk.db")
+        # the synthetic world's outside auction site is served by the same local simulator
+        settings = dataclasses.replace(settings, database_url=f"sqlite:///{preview_dir}/desk.db",
+                                       marketplace_url=settings.marketplace_url or settings.fms_base_url)
     if chat_client is None and os.environ.get("ANTHROPIC_API_KEY"):
         import anthropic
         chat_client = anthropic.Anthropic()
@@ -102,14 +104,14 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
     trace: dict = {}
     if settings.demo_seed:
         from . import demo
-        demo.build(factory, adapter, settings.fms_base_url, settings.run_id)
+        demo.build(factory, adapter, settings.fms_base_url, settings.run_id, settings.marketplace_url)
         if settings.public_view:
             try:
                 trace = demo.trace(settings.fms_base_url)
             except Exception:
                 # the pages still work without it; they just do not show the simulator's own record
                 log.exception("could not save the simulator's record of the seeded payments")
-    worker = Worker(factory, adapter, settings.reconcile_every_seconds, run_id=settings.run_id)
+    worker = Worker(factory, adapter, settings.reconcile_every_seconds, run_id=settings.run_id, feed_url=settings.marketplace_url)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
