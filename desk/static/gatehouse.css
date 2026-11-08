@@ -569,3 +569,10 @@ html { scrollbar-color: var(--frame) var(--paper); }
   .arrow { display: none; }
   .flow-result, .flow-result.left { justify-self: start; }
 }
+
+/* an acknowledgement shown as the parts it was written from */
+.parts { list-style: none; margin: 0 0 var(--s2); padding: 0; }
+.parts li { display: grid; grid-template-columns: 9.5rem minmax(0, 1fr) auto; gap: var(--s3); padding: 5px 0; border-top: 1px solid var(--rule); font-size: var(--t-sm); color: var(--ink-2); }
+.parts .rec-kind { font-size: var(--t-xs); font-weight: 600; color: var(--ink-3); }
+.part-source { font-size: var(--t-xs); color: var(--ink-3); white-space: nowrap; }
+@media (max-width: 900px) { .parts li { grid-template-columns: 1fr; gap: 2px; } }

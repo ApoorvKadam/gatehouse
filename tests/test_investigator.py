@@ -214,7 +214,7 @@ def test_the_prompt_follows_the_playbook_and_keeps_the_tenants_words_and_name_ou
         assert first["timeout"] == CALL_TIMEOUT
         assert model.calls[0]["system"] == model.calls[1]["system"] and model.calls[0]["tools"] == model.calls[1]["tools"]    # append-only
         assert all(t["strict"] and t["input_schema"]["additionalProperties"] is False for t in TOOLS)
-        assert [t["name"] for t in TOOLS][-1] == "submit_case_packet" and len(TOOLS) == 7 and "request_staff_review" in [t["name"] for t in TOOLS]
+        assert [t["name"] for t in TOOLS][-1] == "submit_case_packet" and len(TOOLS) == 8 and {"request_staff_review", "draft_reply"} <= {t["name"] for t in TOOLS}
 
 
 def test_a_lookup_that_finds_nothing_returns_a_record_that_says_so_and_it_can_be_cited(factory):

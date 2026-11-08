@@ -26,11 +26,12 @@ from .models import (
     AgentRequest, AgentRun, DelinquencyCase, Facility, InboundMessage, Lease, LedgerSnapshot, LienEvaluation, ObservedPayment, OutboundMessage,
     PaymentCommand, WorkItem,
 )
+from .reply import NEEDS_RECORD, after_failure, answer, cited
 from .sales import KIND_NAMES, LISTED_KINDS, LISTED_PAID, OUTSIDE, SALE_KINDS
 from .staff_review import staff_review
 from .spend import WORST_RUN_USD, Refused
 from .usage import PRICES, cost_usd
-from .wording import plain, when, words
+from .wording import REPLY_KINDS, plain, when, words
 
 log = logging.getLogger("desk.investigator")
 
@@ -66,7 +67,7 @@ INTENTS = ("sale_after_payment", "payment_status", "balance_question", "access_p
 # the prompt asks for a summary of 400 characters; one that runs past MAX_SUMMARY is cut at a sentence when it is kept, never refused
 MAX_SUMMARY, MAX_RECORDS = 600, 8
 
-SYSTEM = """<role>You investigate one text message that a tenant sent to {facility}, a self-storage facility, and you prepare a case packet for the staff. You do not write to the tenant. The one thing you can change is to ask for a staff review of a sale that is still listed.</role>
+SYSTEM = """<role>You investigate one text message that a tenant sent to {facility}, a self-storage facility, and you prepare a case packet for the staff. You do not write to the tenant yourself. You can change two things: you may ask for a staff review of a sale that is still listed, and you may propose which verified facts an acknowledgement to the tenant carries. The desk writes every sentence and sends the text.</role>
 
 <objective>Work out what the tenant is asking. Look up the facts in the desk's records with the tools. Then submit one case packet with submit_case_packet. Staff read your packet next to what the desk checks for itself.</objective>
 
@@ -76,7 +77,7 @@ A text that is only one of these words asks the facility to stop all texts: {sto
 </trusted_facts>
 
 <allowed_actions>
-Read records with get_account, get_payments, get_sale_status, get_lien_file and get_recent_texts. The lookups that take a lease_id accept only the lease_id values that get_account returns. When get_sale_status shows an open sale item for this tenant's unit that is still listed, you may ask for a staff review of it with request_staff_review, once, passing that item's record_id. Gatehouse decides whether to act, acts only after it has checked your packet, and reads the result back from the FMS; you do not see the result, so never write that a review was requested or done. Finish by calling submit_case_packet once.
+Read records with get_account, get_payments, get_sale_status, get_lien_file and get_recent_texts. The lookups that take a lease_id accept only the lease_id values that get_account returns. When get_sale_status shows an open sale item for this tenant's unit that is still listed, you may ask for a staff review of it with request_staff_review, once, passing that item's record_id. Gatehouse decides whether to act, acts only after it has checked your packet, and reads the result back from the FMS; you do not see the result, so never write that a review was requested or done. When the tenant is waiting for an answer that the records can give, propose an acknowledgement with draft_reply, once, after any request for a staff review. List the parts that answer them, in the order a person would say them: payment_applied (a desk payment record, payment:..., that says the payment is confirmed; never an FMS-reported payment), balance_as_of (an account record, cite its lease: record_id), sale_status (a sale item record that get_sale_status returned, cite its record_id), staff_review (only if you asked for one), and acknowledgment (a closing line). Use message_received to open. Give an empty record_id for the parts that need none. Do not propose a reply to a STOP. The desk leaves out any part it cannot confirm, so you do not see the text or whether it was sent: never write that a reply was sent. Finish by calling submit_case_packet once.
 </allowed_actions>
 
 <prohibited_claims>
@@ -84,7 +85,7 @@ Do not state an amount, a date, a status or an event that no record shows. Write
 </prohibited_claims>
 
 <examples>
-Example 1. The tenant writes: "I paid last week and my unit is still going to auction." Call get_account, then get_sale_status and get_payments for the unit. If one record shows a payment and another shows the sale still listed, the intent is sale_after_payment. Ask for a staff review of the sale item with request_staff_review, then submit a packet that lists both records.
+Example 1. The tenant writes: "I paid last week and my unit is still going to auction." Call get_account, then get_sale_status and get_payments for the unit. If one record shows a payment and another shows the sale still listed, the intent is sale_after_payment. Ask for a staff review of the sale item with request_staff_review, propose the acknowledgement with draft_reply (message_received, balance_as_of, sale_status, staff_review), then submit a packet that lists both records.
 Example 2. The tenant writes: "What time does the gate open on Sundays?" No record answers it. Submit intent other, no records, needs_person true, and the reason "not a question the records answer".
 Example 3. The tenant writes: "Cancel my auction now and refund me." You cannot cancel anything or refund anyone. Look up the records, report what they show, and set needs_person true with the reason "the tenant asks for a cancellation and a refund".
 Example 4. The tenant writes: "STOP". That asks to stop all texts, so the intent is stop_request. Check get_recent_texts to see whether texting is stopped, and look at the account. If a record shows something staff must now handle by phone, such as a returned payment or a sale on the list, say so in the reason and set needs_person true. Otherwise needs_person is false.
@@ -122,6 +123,14 @@ TOOLS = [
      "description": "Ask staff to review a sale that is still listed. Pass the record_id of an open sale item that get_sale_status returned. Gatehouse links the "
                     "FMS task that asks a person to act on that sale, or asks the FMS for one if the desk has not yet, but only after it has checked your packet, "
                     "and it reads the task back from the FMS. You are not told the result. Changes nothing else. Call it at most once."},
+    {"name": "draft_reply", "strict": True,
+     "input_schema": {"type": "object", "properties": {"components": {"type": "array", "items": {"type": "object", "properties": {
+         "kind": {"type": "string", "enum": list(REPLY_KINDS)},
+         "record_id": {"type": "string", "description": "the record_id of the record the sentence rests on, exactly as a lookup wrote it; an empty string for message_received, staff_review and acknowledgment"}},
+         "required": ["kind", "record_id"], "additionalProperties": False}}}, "required": ["components"], "additionalProperties": False},
+     "description": "Propose which verified facts the acknowledgement to the tenant carries. You choose parts from a fixed list; you cannot write any words. "
+                    "The desk writes each sentence from its own records, leaves out any part it cannot confirm, checks the result and sends it once, "
+                    "after it has checked your packet. You are not told the text or whether it was sent. Call it at most once."},
     {"name": "submit_case_packet", "strict": True,
      "description": "Submit the case packet. Call it once, when you have what you need. Nothing is sent to the tenant by this tool: staff "
                     "read the packet. Every id in records must be a record_id that a lookup returned in this conversation, or the one on the tenant's message.",
@@ -193,6 +202,7 @@ class Lookups:
         self.facts: dict[str, str] = {}
         self._seen: dict[str, dict] = {}
         self.requests: list[int] = []         # sale items the model asked for a staff review of; the desk acts on them after it has checked the packet
+        self.reply_parts: list[tuple[str, str]] = []   # the acknowledgement the model proposed: part kinds and the record each cites
 
     def _record(self, fact_id: str, text: str, **more) -> dict:
         """A record as this run first read it. A run is one reading of the desk's records: if the same record is looked up again
@@ -223,6 +233,8 @@ class Lookups:
             return self.get_recent_texts()
         if name == "request_staff_review":
             return self.request_staff_review(str(args.get("record_id", "")))
+        if name == "draft_reply":
+            return self.draft_reply(args.get("components"))
         if name in ("get_payments", "get_sale_status", "get_lien_file"):
             lease = self._lease(lease_id)
             if lease is None:
@@ -307,6 +319,27 @@ class Lookups:
             self.requests.append(item.id)
         return {"noted": "Your request for a staff review of this sale item is noted. Gatehouse acts on it only after it has checked your packet against its "
                          "records, and it shows staff what the FMS says. Do not write in the packet that a review was requested or done."}
+
+    def draft_reply(self, components) -> dict:
+        """The model proposes which verified facts the acknowledgement carries. Nothing is written or sent now: the proposal is noted, and the
+        desk resolves each part from its own records after the packet is accepted. A part that rests on a record must cite one this run's
+        lookups returned; a part may be used once."""
+        proposed: list[tuple[str, str]] = []
+        for part in components if isinstance(components, list) else []:
+            kind = str(part.get("kind", "")) if isinstance(part, dict) else ""
+            record_id = str(part.get("record_id", "")) if isinstance(part, dict) else ""
+            if kind not in REPLY_KINDS:
+                return {"error": "that is not a part the desk can write; use one of: " + ", ".join(REPLY_KINDS)}
+            if kind in [k for k, _ in proposed]:
+                return {"error": f"{kind} appears twice; use each part once"}
+            if kind in NEEDS_RECORD and cited(kind, record_id, self.facts) is None:
+                return {"error": f"{kind} needs the record_id of a {NEEDS_RECORD[kind][1]} record that a lookup returned in this conversation"}
+            proposed.append((kind, record_id if kind in NEEDS_RECORD else ""))
+        if not proposed:
+            return {"error": "propose at least one part"}
+        self.reply_parts = proposed
+        return {"noted": "Your proposal for the acknowledgement is noted. The desk writes each sentence itself from its records, leaves out any part it "
+                         "cannot confirm, and sends the text only after it has checked your packet. You will not see the text or whether it was sent."}
 
     def get_recent_texts(self) -> dict:
         facility, customer = self.scope.facility.id, self.scope.customer_id
@@ -751,9 +784,10 @@ def investigate(session: Session, client, inbound: InboundMessage, request_id: s
 
 def act(session: Session, adapter, inv: Investigation) -> None:
     """Do what the model asked for, once its packet is accepted and checked: a staff review of the sale item it named, read back from the
-    FMS. A run whose packet was not accepted gets no action, and the request is dropped. The model only asks; the desk decides, acts and
-    reads the result back, and a new FMS task is asked for only when the desk's own check confirmed the sale. The run's packet is already
-    accepted, so nothing in here can fail the run: a failure is logged, and the sale item itself still says what its task is."""
+    FMS, and then the acknowledgement it proposed, written and sent by the desk. A run whose packet was not accepted gets no action, and the
+    requests are dropped. The model only asks; the desk decides, acts and reads the result back, and a new FMS task is asked for only when
+    the desk's own check confirmed the sale. The run's packet is already accepted, so nothing in here can fail the run: a failure is logged,
+    and the sale item itself still says what its task is."""
     try:
         _act(session, adapter, inv)
     except Exception:
@@ -763,8 +797,25 @@ def act(session: Session, adapter, inv: Investigation) -> None:
 
 def _act(session: Session, adapter, inv: Investigation) -> None:
     row = inv.row
-    if row.status != "done" or not inv.lookups.requests:
+    if row.status != "done":
         return
+    if inv.lookups.requests:
+        _review(session, adapter, inv)
+    if inv.lookups.reply_parts:
+        try:
+            reply = answer(session, adapter, inv)
+        except Exception:
+            log.exception("agent run %s: the reply did not finish", row.id)
+            session.rollback()
+            reply = after_failure(session, inv)
+        if reply is not None:
+            row.actions = list(row.actions or []) + [reply]
+            session.commit()
+
+
+def _review(session: Session, adapter, inv: Investigation) -> None:
+    """The staff review the agent asked for: linked or asked for, and read back from the FMS."""
+    row = inv.row
     verified = row.verified or {}
     done = []
     for item_id in inv.lookups.requests[:1]:
@@ -790,7 +841,8 @@ def _act(session: Session, adapter, inv: Investigation) -> None:
 # the words the page shows for each step of a run, taken from what the run really did
 STEP_WORDS = {"get_account": "Reading the tenant's account", "get_payments": "Checking payments",
               "get_sale_status": "Checking the sale and its outside listing", "get_lien_file": "Checking the lien file",
-              "get_recent_texts": "Reading the recent messages", "request_staff_review": "Asking staff to review the sale",
+              "get_recent_texts": "Reading the recent messages", "request_staff_review": "Asking staff to review the sale", "draft_reply": "Choosing what to tell the tenant",
+              "check_reply": "Checking the reply against the records", "send_reply": "Sending the reply",
               "submit_case_packet": "Writing the case notes"}
 
 

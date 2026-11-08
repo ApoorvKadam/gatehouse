@@ -26,7 +26,7 @@ A 29-second loop of one lost payment, built from the app's own screens (click th
 | Florida lien evidence | Built | Every requirement has a record; the best a file reaches is a packet for a person to review |
 | Access and overlocks | Built | The FMS's gate code and unit locks match the facility's recorded lockout rule, in both directions, on a complete reading |
 | Lien sales | Built | A sale still listed after the account was paid is cancelled in the FMS (auctions/search shows it), and an outside listing is withdrawn by that site's own report |
-| Messages | Built | A tenant's text is matched to a tenant through the FMS, never by a number someone typed, and every STOP is honoured. "Explore with our agent" reads that tenant's records and writes case notes; a staff review of a listed sale is linked or asked for, and read back from the FMS |
+| Messages | Built | A tenant's text is matched to a tenant through the FMS, never by a number someone typed, and every STOP is honoured. "Explore with our agent" reads that tenant's records and writes case notes; a staff review of a listed sale is linked or asked for, and read back from the FMS; the tenant gets a short acknowledgement whose every sentence the desk wrote from a verified record |
 | Leads and move-ins | Planned | A missed call counts as recovered only when a specific lease is linked to it |
 | Rent changes | Planned | An approved increase is saved, noticed and charged in the FMS, with what happened after |
 
@@ -57,7 +57,9 @@ The hosted preview is read-only and runs on synthetic data. Its home page shows 
 
 ## Messages
 
-The Messages page lists what tenants texted a facility, newest first. For the message you choose it shows the conversation beside what our agent did about it. "Explore with our agent" reads that tenant's account, payments and sale status, may ask for a staff review of a sale that is still listed, and writes the case notes. It changes nothing in the FMS. While it runs, the page shows each step as it happens, taken from the run itself.
+The Messages page lists what tenants texted a facility, newest first. For the message you choose it shows the conversation beside what our agent did about it. "Explore with our agent" reads that tenant's account, payments and sale status, may ask for a staff review of a sale that is still listed, and writes the case notes. It changes nothing in the FMS except that staff task. While it runs, the page shows each step as it happens, taken from the run itself.
+
+The agent may also propose an acknowledgement for the tenant. It does not write one: it picks parts from a fixed list (the message was received, the balance, the sale status, the staff review, a payment the desk confirmed, a closing line) and cites the record each rests on. The desk writes each sentence from its own catalog, fills it from that record, leaves out any part it cannot confirm and says why, checks the length, and sends the text once through the same send path that honours STOP, the FMS's own text preferences and quiet hours. An answer that never arrives stays "not confirmed" and is never sent again. A message gets one reply, whatever a later exploration proposes, and the page shows each sentence with the record it came from.
 
 The case notes are written by a language model from the records the desk holds. The desk checks what it can and shows the records beside the notes: the sale the notes rely on must be open and read lately, and every amount and date in the notes must appear in a record. A run costs about a fifth of a cent. The preview allows ten explorations per visitor per day and one dollar a day in all.
 
