@@ -11,6 +11,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from decimal import Decimal
 
@@ -25,6 +26,7 @@ from .models import (
     PaymentCommand, WorkItem,
 )
 from .sales import KIND_NAMES, LISTED_KINDS, LISTED_PAID, OUTSIDE, SALE_KINDS
+from .spend import Refused
 from .usage import cost_usd
 
 log = logging.getLogger("desk.investigator")
@@ -618,11 +620,14 @@ def _reply(session: Session, request_id: str | None, run: AgentRun) -> AgentRun:
 
 
 def investigate(session: Session, client, inbound: InboundMessage, request_id: str | None, again: bool = False,
-                fresh_for: timedelta = SALE_FRESH_FOR) -> tuple[AgentRun, bool]:
+                fresh_for: timedelta = SALE_FRESH_FOR, visitor: str | None = None,
+                allow: Callable[[Session], str | None] | None = None) -> tuple[AgentRun, bool]:
     """Run Claude over a matched text, once. Returns the run and whether this call started it. A request id is answered once: a
     retry gets the same run, whatever `again` says. A run already going, or a finished run, is returned as it is, so a double click
     costs one model run; `again` asks for a new run on a text that has one. A text's runs are numbered and the database takes each
-    number once, so two requests that both find no run cannot both start the first."""
+    number once, so two requests that both find no run cannot both start the first. `allow` is asked just before a new run
+    would start, which is the one place a run is paid for; it returns why not, or None, and a refusal raises Refused. A request
+    that only gets an existing run back costs nothing, so it is never refused."""
     if inbound.match_state != "matched" or not inbound.customer_provider_id or inbound.facility_id is None:
         raise ValueError("this text is not matched to one tenant at a facility")
     request = _claim(session, inbound, request_id)
@@ -635,7 +640,10 @@ def investigate(session: Session, client, inbound: InboundMessage, request_id: s
     found = going or (None if again else last)
     if found is not None:
         return _reply(session, request_id, found), False
-    row = AgentRun(inbound_id=inbound.id, generation=last.generation + 1 if last else 1, model=MODEL, effort=EFFORT)
+    reason = allow(session) if allow is not None else None
+    if reason:
+        raise Refused(reason)
+    row = AgentRun(inbound_id=inbound.id, generation=last.generation + 1 if last else 1, visitor=visitor, model=MODEL, effort=EFFORT)
     session.add(row)
     try:
         session.flush()             # the unique constraints decide a race between two requests here

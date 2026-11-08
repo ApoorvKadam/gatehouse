@@ -376,6 +376,8 @@ class AgentRun(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     inbound_id: Mapped[int] = mapped_column(ForeignKey("inbound_messages.id"))
     generation: Mapped[int] = mapped_column(Integer, default=1)
+    # a preview visitor, as a short hash of where the request came from; none for an operator. It counts a visitor's cases for the day.
+    visitor: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
     model: Mapped[str] = mapped_column(String)
     effort: Mapped[str] = mapped_column(String)
     # running, done (a packet the desk accepted), needs_person (no accepted packet, or one the records do not support) or failed
