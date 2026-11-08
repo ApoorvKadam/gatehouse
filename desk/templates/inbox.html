@@ -60,6 +60,9 @@
         {% else %}<span class="chip plain">Not checked by the desk</span>{% endif %}
         <span class="small">{{ run.verified.says if run.verified else '' }}</span>
       </p>
+      {% for a in run.actions %}
+      <p class="deskcheck"><span class="chip {{ a.tone }}">{% include "icons/list-checks.svg" %}{{ a.label }}</span> <span class="small">{{ a.text }}</span></p>
+      {% endfor %}
     {% elif run %}
       <p><span class="chip act">The case could not be prepared</span> <span class="small">{{ run.error or 'No notes were written.' }}</span></p>
     {% endif %}
