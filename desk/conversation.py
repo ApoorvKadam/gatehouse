@@ -20,12 +20,11 @@ from .adapter import FMSAdapter, FMSError
 from .cases import record
 from .db import utcnow
 from .models import DelinquencyCase, Facility, Lease, PaymentCommand, PaymentProposal
+from .usage import cost_usd
 from .payments import IDENTITY_VALID_FOR, IdentityClaim, PaymentRefused, check_identity, confirm, identity_locked, propose, tenant_message
 
 log = logging.getLogger("desk.conversation")
 
-# dollars per million tokens (input, output), only to log what each conversation costs
-PRICES = {"claude-haiku-5-5": (0.10, 0.50), "claude-sonnet-5-5": (2.00, 10.00)}
 # a confirmation is a short, unambiguous yes and nothing else
 CONFIRM = re.compile(r"^\s*(yes|yes please|yep|confirm|confirmed|i confirm|go ahead|yes,? go ahead)[\s.!]*$", re.I)
 MAX_MODEL_TURNS = 6
@@ -321,8 +320,7 @@ class Conversation:
 
     def _log_usage(self, response) -> None:
         u = response.usage
-        price_in, price_out = PRICES.get(self.model, (0.0, 0.0))
-        cost = (u.input_tokens * price_in + u.output_tokens * price_out) / 1_000_000
+        cost = cost_usd(self.model, u)
         self.cost_usd += cost
         log.info("conversation %s model=%s in=%d out=%d cost=$%.5f total=$%.5f", self.id, self.model,
                  u.input_tokens, u.output_tokens, cost, self.cost_usd)
