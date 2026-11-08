@@ -449,10 +449,11 @@ dl.kv.pairs { grid-template-columns: 11rem minmax(0, 1fr) 11rem minmax(0, 1fr); 
 /* Messages: a list of what tenants sent, and for the one chosen the steps it went through */
 html { scrollbar-color: var(--frame) var(--paper); }
 .mail { display: grid; grid-template-columns: 21rem minmax(0, 1fr); gap: var(--s5); margin-top: var(--s5); align-items: start; }
-.side { position: sticky; top: calc(72px + var(--s4)); display: grid; gap: var(--s4); align-content: start; }
-.threads { border: 1px solid var(--frame); border-radius: 10px; background: var(--paper); overflow: hidden; }
+/* the column never grows past the window: the form keeps its size and the list scrolls inside it */
+.side { position: sticky; top: calc(72px + var(--s4)); display: flex; flex-direction: column; gap: var(--s4); max-height: calc(100vh - 72px - var(--s4) * 2); }
+.threads { border: 1px solid var(--frame); border-radius: 10px; background: var(--paper); overflow-y: auto; min-height: 0; }
 /* the form where a visitor types a text as a tenant, above the list the text then appears in */
-.play { border: 1px solid var(--frame); border-radius: 10px; background: var(--paper); padding: var(--s4); }
+.play { flex: none; border: 1px solid var(--frame); border-radius: 10px; background: var(--paper); padding: var(--s4); }
 .play h2 { font-size: var(--t-sm); font-weight: 600; margin-bottom: var(--s3); }
 .play form { display: grid; gap: var(--s2); }
 .play select, .play textarea { width: 100%; font: inherit; font-size: var(--t-sm); color: var(--ink); background: var(--paper); border: 1px solid var(--frame); border-radius: 8px; padding: 8px 10px; }
@@ -529,7 +530,7 @@ html { scrollbar-color: var(--frame) var(--paper); }
 @keyframes step-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @media (max-width: 900px) {
   .mail { grid-template-columns: 1fr; }
-  .side { position: static; }
+  .side { position: static; max-height: none; }
   .records li { grid-template-columns: 1fr; gap: 2px; }
 }
 
