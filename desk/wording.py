@@ -42,13 +42,14 @@ def _when(found: re.Match) -> str:
     return f"{at:%b} {at.day}, {at:%Y}, {at:%H:%M} UTC"
 
 
-def plain(text: str | None) -> str | None:
+def plain(text: str | None, ids: bool = True) -> str | None:
     """Text for a screen: provider ids and record ids taken out, payment state codes written as words, times written as a person
-    reads them."""
+    reads them. An evidence page keeps its ids (`ids=False`), because there a person compares them with the FMS character by character."""
     if text is None:
         return None
-    text = _STAMP.sub(_when, _BARE_ID.sub("", _IN_BRACKETS.sub("", text)))
-    text = _RECORD_ID.sub("", text)
+    if ids:
+        text = _RECORD_ID.sub("", _BARE_ID.sub("", _IN_BRACKETS.sub("", text)))
+    text = _STAMP.sub(_when, text)
     text = _CODE.sub(lambda m: STATE_WORDS[m.group(0)], text)
     return re.sub(r"\s+([.,;:])", r"\1", re.sub(r"[ \t]{2,}", " ", text)).strip()
 

@@ -5,6 +5,7 @@ FMS or writes anything, so a visitor can read freely without moving the world.""
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,15 +20,18 @@ from sqlalchemy.orm import Session, sessionmaker
 from .access import CLOSED_BY, GATE_RULES, KIND_NAMES, MISSING, NOT_RESTORED, PHYSICAL, policy_for, facility_today
 from . import sales, spend
 from .messaging import inbox as inbox_of
+from .db import utcnow
 from .liens import on
 from .models import (
-    AccessPolicy, AccessView, CaseEvent, DelinquencyCase, DeskBinding, Facility, IdentityCheck, Lease, LedgerSnapshot,
+    AccessPolicy, AccessView, AgentRun, CaseEvent, DelinquencyCase, DeskBinding, Facility, IdentityCheck, Lease, LedgerSnapshot,
     LienEvaluation, LienEvidence, PaymentCommand, PaymentProposal, WorkItem,
 )
 from .payments import tenant_message
+from .wording import plain
 
 HERE = Path(__file__).parent
 templates = Jinja2Templates(directory=HERE / "templates")
+templates.env.filters["readable"] = lambda text: plain(text, ids=False)      # times and state codes as words; the ids on an evidence page stay
 
 # The four kinds of entry an account's record keeps apart. Every event kind lands in exactly one of them.
 FMS, OBSERVED, CONCLUDED, DECIDED = "fms", "observed", "concluded", "decided"
@@ -107,6 +111,20 @@ def evaluation_report() -> dict | None:
         return None
     report["generated"] = datetime.fromisoformat(report["generated_at"]).replace(tzinfo=None)
     return report
+
+
+def ago(when: datetime | None, now: datetime) -> str:
+    """How long ago a stored reading was taken, as a person says it."""
+    if when is None:
+        return "none yet"
+    seconds = max(0, int((now - when).total_seconds()))
+    if seconds < 10:
+        return "just now"
+    if seconds < 90:
+        return f"{seconds} seconds ago"
+    if seconds < 5400:
+        return f"{round(seconds / 60)} minutes ago"
+    return f"{round(seconds / 3600)} hours ago"
 
 
 def sentence(text: str) -> str:
@@ -230,7 +248,7 @@ class Pages:
                     if cmd.provider_payment_id is None:
                         what = (f"A {money(cmd.amount)} payment agreed {how}. The FMS did not confirm the outcome, so Gatehouse "
                                 "holds the account and has not retried. "
-                                + (f"The FMS shows {cmd.suggested_payment_id}, which may be this attempt." if cmd.suggested_payment_id
+                                + ("The FMS shows a payment that may be this attempt." if cmd.suggested_payment_id
                                    else "Gatehouse has not matched any FMS payment to this attempt."))
                         head = "Payment outcome unknown"
                     else:
@@ -275,7 +293,14 @@ class Pages:
                                   "The FMS ledger shows the balance paid.", "Front desk", f"/accounts/{case.id}", money(owed)))
         items.extend(self.access_items(s, facility))
         items.extend(self.sale_items(s, facility))
+        for item in items:
+            item.what, item.proof = plain(item.what), plain(item.proof)       # Today is read by a person: no provider ids, state codes or raw times
         return sorted(items, key=lambda i: (i.rank, i.since))
+
+    def unit_name(self, s: Session, lease_provider_id: str | None) -> str:
+        """The unit a lease is on, by the lease's FMS id."""
+        lease = s.scalar(select(Lease).where(Lease.provider_id == lease_provider_id)) if lease_provider_id else None
+        return lease.unit_name if lease is not None else ""
 
     def subject_label(self, s: Session, w: WorkItem) -> tuple[str | None, str | None]:
         """(unit, label) for an access work item: a unit, a customer's shared gate code, or the facility."""
@@ -308,7 +333,7 @@ class Pages:
             o = w.observed or {}
             task = {"created": f" FMS task: {(w.task_status or 'open').lower()}.", "outcome_unknown": " FMS task: outcome unknown.",
                     "sending": " FMS task: being created.", "rejected": " FMS task: refused by the FMS."}.get(w.task_state, "")
-            out.append(Item(rank, sales.KIND_NAMES[w.kind], o.get("unit") or o.get("lease_id", ""), 0, w.opened_at,
+            out.append(Item(rank, sales.KIND_NAMES[w.kind], o.get("unit") or self.unit_name(s, o.get("lease_id")), 0, w.opened_at,
                             w.problem + task + (f" {o['task_warning']}" if o.get("task_warning") else "") + (f" {w.note}" if w.note else ""),
                             w.closing_evidence, w.who_acts, f"/sales/{w.id}",
                             money(o["owed"]) if isinstance(o.get("owed"), int) else ""))
@@ -426,8 +451,8 @@ def router(pages: Pages) -> APIRouter:
                 "facilities": facilities, "facility": current, "items": items, "local": local, "nav": "today"})
 
     @r.get("/inbox", response_class=HTMLResponse)
-    def inbox_page(request: Request, facility: str | None = None):
-        """The texts that reached a facility's number, who each is from, what the desk sent back, and the case notes."""
+    def inbox_page(request: Request, facility: str | None = None, text: int | None = None):
+        """The messages that reached a facility's number, newest first, and for the one chosen the conversation beside what our agent did."""
         with session() as s:
             facilities = pages.facilities(s)
             if not facilities:
@@ -436,8 +461,10 @@ def router(pages: Pages) -> APIRouter:
             if current is None:
                 raise HTTPException(404, "No such facility")
             left = spend.allowance(s, pages.budget_usd, pages.cases_per_day, spend.visitor_of(request)) if pages.live else None
+            texts = inbox_of(s, current, limit=30)
+            selected = next((t for t in texts if t["id"] == text), texts[0] if texts else None)
             return templates.TemplateResponse(request, "inbox.html", {
-                "facilities": facilities, "facility": current, "texts": inbox_of(s, current, limit=30), "local": local, "nav": "inbox",
+                "facilities": facilities, "facility": current, "texts": texts, "selected": selected, "local": local, "nav": "inbox",
                 "live": pages.live, "left": left, "cases_per_day": pages.cases_per_day})
 
     @r.get("/accounts/{case_id}", response_class=HTMLResponse)
@@ -540,7 +567,7 @@ def router(pages: Pages) -> APIRouter:
             read_at, listed_at = when(o.get("read_at")), when((o.get("listing") or {}).get("observedAt"))
             return templates.TemplateResponse(request, "sale.html", {
                 "w": w, "o": o, "facility": facility, "case_id": case_id, "related": related, "hours": hours,
-                "read_at": read_at, "listed_at": listed_at, "on": on,
+                "read_at": read_at, "listed_at": listed_at, "on": on, "sale_local": sales.sale_local,
                 "kind_names": sales.KIND_NAMES, "status_words": sales.STATUS_WORDS, "cancelled_by": sales.CANCELLED_BY,
                 "outside_note": sales.OUTSIDE_NOTE, "money": money, "local": local, "nav": "today", "facilities": pages.facilities(s)})
 
@@ -552,38 +579,35 @@ def router(pages: Pages) -> APIRouter:
 
     @r.get("/operations", response_class=HTMLResponse)
     def operations(request: Request):
-        """How the running system is doing, from its own records: the worker's recent passes, when readings from the
-        FMS were last stored, and the open work in each part with its oldest item. It reads the database only, never
-        the FMS, and counts open work with Today's own rules."""
-        import time as _time
+        """What is open at every facility and who has to act, how fresh the stored FMS readings are, and what our agent did today. It reads
+        the database only, never the FMS, and counts open work with Today's own rules."""
         from sqlalchemy import func
         with session() as s:
             facilities = pages.facilities(s)
             groups: dict[tuple[str, str], list[Item]] = {}
+            by_part: Counter = Counter()
+            by_who: Counter = Counter()
             for f in facilities:
                 for i in pages.today(s, f):
                     part = ("Payments" if i.link.startswith("/payments/") else "Lien files" if i.link.endswith("/lien")
                             else "Access" if i.link.startswith("/access/") else "Lien sales" if i.link.startswith("/sales/")
                             else "Collections")
                     groups.setdefault((part, i.head), []).append(i)
+                    by_part[part] += 1
+                    by_who[i.who] += 1
             open_work = sorted(({"part": part, "label": head, "count": len(rows), "since": min(r.since for r in rows),
                                  "link": min(rows, key=lambda r: r.since).link} for (part, head), rows in groups.items()),
                                key=lambda o: o["since"])
-            readings = {"Ledger": s.scalar(select(func.max(LedgerSnapshot.observed_at))),
-                        "Access": s.scalar(select(func.max(AccessView.observed_at)))}
-            w = pages.worker
-            worker = None
-            if w is not None:
-                ago = (_time.monotonic() - w.last_ok) if w.last_ok is not None else None
-                worker = {"state": w.state(), "every": w.every, "last_ok_ago": ago, "last_error": w.last_error,
-                          "passes": list(reversed(w.passes.copy()))}
+            now = utcnow()
+            readings = {"Ledgers": ago(s.scalar(select(func.max(LedgerSnapshot.observed_at))), now),
+                        "Access": ago(s.scalar(select(func.max(AccessView.observed_at))), now)}
+            runs = s.scalars(select(AgentRun).where(AgentRun.started_at >= spend.day_start(now))).all()
+            outcomes = Counter(a.get("outcome") for r in runs for a in (r.actions or []) if a.get("kind") == "staff_review")
+            agent = {"runs": len(runs), "cost": sum(r.cost_usd for r in runs), "budget": pages.budget_usd,
+                     "confirmed": outcomes["linked"] + outcomes["requested"], "unconfirmed": outcomes["not_confirmed"] + outcomes["refused"]}
             return templates.TemplateResponse(request, "operations.html", {
-                "worker": worker, "open_work": open_work, "readings": readings, "nav": "operations",
-                "facilities": facilities, "local": local})
-
-    @r.get("/limits", response_class=HTMLResponse)
-    def limits(request: Request):
-        with session() as s:
-            return templates.TemplateResponse(request, "limits.html", {"nav": "limits", "facilities": pages.facilities(s)})
+                "open_work": open_work, "by_who": by_who.most_common(), "by_part": by_part.most_common(), "peak": max(by_who.values(), default=1),
+                "peak_kind": max((o["count"] for o in open_work), default=1),
+                "readings": readings, "agent": agent, "nav": "operations", "facilities": facilities, "local": local})
 
     return r

@@ -24,6 +24,7 @@ from .config import Settings
 from .conversation import Conversation
 from . import spend
 from .investigator import CALL_TIMEOUT, SALE_FRESH_FOR, investigate, run_view
+from .investigator import progress as run_progress
 from .lien_files import ensure_append_only, evaluate_case, record_evidence, replay
 from .liens import FL_R1, ValidationError
 from .db import bind_to_fms, make_session_factory, refresh_binding
@@ -360,6 +361,16 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
             response.status_code = 202          # a retry gets the run that is going, so the screen can poll it by its id
         left = spend.allowance(session, settings.daily_budget_usd, settings.visitor_cases_per_day, visitor)
         return {**run_view(run), "limits": {"cases_left": left.cases_left, "budget_left_usd": round(left.budget_left_usd, 4)}}
+
+    @app.get("/api/inbox/{message_id}/progress")
+    def inbox_progress(message_id: int, session: Session = Depends(db), _: str = Depends(viewer)):
+        """The steps the latest run on a text has taken so far, in plain words, for a page that is waiting for the run to finish."""
+        message = session.get(InboundMessage, message_id)
+        facility = session.get(Facility, message.facility_id) if message is not None and message.facility_id is not None else None
+        if message is None or facility is None:
+            raise HTTPException(404, "text not found")
+        check_facility(session, facility.provider_id)
+        return run_progress(session, message_id)
 
     @app.get("/api/agent-runs/{run_id}")
     def agent_run(run_id: int, session: Session = Depends(db), _: str = Depends(viewer)):

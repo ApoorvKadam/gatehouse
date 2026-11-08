@@ -1,4 +1,4 @@
-"""The operations page: the worker's recent passes, the latest readings and the open work, from the database only."""
+"""The operations page: the open work, how fresh the readings are and what our agent did today, from the database only."""
 from __future__ import annotations
 
 import time
@@ -20,7 +20,8 @@ def test_the_page_counts_open_work_with_todays_rules_and_says_when_no_worker_run
     with TestClient(app) as visitor:
         before = counts(app)
         page = visitor.get("/operations").text
-        assert "Not running in this process" in page
+        assert "Open work by who acts" in page and "Our agent today" in page and "FMS readings stored" in page
+        assert "health" not in page.lower() and "worker" not in page.lower() and "free host" not in page.lower()       # work and results, not infrastructure
         # the same heads Today shows, including a past-due account with no payment or lien step
         for head in ("Payment outcome unknown", "Payment returned", "Lien file out of date", "Access not restored", "Past due"):
             assert head in page

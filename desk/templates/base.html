@@ -17,10 +17,9 @@
     <nav aria-label="Main">
       <a href="/" {% if nav == 'front' %}aria-current="page"{% endif %}>Overview</a>
       <a href="/today" {% if nav == 'today' %}aria-current="page"{% endif %}>Today</a>
-      <a href="/inbox" {% if nav == 'inbox' %}aria-current="page"{% endif %}>Texts</a>
+      <a href="/inbox" {% if nav == 'inbox' %}aria-current="page"{% endif %}>Messages</a>
       <a href="/evaluation" {% if nav == 'evaluation' %}aria-current="page"{% endif %}>Evaluation</a>
       <a href="/operations" {% if nav == 'operations' %}aria-current="page"{% endif %}>Operations</a>
-      <a href="/limits" {% if nav == 'limits' %}aria-current="page"{% endif %}>Limits</a>
     </nav>
     {% if facilities and nav in ('today', 'inbox') %}
     <form method="get" action="/{{ nav }}">
@@ -33,7 +32,7 @@
     {% endif %}
   </div>
 </header>
-<div class="preview-note"><div class="wrap"><b>Synthetic technical preview.</b>Every tenant, payment and document is made up, the FMS is a simulator, and nothing on these pages changes the FMS. <a href="/limits">What this is and is not</a></div></div>
+<div class="preview-note"><div class="wrap"><b>Synthetic technical preview.</b>Every tenant, payment and document is made up, and nothing on these pages changes a real FMS.</div></div>
 <main>
 {% block main %}{% endblock %}
 </main>
