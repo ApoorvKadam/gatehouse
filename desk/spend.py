@@ -1,4 +1,4 @@
-"""What a Claude run may cost, and who may start one. The limits are the owner's: $1 a day in all, and ten full cases per visitor
+"""What a live run may cost, and who may start one. The limits are $1 a day in all, and ten full cases per visitor
 a day, counted in New York time. A refused request is told why in plain words and costs nothing.
 
 The count lives in the desk's own database, so a restart of the preview starts it again; that is enough while the link is
@@ -17,7 +17,8 @@ from .db import utcnow
 from .models import AgentRun
 
 DAY_ZONE = ZoneInfo("America/New_York")
-# The most one run can cost: eight model calls, each with the largest prompt, tools and results it can carry, and a full answer.
+# No run is let to cost more than this. The investigator stops before any call that could take it past, and counts a call that
+# ended with no answer as if it had been billed in full. A run still going is therefore reserved at this amount.
 WORST_RUN_USD = 0.03
 # Runs going at the same moment. A burst of clicks cannot start more than this before the first one is counted.
 MAX_RUNNING = 3
@@ -62,7 +63,7 @@ def cases_today(session: Session, visitor: str, now: datetime | None = None, exc
 def allowance(session: Session, budget_usd: float, cases_per_day: int, visitor: str | None, now: datetime | None = None,
               exclude: int | None = None) -> Allowance:
     """May one more run start now? A visitor has a number of cases a day, and everyone shares the day's budget. The operator is not
-    stopped by the budget, so visitors cannot lock the owner out; the operator's runs still count in it. Asked again after a run is
+    stopped by the budget, so visitors cannot lock the operator out; the operator's runs still count in it. Asked again after a run is
     written, with that run left out, the answer is the one the database gave when it was alone with the others."""
     left = max(0.0, budget_usd - spent_today(session, now, exclude))
     cases_left = None if visitor is None else max(0, cases_per_day - cases_today(session, visitor, now, exclude))

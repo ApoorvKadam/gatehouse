@@ -26,8 +26,8 @@ from .models import (
     PaymentCommand, WorkItem,
 )
 from .sales import KIND_NAMES, LISTED_KINDS, LISTED_PAID, OUTSIDE, SALE_KINDS
-from .spend import Refused
-from .usage import cost_usd
+from .spend import WORST_RUN_USD, Refused
+from .usage import PRICES, cost_usd
 from .wording import plain, words
 
 log = logging.getLogger("desk.investigator")
@@ -40,9 +40,12 @@ NOT_ACCEPTED = ("The packet was not accepted. Every record_id you list must be o
                 "the tenant's message; a lookup that found nothing returned a record that says so. Every amount and date you write in the "
                 "summary and the reason must appear in a record you list, so do not add, subtract or estimate. You list at most eight records. "
                 "Fix that and submit the packet again.")
-# A model call is cut off after CALL_TIMEOUT seconds and the SDK tries it again at most twice (the app's client once), so a live run
-# writes its heartbeat (AgentRun.beat_at) at least every three and a half minutes. A run silent for STRANDED_AFTER was cut off, not slow.
+# A model call is cut off after CALL_TIMEOUT seconds and the desk tries it once more (the SDK's own retries are off for these calls, see
+# Investigation._ask), so a live run writes its heartbeat (AgentRun.beat_at) at least every two and a half minutes. A run silent for
+# STRANDED_AFTER was cut off, not slow.
 CALL_TIMEOUT = 60.0
+# a failed attempt is tried again only when the failure may pass: the model was busy or slow, or no answer came back at all
+RETRY_STATUS = (408, 409, 429)
 STRANDED_AFTER = timedelta(minutes=5)
 # a sale item the worker has not read in this long was missing from its latest passes (a search that no longer returns a sale leaves
 # the item open and unchanged), so it cannot confirm that the sale is listed now
@@ -50,6 +53,13 @@ SALE_FRESH_FOR = timedelta(minutes=10)
 # what the desk says about a packet it could not check against its own records
 UNCHECKED = ("Case notes. The desk checked only that the records they list exist and that the dollar amounts and dates it can read in "
              "the summary and the reason appear in them or in the tenant's message.")
+def _as_data(block):
+    """A response block as plain data, for measuring a request."""
+    if hasattr(block, "model_dump"):
+        return block.model_dump(mode="json")
+    return vars(block) if hasattr(block, "__dict__") else str(block)
+
+
 INTENTS = ("sale_after_payment", "payment_status", "balance_question", "access_problem", "stop_request", "other")
 # the prompt asks for a summary of 400 characters; one that runs past MAX_SUMMARY is cut at a sentence when it is kept, never refused
 MAX_SUMMARY, MAX_RECORDS = 600, 8
@@ -462,8 +472,11 @@ class Investigation:
                           timeout=CALL_TIMEOUT)
             if forced:
                 kwargs["tool_choice"] = {"type": "tool", "name": "submit_case_packet"}
-            response = self.client.messages.create(**kwargs)
-            self._count(response)
+            worst = self._worst_call(system, messages)
+            response = self._ask(kwargs, worst)
+            if response is None:
+                return self._end("needs_person", None, "the run reached its cost limit before it could submit a packet")
+            self._count(response, worst)
             self.session.commit()           # the call is paid for whatever happens next, so its cost is kept
             entry = {"turn": turn + 1, "stop_reason": response.stop_reason, "forced": forced, "calls": []}
             self.trace.append(entry)
@@ -508,6 +521,32 @@ class Investigation:
             self.session.commit()
         return self._end("needs_person", None, "no packet after the allowed turns")
 
+    def _worst_call(self, system: str, messages: list) -> float:
+        """The most the next call can cost. A token is at least a byte, so the bytes of the request bound its input tokens, and the
+        answer is at most MAX_TOKENS."""
+        size = len(system.encode()) + len(json.dumps(TOOLS).encode()) + len(json.dumps(messages, default=_as_data).encode()) + 1024
+        price_in, price_out = PRICES[MODEL]
+        return (size * price_in + MAX_TOKENS * price_out) / 1_000_000
+
+    def _ask(self, kwargs: dict, worst: float):
+        """One model call, tried at most twice, and never one that could take the run past WORST_RUN_USD; None when the run has
+        reached that limit. The SDK's own retries are off, so every attempt is counted here: an attempt that ended with no answer
+        (a timeout, a dropped connection) may still have been billed, so it is counted at the most it could have cost. An error the
+        provider answered with was not billed, and one that cannot pass (a refused key, a bad request) is not tried again."""
+        client = getattr(self.client, "with_options", lambda **_: self.client)(max_retries=0)
+        for attempt in (1, 2):
+            if self.row.cost_usd + worst > WORST_RUN_USD:
+                return None
+            try:
+                return client.messages.create(**kwargs)
+            except Exception as exc:
+                status = getattr(exc, "status_code", None)
+                if status is None:
+                    self.row.cost_usd += worst
+                    self.session.commit()           # the attempt is paid for whatever happens next
+                if attempt == 2 or (status is not None and status not in RETRY_STATUS and status < 500):
+                    raise
+
     def _beat(self) -> bool:
         """Write the heartbeat, but only for a run that is still running, in one statement. False once the desk has given the run
         up as cut off, and then no more model calls are paid for it. What this run has written so far is saved first, and no
@@ -519,15 +558,19 @@ class Investigation:
             return False
         return True
 
-    def _count(self, response) -> None:
-        usage = response.usage
-        cost = cost_usd(MODEL, usage)
+    def _count(self, response, worst: float) -> None:
+        """Count an answer from its usage. An answer whose usage cannot be read was billed all the same, so it is counted at its worst."""
+        try:
+            usage = response.usage
+            tokens_in, tokens_out, cost = usage.input_tokens, usage.output_tokens, cost_usd(MODEL, usage)
+        except Exception:
+            log.warning("agent run %s: a model answer had no readable usage, so it is counted at its worst", self.row.id)
+            tokens_in, tokens_out, cost = 0, 0, worst
         self.row.turns += 1
-        self.row.input_tokens += usage.input_tokens
-        self.row.output_tokens += usage.output_tokens
+        self.row.input_tokens += tokens_in
+        self.row.output_tokens += tokens_out
         self.row.cost_usd += cost
-        log.info("agent run %s model=%s in=%d out=%d cost=$%.5f total=$%.5f", self.row.id, MODEL, usage.input_tokens, usage.output_tokens,
-                 cost, self.row.cost_usd)
+        log.info("agent run %s model=%s in=%d out=%d cost=$%.5f total=$%.5f", self.row.id, MODEL, tokens_in, tokens_out, cost, self.row.cost_usd)
 
     def _end(self, status: str, stop_reason: str | None, error: str | None, **more) -> None:
         settle(self.session, self.row.id, status=status, stop_reason=stop_reason, error=error, **more)
