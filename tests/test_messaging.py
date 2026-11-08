@@ -693,3 +693,15 @@ def test_the_inbox_can_be_paged(sim, adapter, session, desk):
         arrive(session, adapter, texts_in(sim, DANA, f"text {n}"))
     assert [m["body"] for m in inbox(session, desk, 2, 0)] == ["text 2", "text 1"]
     assert [m["body"] for m in inbox(session, desk, 2, 2)] == ["text 0"]
+
+
+def test_the_worker_drops_a_facility_the_key_no_longer_sees(fms_url, sim, adapter):
+    factory = make_session_factory("sqlite:///:memory:")
+    bind_to_fms(factory, adapter, fms_url)
+    with factory() as s:
+        binding = s.get(DeskBinding, 1)
+        binding.facility_ids = sorted([*binding.facility_ids, "fac_sold0001"])      # a facility the operator has since sold
+        s.commit()
+    run_once(factory, adapter)
+    with factory() as s:
+        assert sorted(s.get(DeskBinding, 1).facility_ids) == sorted(SERVED)

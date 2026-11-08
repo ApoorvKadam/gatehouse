@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from .access import bound_facilities, reconcile_access
 from .adapter import FMSAdapter, FMSError
+from .db import refresh_binding
 from .messaging import file_unrouted, hold_stranded, match_pending
 from .payments import PaymentService
 from .sales import reconcile_sales
@@ -24,12 +25,18 @@ log = logging.getLogger("desk.worker")
 
 def run_once(factory: sessionmaker[Session], adapter: FMSAdapter, run_id: str = "local", feed_url: str | None = None,
              text_numbers: dict[str, str] | None = None) -> tuple[int, int]:
-    """One pass: how many payments were checked, and how many FMS reads failed along the way (payments, access, sales, and
-    matching texts that arrived while the FMS could not be asked)."""
+    """One pass: how many payments were checked, and how many FMS reads failed along the way (the facility list, payments,
+    access, sales, and matching texts that arrived while the FMS could not be asked)."""
     with factory() as session:
         service = PaymentService(session, adapter)
         checked = service.reconcile_all()
         failures = service.read_failures
+        try:
+            # a facility that joined or left the account is served or dropped on this pass, not at the next restart
+            refresh_binding(session, adapter)
+        except FMSError as exc:
+            failures += 1
+            log.warning("could not read which facilities this key sees: %s", exc)
         facilities = bound_facilities(session)
         file_unrouted(session, text_numbers, {f.provider_id for f in facilities})
         for facility in facilities:
