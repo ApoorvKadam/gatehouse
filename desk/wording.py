@@ -24,6 +24,11 @@ _STAMP = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)
 _CODE = re.compile(r"\b(?:" + "|".join(sorted(STATE_WORDS, key=len, reverse=True)) + r")\b")
 
 
+def when(t: datetime | None) -> str:
+    """A time the desk keeps in UTC, as a person reads it."""
+    return f"{t:%b} {t.day}, {t.year}, {t:%H:%M} UTC" if t else "an unknown time"
+
+
 def words(code: str | None) -> str:
     """A state code as words: a known one by its wording, any other with its underscores taken out."""
     return STATE_WORDS.get(code or "", (code or "").replace("_", " ").lower())
@@ -46,3 +51,29 @@ def plain(text: str | None) -> str | None:
     text = _RECORD_ID.sub("", text)
     text = _CODE.sub(lambda m: STATE_WORDS[m.group(0)], text)
     return re.sub(r"\s+([.,;:])", r"\1", re.sub(r"[ \t]{2,}", " ", text)).strip()
+
+
+# what the desk did when the model asked for a staff review: the label on the chip, and which chip colour it takes
+REVIEW_LABELS = {"linked": ("Existing FMS task linked", "done"), "requested": ("FMS task requested and confirmed", "done"),
+                 "not_confirmed": ("FMS task not confirmed", "act"), "refused": ("FMS refused the task", "act"),
+                 "not_requested": ("No new task requested", "plain")}
+
+
+def review_view(action: dict) -> dict:
+    """One staff-review action as a screen shows it: a label, a tone and a sentence, written from what the desk recorded. No task id
+    is shown, only what the FMS said about the task and when the desk read it."""
+    outcome, status = action.get("outcome"), words(action.get("task_status")) if action.get("task_status") else "not found"
+    try:
+        read = datetime.fromisoformat(action["read_at"]) if action.get("read_at") else None
+    except ValueError:
+        read = None
+    label, tone = REVIEW_LABELS.get(outcome, ("Staff review", "plain"))
+    done = {"linked": "The FMS already had a task asking a person to act on this sale. Gatehouse read it back from the FMS on {at}: it is {status}.",
+            "requested": "Gatehouse asked the FMS for a task asking a person to act on this sale, and read it back on {at}: it is {status}.",
+            "not_confirmed": "Gatehouse could not confirm an FMS task for this sale. It does not ask again while the outcome is unknown, so a person has to follow up.",
+            "refused": "The FMS refused to create the task, so nothing was made. A person has to follow up.",
+            "not_requested": "The desk could not confirm that the sale is listed with nothing owed, so it asked for no new task."}.get(outcome, "")
+    text = done.format(at=when(read), status=status)
+    if outcome in ("linked", "requested") and status == "completed":
+        text += " A completed task does not close the sale."
+    return {"kind": action.get("kind"), "label": label, "tone": tone, "text": text}

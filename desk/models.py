@@ -13,7 +13,7 @@ from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Index, 
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base, utcnow
-from .wording import plain
+from .wording import plain, review_view
 
 
 class Facility(Base):
@@ -407,6 +407,9 @@ class AgentRun(Base):
     facts: Mapped[dict] = mapped_column(JSON, default=dict)
     packet: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     verified: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # what the desk did for this run after it checked the packet: for now, the staff review it asked the FMS for or linked. The model
+    # only asks; the desk decides, acts and reads the result back from the FMS.
+    actions: Mapped[list] = mapped_column(JSON, default=list)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     def reading(self) -> dict:
@@ -417,7 +420,7 @@ class AgentRun(Base):
         return {"notes": {"label": "Case notes", "intent": packet.get("intent"), "summary": plain(packet.get("summary")),
                           "reason": plain(packet.get("reason")), "needs_person": packet.get("needs_person")},
                 "records": [{"id": i, "kind": record_kind(i, facts.get(i)), "text": facts.get(i) if i.startswith("text:") else plain(facts.get(i))} for i in packet.get("records", [])],
-                "verified": self.verified}
+                "verified": self.verified, "actions": [review_view(a) for a in self.actions or [] if a.get("kind") == "staff_review"]}
 
 
 class AgentRequest(Base):
