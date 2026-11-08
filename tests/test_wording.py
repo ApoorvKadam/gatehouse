@@ -22,3 +22,7 @@ def test_a_time_a_feed_wrote_is_written_as_a_person_reads_it():
 def test_ordinary_words_and_amounts_are_left_alone():
     said = "Unit B-1042. The FMS ledger shows $0.00 owed. A STOP from this number is in effect until START."
     assert plain(said) == said and plain(None) is None
+
+
+def test_the_brackets_a_removed_id_leaves_behind_go_with_it():
+    assert plain("a $240.00 payment succeeded on Nov 8, 2026 (payment_ofK0Ux1ENYC), but the attempt (payment:1) is unconfirmed") == "a $240.00 payment succeeded on Nov 8, 2026, but the attempt is unconfirmed"

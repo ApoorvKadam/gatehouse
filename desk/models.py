@@ -13,7 +13,7 @@ from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Index, 
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base, utcnow
-from .wording import plain, review_view
+from .wording import action_view, plain
 
 
 class Facility(Base):
@@ -420,7 +420,7 @@ class AgentRun(Base):
         return {"notes": {"label": "Case notes", "intent": packet.get("intent"), "summary": plain(packet.get("summary")),
                           "reason": plain(packet.get("reason")), "needs_person": packet.get("needs_person")},
                 "records": [{"id": i, "kind": record_kind(i, facts.get(i)), "text": facts.get(i) if i.startswith("text:") else plain(facts.get(i))} for i in packet.get("records", [])],
-                "verified": self.verified, "actions": [review_view(a) for a in self.actions or [] if a.get("kind") == "staff_review"]}
+                "verified": self.verified, "actions": [v for v in (action_view(a) for a in self.actions or []) if v is not None]}
 
 
 class AgentRequest(Base):
