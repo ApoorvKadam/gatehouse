@@ -3,6 +3,7 @@ whatever the model asks for: which records it can see, which packets it accepts,
 click costs one run. The world is the preview's own, built through the real flows against the simulator."""
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 from types import SimpleNamespace
 
@@ -11,17 +12,17 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from desk import demo
+from desk import demo, investigator
 from desk.adapter.cubby import CubbyAdapter
 from desk.api import create_app
 from desk.config import Settings
 from desk.db import make_session_factory, utcnow
-from desk.investigator import (MAX_TURNS, NOT_ACCEPTED, TOOLS, fail_stranded_runs, investigate, packet_problem, run_view)
+from desk.investigator import (CALL_TIMEOUT, MAX_TURNS, NOT_ACCEPTED, TOOLS, UNCHECKED, fail_stranded_runs, investigate, packet_problem, run_view)
 from desk.lien_files import ensure_append_only
 from desk.messaging import STOP_WORDS, inbox
 from desk.models import AgentRun, Facility, InboundMessage, Lease, PaymentCommand, WorkItem
 from desk.rules import import_stitch
-from desk.sales import LISTED_PAID
+from desk.sales import AFTER_NOTICE, LISTED_PAID
 from desk.usage import PRICES, cost_usd
 
 from .conftest import FULL_KEY, ORLANDO
@@ -94,9 +95,11 @@ def test_dana_is_investigated_and_the_desk_checks_the_packet_itself(factory):
         assert started and run.status == "done" and run.turns == 2 and run.error is None
         assert (run.input_tokens, run.output_tokens) == (1800, 120)
         assert run.cost_usd == pytest.approx((1800 * 0.10 + 120 * 0.50) / 1_000_000)
-        # Gatehouse's own check, whatever Claude said: the sale item the desk opened is there and still open
+        # Gatehouse's own check, whatever Claude said: the sale item the packet cites is open, about Dana's unit, and read lately
         item = dana_facts(s)["sale"]
-        assert run.verified == {"checked": True, "supported": True, "work_item_id": item.id, "kind": LISTED_PAID, "other_sale_items": []}
+        assert run.verified["checked"] and run.verified["sale_listed_nothing_owed"] and run.verified["work_item_id"] == item.id
+        assert run.verified["lease_id"] == DANA_LEASE and run.verified["as_of"] and run.verified["payment_found"] is True
+        assert "nothing owed on unit B-1042" in run.verified["says"] and "reports a payment" in run.verified["says"]
         view = run_view(run, trace=True)
         assert view["intent"] == "sale_after_payment" and view["needs_person"] is True
         assert view["findings"][1]["records"][0]["text"].startswith("Sale still listed, nothing owed (open).")
@@ -106,7 +109,7 @@ def test_dana_is_investigated_and_the_desk_checks_the_packet_itself(factory):
         assert view["trace"][1]["calls"][0]["tool"] == "submit_case_packet"
         # the inbox shows the run beside the text
         shown = next(m for m in inbox(s, s.scalar(select(Facility).where(Facility.provider_id == ORLANDO))) if m["id"] == dana.id)
-        assert shown["investigation"]["status"] == "done" and shown["investigation"]["supported"] is True
+        assert shown["investigation"]["status"] == "done" and shown["investigation"]["verified"]["sale_listed_nothing_owed"] is True
 
 
 def test_a_packet_that_cites_a_record_no_lookup_returned_is_not_accepted(factory):
@@ -123,8 +126,8 @@ def test_a_claim_of_a_sale_after_payment_that_the_records_do_not_show_goes_to_a_
         lease = s.scalar(select(Lease).where(Lease.provider_customer_id == "cust_PriyaRmn01"))
         claim = packet("sale_after_payment", [{"statement": "Her unit is on the sale list.", "fact_ids": [f"lease:{lease.id}"]}], False, "")
         run, _ = investigate(s, Scripted([tool("get_account")], [tool("submit_case_packet", claim)]), priya, "request-0003")
-        assert run.status == "needs_person" and "no such sale" in run.error
-        assert run.verified == {"checked": True, "supported": False, "work_item_id": None, "kind": None, "other_sale_items": []}
+        assert run.status == "needs_person" and "do not confirm it" in run.error
+        assert run.verified["checked"] and run.verified["sale_listed_nothing_owed"] is False and run.verified["work_item_id"] is None
         assert run.packet["intent"] == "sale_after_payment"                      # Claude's packet is kept next to the desk's check
 
 
@@ -139,7 +142,7 @@ def test_a_text_that_tells_the_model_to_look_at_another_tenant_gets_nothing_of_t
         run, _ = investigate(s, model, dana, "request-0004")
         refused = run.trace[0]["calls"][1]
         assert refused["error"] and refused["records"] == []
-        assert not any("Bell" in t or "18500" in t or "$185" in t for t in run.facts.values())
+        assert not any("Bell" in t or "$185" in t for key, t in run.facts.items() if key != f"text:in:{dana.id}")
         assert "not one of this tenant's units" in model.calls[1]["messages"][-1]["content"][1]["content"]
         assert run.status == "done"
 
@@ -202,7 +205,8 @@ def test_the_prompt_follows_the_playbook_and_keeps_the_tenants_words_out_of_the_
             assert f"<{tag}>" in first["system"] and f"</{tag}>" in first["system"]
         assert dana.body not in first["system"] and "Dana" not in first["system"] and utcnow().strftime("%Y-%m-%d") in first["system"]
         assert all(word in first["system"] for word in STOP_WORDS) and "stop_request" in first["system"]
-        assert first["messages"][0] == {"role": "user", "content": f"<untrusted_input>\n{dana.body}\n</untrusted_input>"}
+        assert first["messages"][0] == {"role": "user", "content": f'<untrusted_input record_id="text:in:{dana.id}">\n{dana.body}\n</untrusted_input>'}
+        assert first["timeout"] == CALL_TIMEOUT
         assert model.calls[0]["system"] == model.calls[1]["system"] and model.calls[0]["tools"] == model.calls[1]["tools"]    # append-only
         assert all(t["strict"] and t["input_schema"]["additionalProperties"] is False for t in TOOLS)
         assert [t["name"] for t in TOOLS][-1] == "submit_case_packet" and len(TOOLS) == 6
@@ -239,7 +243,7 @@ def test_a_packet_with_a_made_up_id_is_sent_back_once_and_the_corrected_one_is_u
         reads = [tool("get_account", id_="a1"), tool("get_sale_status", {"lease_id": DANA_LEASE}, id_="a2"), tool("get_payments", {"lease_id": DANA_LEASE}, id_="a3")]
         model = Scripted(reads, [tool("submit_case_packet", made_up, id_="a4")], [tool("submit_case_packet", dana_packet(s), id_="a5")])
         run, _ = investigate(s, model, dana, "request-0019")
-        assert run.status == "done" and run.turns == 3 and run.packet["intent"] == "sale_after_payment" and run.verified["supported"] is True
+        assert run.status == "done" and run.turns == 3 and run.packet["intent"] == "sale_after_payment" and run.verified["sale_listed_nothing_owed"] is True
         sent_back = model.calls[2]["messages"][-1]["content"]
         assert sent_back == [{"type": "tool_result", "tool_use_id": "a4", "is_error": True, "content": NOT_ACCEPTED}]    # the made-up id is not repeated to the model
         assert run.trace[1]["calls"][0]["error"] == "a finding cites records no lookup returned in this run: lien_file:none"
@@ -260,6 +264,141 @@ def test_a_packet_rejected_on_the_last_turn_is_not_sent_back(factory):
         model = Scripted(*[[tool("get_account", id_=f"a{n}")] for n in range(MAX_TURNS - 1)], [tool("submit_case_packet", made_up, id_="last")])
         run, _ = investigate(s, model, text_of(s, "Dana Whitfield"), "request-0021")
         assert run.status == "needs_person" and run.turns == MAX_TURNS and "lien_file:none" in run.error and model.turns == []
+
+
+def test_the_text_under_investigation_is_a_record_from_the_first_turn(factory):
+    with factory() as s:
+        marcus = text_of(s, "Marcus Bell")
+        said = packet("stop_request", [{"statement": "The tenant wrote only STOP.", "fact_ids": [f"text:in:{marcus.id}"]}], False, "")
+        model = Scripted([tool("submit_case_packet", said, id_="a1")])
+        run, _ = investigate(s, model, marcus, "request-0022")
+        assert run.status == "done" and run.turns == 1                      # cited without a single lookup
+        assert run.facts[f"text:in:{marcus.id}"].endswith("(the text being investigated)")
+        assert model.calls[0]["messages"][0]["content"].startswith(f'<untrusted_input record_id="text:in:{marcus.id}">')
+
+
+def test_the_stop_state_is_a_record_the_model_reads_not_a_claim_in_the_prompt(factory):
+    with factory() as s:
+        for name, expected in (("Marcus Bell", "Texting this number is stopped. It wrote \"STOP\""), ("Dana Whitfield", "No STOP from this number is in effect.")):
+            model = Scripted([tool("get_recent_texts", id_="a1")], [tool("submit_case_packet", packet("other", [], True, "x"), id_="a2")])
+            run, _ = investigate(s, model, text_of(s, name), f"request-stop-{name[:4]}")
+            assert run.facts["texting:now"].startswith(expected), run.facts["texting:now"]
+        assert "will not text it again" not in model.calls[0]["system"]
+
+
+def test_a_figure_or_a_date_that_no_record_shows_sends_the_packet_back_and_the_corrected_one_is_used(factory):
+    with factory() as s:
+        dana = text_of(s, "Dana Whitfield")
+        invented = dana_packet(s)
+        invented["summary"] = "Dana paid $300 on Dec 25 and her unit is still on the sale list."
+        reads = [tool("get_account", id_="a1"), tool("get_sale_status", {"lease_id": DANA_LEASE}, id_="a2"), tool("get_payments", {"lease_id": DANA_LEASE}, id_="a3")]
+        model = Scripted(reads, [tool("submit_case_packet", invented, id_="a4")], [tool("submit_case_packet", dana_packet(s), id_="a5")])
+        run, _ = investigate(s, model, dana, "request-0023")
+        assert run.status == "done" and run.turns == 3
+        assert run.trace[1]["calls"][0]["error"] == "the packet names an amount or date that no record or text shows: $300.00, Dec 25"
+        assert "$300" not in model.calls[2]["messages"][-1]["content"][0]["content"]       # the invented figure is not repeated to the model
+        # the tenant's own figures are fair to report: her text is a record
+        says_so = dana_packet(s)
+        says_so["summary"] = "She says she paid $500."
+        dana.body = "I paid $500 over the phone and my unit is still going to auction."
+        s.commit()
+        again = Scripted(reads, [tool("submit_case_packet", says_so, id_="a6")])
+        assert investigate(s, again, dana, "request-0024", again=True)[0].status == "done"
+
+
+def test_a_sale_claim_is_confirmed_only_by_the_open_sale_item_the_packet_cites(factory):
+    with factory() as s:
+        dana = text_of(s, "Dana Whitfield")
+        item = dana_facts(s)["sale"]
+        cited = dana_packet(s)                                                 # built while the item is still the one the desk opened
+        reads = [tool("get_account", id_="a1"), tool("get_sale_status", {"lease_id": DANA_LEASE}, id_="a2"), tool("get_payments", {"lease_id": DANA_LEASE}, id_="a3")]
+
+        def ask(request_id, claim):
+            return investigate(s, Scripted(reads, [tool("submit_case_packet", claim, id_="a4")]), dana, request_id, again=True)[0]
+
+        lease_only = packet("sale_after_payment", [{"statement": "She has a unit.", "fact_ids": [dana_facts(s)["lease"]]}], True, "x")
+        run = ask("request-0025", lease_only)
+        assert run.status == "needs_person" and run.verified["sale_listed_nothing_owed"] is False and "cites no open sale item" in run.verified["says"]
+        item.note = "Not freshly verified: the FMS could not be read on the last pass."          # a stale item confirms nothing
+        s.commit()
+        run = ask("request-0026", cited)
+        assert run.status == "needs_person" and run.verified["work_item_id"] is None
+        item.note = None
+        item.kind = AFTER_NOTICE                                                                   # a balance is still owed
+        s.commit()
+        run = ask("request-0027", cited)
+        assert run.status == "needs_person" and run.verified["work_item_id"] == item.id and "not a sale listed with nothing owed" in run.verified["says"]
+        item.kind = LISTED_PAID
+        item.state = "closed"                                                                      # a closed item is not a sale that is listed now
+        s.commit()
+        run = ask("request-0028", cited)
+        assert run.status == "needs_person" and run.verified["work_item_id"] is None
+        item.state = "open"
+        s.commit()
+        assert ask("request-0028b", cited).status == "done"                                        # and the unchanged item confirms it
+
+
+def test_a_packet_for_any_other_intent_says_the_desk_did_not_check_it(factory):
+    with factory() as s:
+        run, _ = investigate(s, Scripted([tool("submit_case_packet", packet("other", [], True, "x"))]), text_of(s, "Dana Whitfield"), "request-0029")
+        assert run.verified == {"checked": False, "says": UNCHECKED}
+
+
+def test_a_text_that_is_not_matched_is_not_investigated_and_a_pending_hint_is_never_read(factory):
+    with factory() as s:
+        stranger = s.scalar(select(InboundMessage).where(InboundMessage.match_state != "matched"))
+        with pytest.raises(ValueError, match="not matched"):
+            investigate(s, Scripted(), stranger, "request-0030")
+        # a pending text names Dana in the webhook, which nobody has checked: it is not Dana's text
+        orlando = s.scalar(select(Facility).where(Facility.provider_id == ORLANDO))
+        s.add(InboundMessage(facility_id=orlando.id, provider_message_id="pending-hint-1", phone="+19995550100", phone_key="+19995550100", body="SECRET WORDS",
+                             received_at=utcnow(), match_state="pending", customer_provider_id="cust_DanaWhit01", customer_name="Dana Whitfield"))
+        s.commit()
+        model = Scripted([tool("get_recent_texts", id_="a1")], [tool("submit_case_packet", packet("other", [], True, "x"), id_="a2")])
+        run, _ = investigate(s, model, text_of(s, "Dana Whitfield"), "request-0031")
+        assert not any("SECRET WORDS" in t for t in run.facts.values())
+
+
+def test_a_request_id_that_collides_while_a_run_starts_cannot_return_another_texts_run(factory, monkeypatch):
+    with factory() as s:
+        dana, priya = text_of(s, "Dana Whitfield"), text_of(s, "Priya Raman")
+        s.add(AgentRun(inbound_id=priya.id, request_id="request-0032", model="claude-haiku-5-5", effort="medium", status="done"))
+        s.commit()
+        real, asked = investigator._existing, []
+
+        def blind_once(*args):                                              # the other request has not written its run yet when this one looks
+            asked.append(1)
+            return None if len(asked) == 1 else real(*args)
+
+        monkeypatch.setattr(investigator, "_existing", blind_once)
+        with pytest.raises(ValueError, match="another text"):
+            investigate(s, Scripted(), dana, "request-0032")
+
+
+def test_the_cost_of_a_call_is_kept_even_when_a_lookup_then_fails(factory, monkeypatch):
+    def broken(self, name, args):
+        raise RuntimeError("the database went away")
+
+    with factory() as s:
+        monkeypatch.setattr(investigator.Lookups, "call", broken)
+        run, _ = investigate(s, Scripted([tool("get_account", id_="a1")]), text_of(s, "Dana Whitfield"), "request-0033")
+        assert run.status == "failed" and (run.turns, run.input_tokens, run.output_tokens) == (1, 900, 60) and run.cost_usd > 0
+
+
+def test_a_run_the_desk_gave_up_as_cut_off_is_not_brought_back_by_a_late_finish(factory):
+    with factory() as s:
+        dana = text_of(s, "Dana Whitfield")
+
+        class Slow(Scripted):
+            def create(self, **kwargs):
+                with factory() as other:                                    # the desk restarts, finds no heartbeat, and gives the run up
+                    row = other.scalar(select(AgentRun).where(AgentRun.inbound_id == dana.id))
+                    row.status, row.error, row.finished_at = "failed", "The desk stopped before this run finished.", utcnow()
+                    other.commit()
+                return super().create(**kwargs)
+
+        run, _ = investigate(s, Slow([tool("submit_case_packet", packet("other", [], True, "x"))]), dana, "request-0034")
+        assert run.status == "failed" and run.packet is None and run.error == "The desk stopped before this run finished."
 
 
 # ---------------------------------------------------------------- once per text, and never two at the same time
@@ -298,7 +437,11 @@ def test_a_run_that_is_going_is_returned_not_started_twice_and_a_cut_off_one_is_
             s.add(AgentRun(inbound_id=dana.id, model="claude-haiku-5-5", effort="medium", status="running"))
             s.commit()
         s.rollback()
-        going.started_at = utcnow() - timedelta(minutes=6)                 # the process that started it stopped
+        going.started_at = utcnow() - timedelta(minutes=30)                # started long ago, but it is still beating
+        s.commit()
+        still, started = investigate(s, Scripted(), dana, "request-0014b", again=True)
+        assert not started and still.id == going.id and still.status == "running"
+        going.beat_at = utcnow() - timedelta(minutes=6)                    # the process that started it stopped
         s.commit()
         run, started = investigate(s, lookups_then_packet(s), dana, "request-0015", again=True)
         assert started and run.status == "done" and s.get(AgentRun, going.id).status == "failed"
@@ -324,7 +467,7 @@ def test_a_failed_model_call_is_recorded_not_raised(factory):
 
 
 def test_what_makes_a_packet_acceptable():
-    facts = {"lease:1": "Unit B-1042."}
+    facts = {"lease:1": "Unit B-1042. The FMS ledger showed $240.00 owed on Nov 8, 03:05 UTC."}
     good = packet("other", [{"statement": "A unit.", "fact_ids": ["lease:1"]}], False, "")
     assert packet_problem(good, facts) is None
     assert "intent" in packet_problem({**good, "intent": "refund_now"}, facts)
@@ -333,13 +476,27 @@ def test_what_makes_a_packet_acceptable():
     assert "no statement" in packet_problem({**good, "findings": [{"statement": "", "fact_ids": ["lease:1"]}]}, facts)
     assert "person is needed" in packet_problem({**good, "needs_person": "yes"}, facts)
     assert packet_problem("not a packet", facts) == "the packet is not an object"
+    assert "longer than" in packet_problem({**good, "summary": "x" * 301}, facts)
+    assert "more than" in packet_problem({**good, "findings": [{"statement": "A unit.", "fact_ids": ["lease:1"]}] * 9}, facts)
+    # figures and dates only as a record shows them
+    assert packet_problem({**good, "summary": "She owes $240 since Nov 8 (November 8th is the ledger date)."}, facts) is None
+    assert "$300.00" in packet_problem({**good, "summary": "She owes $300."}, facts)
+    assert "Dec 25" in packet_problem({**good, "reason": "The sale is on December 25."}, facts)
+    assert "$1,200.50" in packet_problem({**good, "findings": [{"statement": "She paid $1,200.50.", "fact_ids": ["lease:1"]}]}, facts)
     assert len(packet_problem(packet("other", [{"statement": "A unit.", "fact_ids": ["x" * 500]}]), facts)) < 150
 
 
 def test_the_cost_is_haiku_5_5s_price_and_nothing_else_is_priced():
     usage = SimpleNamespace(input_tokens=1_000_000, output_tokens=1_000_000)
     assert cost_usd("claude-haiku-5-5", usage) == pytest.approx(0.60)
-    assert list(PRICES) == ["claude-haiku-5-5"] and cost_usd("claude-sonnet-5-5", usage) == 0.0       # no Sonnet anywhere
+    assert list(PRICES) == ["claude-haiku-5-5"]                                                          # no Sonnet anywhere
+
+
+def test_a_model_without_a_price_is_logged_with_a_warning_not_as_free_in_silence(caplog):
+    usage = SimpleNamespace(input_tokens=1000, output_tokens=1000)
+    with caplog.at_level(logging.WARNING, logger="desk.usage"):
+        assert cost_usd("claude-sonnet-5-5", usage) == 0.0
+    assert "no price is recorded for claude-sonnet-5-5" in caplog.text
 
 
 # ---------------------------------------------------------------- the routes
@@ -366,7 +523,7 @@ def test_the_route_runs_claude_once_and_shows_the_run(fms_url, sim):
         with client.app.state.session_factory() as s:
             model.turns = lookups_then_packet(s).turns
         done = client.post(f"/api/inbox/{ids['Dana Whitfield']}/investigate", json=ask, headers=operator)
-        assert done.status_code == 200 and done.json()["status"] == "done" and done.json()["verified"]["supported"] is True
+        assert done.status_code == 200 and done.json()["status"] == "done" and done.json()["verified"]["sale_listed_nothing_owed"] is True
         repeat = client.post(f"/api/inbox/{ids['Dana Whitfield']}/investigate", json={"request_id": "request-api-02"}, headers=operator)
         assert repeat.json()["id"] == done.json()["id"] and len(model.calls) == 2                                # no new run, no new call
         run = client.get(f"/api/agent-runs/{done.json()['id']}").json()

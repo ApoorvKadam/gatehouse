@@ -21,7 +21,7 @@ from .adapter.cubby import CubbyAdapter
 from .cases import queue, sync_facility
 from .config import Settings
 from .conversation import Conversation
-from .investigator import investigate, run_view
+from .investigator import CALL_TIMEOUT, investigate, run_view
 from .lien_files import ensure_append_only, evaluate_case, record_evidence, replay
 from .liens import FL_R1, ValidationError
 from .db import bind_to_fms, make_session_factory, refresh_binding
@@ -108,7 +108,8 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
                                        marketplace_url=settings.marketplace_url or settings.fms_base_url)
     if chat_client is None and os.environ.get("ANTHROPIC_API_KEY"):
         import anthropic
-        chat_client = anthropic.Anthropic()
+        # a call that hangs is cut off after a minute and tried once more, so no run sits on a dead connection for ten
+        chat_client = anthropic.Anthropic(timeout=CALL_TIMEOUT, max_retries=1)
     # Conversations live in this process: a restart ends them (their proposals and payments are in the database).
     # Running more than one API process needs them stored, and the channel in front must route each tenant to one.
     conversations: dict[str, Conversation] = {}

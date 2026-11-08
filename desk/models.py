@@ -386,6 +386,8 @@ class AgentRun(Base):
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
     cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    # written at the start of every model turn: a run that has not beaten for a while was cut off, however long ago it started
+    beat_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # every model turn and every lookup it made, with the record ids the lookup returned
     trace: Mapped[list] = mapped_column(JSON, default=list)
