@@ -117,3 +117,9 @@ def reply_view(action: dict) -> dict:
     label, tone = REPLY_OUTCOMES.get(action.get("outcome"), ("Reply", "plain"))
     return {"kind": "reply", "label": label, "tone": tone, "text": action.get("reason") or "",
             "body": action.get("body") or "", "parts": list(action.get("parts") or []), "dropped": list(action.get("dropped") or [])}
+
+
+# What went wrong in an evaluation scenario, in the order the Evaluation page lists the kinds. Each scenario names one of these keys
+# (desk/scenarios.py and desk/evaluate.py), and the page gives each kind its own colour.
+TROUBLES = {"normal": "Nothing goes wrong", "no": "The FMS says no or fails", "late": "The answer is late or lost",
+            "twice": "Two things at once", "money": "Money moves later", "disagree": "The records disagree"}

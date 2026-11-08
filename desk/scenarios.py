@@ -62,21 +62,21 @@ class Run:
             PaymentService(session, adapter).reconcile_all()
 
 
-def scenario(name: str, fms: str):
+def scenario(name: str, fms: str, trouble: str):
     def wrap(fn: Callable[[Run], tuple[str, str, bool]]):
-        fn.title, fn.fms = name, fms
+        fn.title, fn.fms, fn.trouble = name, fms, trouble
         return fn
     return wrap
 
 
-@scenario("Payment applied", "approves and applies at once")
+@scenario("Payment applied", "approves and applies at once", "normal")
 def approved(run: Run):
     session, adapter, case = run.start()
     c = PaymentService(session, adapter).take_payment(case.id, DANA_CARD, Authorization.new(True, 24000, 24000))
     return c.state, tenant_message(c), c.state == "CONFIRMED" and session.get(DelinquencyCase, case.id).state == "paid"
 
 
-@scenario("Ledger lags the payment", "says SUCCEEDED, ledger updates three reads later")
+@scenario("Ledger lags the payment", "says SUCCEEDED, ledger updates three reads later", "late")
 def late(run: Run):
     session, adapter, case = run.start("late_application", lag=3)
     c = PaymentService(session, adapter).take_payment(case.id, DANA_CARD, Authorization.new(True, 24000, 24000))
@@ -86,14 +86,14 @@ def late(run: Run):
     return f"{first}, then {final}", told, first == "AWAITING_APPLICATION" and final == "CONFIRMED"
 
 
-@scenario("Card declined", "HTTP 200 with status DECLINED")
+@scenario("Card declined", "HTTP 200 with status DECLINED", "no")
 def declined(run: Run):
     session, adapter, case = run.start("decline")
     c = PaymentService(session, adapter).take_payment(case.id, DANA_CARD, Authorization.new(True, 24000, 24000))
     return c.state, tenant_message(c), c.state == "DECLINED" and session.get(DelinquencyCase, case.id).state == "open"
 
 
-@scenario("Gateway pending", "PENDING, settles two reads later")
+@scenario("Gateway pending", "PENDING, settles two reads later", "late")
 def pending(run: Run):
     session, adapter, case = run.start("pending_then_succeed", lag=2)
     c = PaymentService(session, adapter).take_payment(case.id, DANA_CARD, Authorization.new(True, 24000, 24000))
@@ -103,7 +103,7 @@ def pending(run: Run):
     return f"{first}, then {final}; {run.fms_payments(DANA)} charge", told, final == "CONFIRMED" and run.fms_payments(DANA) == 1
 
 
-@scenario("Response lost after charging", "charges and applies, answers too late")
+@scenario("Response lost after charging", "charges and applies, answers too late", "late")
 def lost(run: Run):
     session, adapter, case = run.start("lose_response")
     service = PaymentService(session, adapter)
@@ -116,14 +116,14 @@ def lost(run: Run):
         tenant_message(c), held == "NEEDS_STAFF" and suggested is not None and c.state == "CONFIRMED" and run.fms_payments(DANA) == 1
 
 
-@scenario("FMS refuses the request", "HTTP 422 in its error envelope")
+@scenario("FMS refuses the request", "HTTP 422 in its error envelope", "no")
 def refused(run: Run):
     session, adapter, case = run.start("reject")
     c = PaymentService(session, adapter).take_payment(case.id, DANA_CARD, Authorization.new(True, 24000, 24000))
     return f"{c.state}, account free", tenant_message(c), c.state == "REJECTED" and run.fms_payments(DANA) == 0
 
 
-@scenario("FMS fails mid-request", "HTTP 500, nothing recorded")
+@scenario("FMS fails mid-request", "HTTP 500, nothing recorded", "no")
 def unknown(run: Run):
     session, adapter, case = run.start("server_error")
     service = PaymentService(session, adapter)
@@ -141,7 +141,7 @@ def unknown(run: Run):
         held == "NEEDS_STAFF" and blocked and c.state == "CLEARED_BY_STAFF" and run.fms_payments(DANA) == 0
 
 
-@scenario("Counter payment at the same time", "ours applies late; a cash payment lands first")
+@scenario("Counter payment at the same time", "ours applies late; a cash payment lands first", "twice")
 def counter(run: Run):
     session, adapter, case = run.start("late_application", lag=3)
     service = PaymentService(session, adapter)
@@ -160,7 +160,7 @@ def counter(run: Run):
         waiting == "AWAITING_APPLICATION" and held == "NEEDS_STAFF" and c.state == "CONFIRMED"
 
 
-@scenario("Same yes sent twice", "approves")
+@scenario("Same yes sent twice", "approves", "twice")
 def twice(run: Run):
     session, adapter, case = run.start()
     auth = Authorization.new(True, 24000, 10000)
@@ -169,7 +169,7 @@ def twice(run: Run):
     return f"one command, {run.fms_payments(DANA)} charge", tenant_message(a), a.id == b.id and run.fms_payments(DANA) == 1
 
 
-@scenario("Balance changed after the yes", "a late fee posts before submission")
+@scenario("Balance changed after the yes", "a late fee posts before submission", "twice")
 def changed(run: Run):
     session, adapter, case = run.start()
     run.sim("/sim/charges", {"leaseId": DANA, "amount": 2500, "description": "Late fee"})
@@ -177,7 +177,7 @@ def changed(run: Run):
     return c.state, tenant_message(c), c.state == "NEEDS_REAUTHORIZATION" and run.fms_payments(DANA) == 0
 
 
-@scenario("Payment returned later", "clears, then comes back as a direct debit return")
+@scenario("Payment returned later", "clears, then comes back as a direct debit return", "money")
 def returned(run: Run):
     session, adapter, case = run.start()
     c = PaymentService(session, adapter).take_payment(case.id, DANA_CARD, Authorization.new(True, 24000, 24000))
@@ -188,7 +188,7 @@ def returned(run: Run):
     return f"{c.state}, case {state}", tenant_message(c), c.state == "RETURNED" and state == "reopened"
 
 
-@scenario("Key without payment rights", "HTTP 403")
+@scenario("Key without payment rights", "HTTP 403", "no")
 def read_only(run: Run):
     session, _, case = run.start()
     limited = CubbyAdapter(run.fms_url, "sim_org_northstar_readonly", timeout_seconds=run.timeout)
