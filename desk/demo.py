@@ -18,8 +18,10 @@ from sqlalchemy.orm import Session, sessionmaker
 from .access import reconcile_access
 from .adapter import FMSAdapter
 from .cases import current_case, sync_facility
+from .db import utcnow
 from .lien_files import evaluate_case, record_evidence
-from .models import AccessPolicy, DelinquencyCase, DemoSeed, Facility, Lease, LedgerSnapshot
+from .messaging import match_pending, receive_text, send_text
+from .models import AccessPolicy, DelinquencyCase, DemoSeed, Facility, InboundMessage, Lease, LedgerSnapshot
 from .payments import IdentityClaim, PaymentService, check_identity, confirm, propose
 from .sales import reconcile_sales
 
@@ -56,6 +58,7 @@ def build(factory: sessionmaker[Session], adapter: FMSAdapter, fms_base_url: str
         access_world(session, adapter, sim, run_id)
         for facility in session.scalars(select(Facility).where(Facility.provider_id.in_((ORLANDO, ALBANY))).order_by(Facility.id)):
             reconcile_sales(session, adapter, facility, run_id, feed_url)
+        tenant_texts(session, adapter, sim)
         session.add(DemoSeed(id=1))
         session.commit()
     sim.close()
@@ -199,6 +202,34 @@ def new_york_file(session: Session, adapter: FMSAdapter) -> None:
     """Teo's unit is in Albany. New York has no reviewed rule version here, so the file goes to counsel."""
     evaluate_case(session, adapter, case_of(session, "lease_VargD0310"))
     session.commit()
+
+
+def tenant_texts(session: Session, adapter: FMSAdapter, sim: httpx.Client) -> None:
+    """Four people text Orlando's number. Each text goes through the simulator, which answers with the SMS Received payload
+    Cubby would send, and the desk keeps it the way its webhook receiver does:
+    - a stranger asks about gate hours; Cubby texts only customers, so the desk cannot answer through it;
+    - Marcus texts STOP, and when the desk later tries to tell him about his returned payment, Gatehouse refuses;
+    - Priya asks about her payment plan, and the front desk answers;
+    - Dana asks why her unit is on the sale list after she paid, which is the sale story above from her side."""
+    orlando = session.scalar(select(Facility).where(Facility.provider_id == ORLANDO))
+    now = utcnow()
+    for phone, body, minutes_ago in (
+            ("+13215550177", "Hi, what time does the gate open on Sundays?", 190),
+            ("+14075550187", "STOP", 95),
+            ("+14075550119", "Hi, is my payment plan for A-012 still active? I got a reminder text.", 40),
+            ("+14075550142", "I paid my balance over the phone the other day and now I got a notice that my unit is going to auction. "
+                             "Can you check this please?", 12)):
+        answer = sim.post("/sim/messages/inbound", json={"facilityId": ORLANDO, "from": phone, "body": body,
+                                                         "receivedAt": (now - timedelta(minutes=minutes_ago)).isoformat()})
+        answer.raise_for_status()
+        receive_text(session, adapter.inbound_text(answer.json()["data"]["webhook"]), None, (ORLANDO, ALBANY))
+    match_pending(session, adapter, orlando)
+    texted = {m.phone_key: m for m in session.scalars(select(InboundMessage).where(InboundMessage.facility_id == orlando.id))}
+    send_text(session, adapter, orlando, "cust_PriyaRmn01", "Hi Priya, yes. Your payment plan for A-012 is on file. "
+              "Call the office if anything changes.", DESK, reply_to=texted["+14075550119"])
+    send_text(session, adapter, orlando, "cust_MarcBell01", "Hi Marcus, the bank returned your $185 payment for C-207, so the account "
+              "is past due again. Please call the office.", DESK, reply_to=texted["+14075550187"])
+    send_text(session, adapter, orlando, None, "The gate opens at 6 AM every day, Sundays too.", DESK, reply_to=texted["+13215550177"])
 
 
 # Northstar's lockout rule as its operations manual states it (synthetic). Albany has none recorded, on purpose: a
