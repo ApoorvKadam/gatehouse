@@ -41,8 +41,8 @@ NOT_ACCEPTED = ("The packet was not accepted. Every record_id you list must be o
 CALL_TIMEOUT = 60.0
 STRANDED_AFTER = timedelta(minutes=5)
 # what the desk says about a packet it could not check against its own records
-UNCHECKED = ("Claude's reading. The desk checked only that the records it lists exist and that every amount and date in the summary and the "
-             "reason appears in them or in the tenant's message.")
+UNCHECKED = ("Claude's reading. The desk checked only that the records it lists exist and that the dollar amounts and dates it can read in "
+             "the summary and the reason appear in them or in the tenant's message.")
 INTENTS = ("sale_after_payment", "payment_status", "balance_question", "access_problem", "stop_request", "other")
 MAX_SUMMARY, MAX_RECORDS = 400, 8
 
@@ -275,6 +275,9 @@ MONEY = re.compile(r"\$\s?(\d[\d,]*)(?:\.(\d{2}))?|\b(\d[\d,]*)(?:\.(\d{2}))?\s*
 # Nov 8, Nov. 8th, November 8, 2026
 NAMED = re.compile(r"\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|Sept?(?:ember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
                    r"\.? (\d{1,2})(?:st|nd|rd|th)?\b(?:,? (\d{4})\b)?", re.I)
+# 8 November, 8th of Nov 2026
+DAYFIRST = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|Sept?(?:ember)?"
+                      r"|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\b\.?(?:,? (\d{4})\b)?", re.I)
 # 11/8, 11/8/2026, 2026-11-08
 NUMERIC = re.compile(r"\b(\d{1,2})/(\d{1,2})(?:/(\d{4}|\d{2}))?\b")
 ISO = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
@@ -292,6 +295,7 @@ def amounts(text: str) -> set[int]:
 def days(text: str) -> set[tuple[str, int, int | None]]:
     """The calendar dates a text names, as month, day and year (None when the text gives no year)."""
     found = {(m.group(1)[:3].lower(), int(m.group(2)), int(m.group(3)) if m.group(3) else None) for m in NAMED.finditer(text)}
+    found |= {(m.group(2)[:3].lower(), int(m.group(1)), int(m.group(3)) if m.group(3) else None) for m in DAYFIRST.finditer(text)}
     for m in NUMERIC.finditer(text):
         month, day = int(m.group(1)), int(m.group(2))
         if 1 <= month <= 12 and 1 <= day <= 31:
@@ -307,7 +311,8 @@ def ungrounded(packet: dict, facts: dict[str, str], tenant_text: str = "") -> li
     """The amounts and dates in the packet's own words (the summary and the reason) that none of the records it lists shows. The
     message under investigation counts too, since staff see it beside the packet.
     A date with a year must match a record's date of that year; a date without one matches the day in any year. Claude may pick and order what the records say;
-    it may not bring a figure or a date of its own. Amounts spelled out in words are not read."""
+    it may not bring a figure or a date of its own. Only the common written forms are read: dollar amounts with a dollar sign or the
+    word dollars, and dates as month and day (either order), as numbers or as an ISO date. Anything spelled out in words is not."""
     shown = " ".join([facts[i] for i in packet["records"]] + [facts.get(tenant_text, "")])
     words = " ".join([packet["summary"], packet["reason"]])
     known = days(shown)
@@ -529,17 +534,29 @@ def _going(session: Session, inbound: InboundMessage) -> AgentRun | None:
     return session.scalar(select(AgentRun).where(AgentRun.inbound_id == inbound.id, AgentRun.status == "running"))
 
 
-def _answer(session: Session, request: AgentRequest | None, run: AgentRun) -> AgentRun:
-    """This request's answer is this run: a retry of the request gets it again, whatever else has happened to the text since."""
-    if request is not None and request.run_id is None:
-        request.run_id = run.id
-        session.commit()
+def _answered(session: Session, request_id: str) -> AgentRun | None:
+    """The run this request id was answered with, if it was."""
+    run_id = session.scalar(select(AgentRequest.run_id).where(AgentRequest.request_id == request_id))
+    run = session.get(AgentRun, run_id) if run_id is not None else None
+    if run is not None:
+        session.refresh(run)
     return run
 
 
-def _latest(session: Session, inbound: InboundMessage) -> AgentRun | None:
-    """The newest run this text has had."""
-    return session.scalar(select(AgentRun).where(AgentRun.inbound_id == inbound.id).order_by(AgentRun.generation.desc()))
+def _take(session: Session, request_id: str, run_id: int) -> bool:
+    """Record the run this request is answered with, unless an earlier copy of the same request was answered first. One
+    statement decides it, so two copies of a request cannot be answered with two runs."""
+    done = session.execute(update(AgentRequest).where(AgentRequest.request_id == request_id, AgentRequest.run_id.is_(None)).values(run_id=run_id))
+    return done.rowcount == 1
+
+
+def _reply(session: Session, request_id: str | None, run: AgentRun) -> AgentRun:
+    """Answer the request with this run, or with the run an earlier copy of it was already answered with."""
+    if not request_id:
+        return run
+    took = _take(session, request_id, run.id)
+    session.commit()
+    return run if took else (_answered(session, request_id) or run)
 
 
 def investigate(session: Session, client, inbound: InboundMessage, request_id: str | None, again: bool = False) -> tuple[AgentRun, bool]:
@@ -550,28 +567,29 @@ def investigate(session: Session, client, inbound: InboundMessage, request_id: s
     if inbound.match_state != "matched" or not inbound.customer_provider_id or inbound.facility_id is None:
         raise ValueError("this text is not matched to one tenant at a facility")
     request = _claim(session, inbound, request_id)
-    if request is not None and request.run_id is not None:
-        answered = session.get(AgentRun, request.run_id)
-        session.refresh(answered)
-        return answered, False
+    if request is not None:
+        earlier = _answered(session, request_id)
+        if earlier is not None:
+            return earlier, False
     fail_stranded_runs(session)
-    found = _going(session, inbound) or (None if again else _latest(session, inbound))
+    going, last = _going(session, inbound), _latest(session, inbound)     # one look at the latest run decides both the answer and the number
+    found = going or (None if again else last)
     if found is not None:
-        return _answer(session, request, found), False
-    last = _latest(session, inbound)
+        return _reply(session, request_id, found), False
     row = AgentRun(inbound_id=inbound.id, generation=last.generation + 1 if last else 1, model=MODEL, effort=EFFORT)
     session.add(row)
     try:
-        session.flush()             # the unique constraints decide a race here
-        if request is not None:
-            request.run_id = row.id
+        session.flush()             # the unique constraints decide a race between two requests here
+        if request_id and not _take(session, request_id, row.id):
+            session.rollback()      # an earlier copy of this request was answered while this one was working out its run: no run is started
+            return _answered(session, request_id), False
         session.commit()
     except IntegrityError:
         session.rollback()          # another request started a run a moment ago
         winner = _going(session, inbound) or _latest(session, inbound)
         if winner is None:
             raise
-        return _answer(session, _request(session, request_id) if request_id else None, winner), False
+        return _reply(session, request_id, winner), False
     try:
         Investigation(session, client, row, scope_of(session, inbound), inbound).run()
     except Exception as exc:

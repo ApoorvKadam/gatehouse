@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from desk import demo, investigator
@@ -489,6 +489,23 @@ def test_two_requests_that_both_find_no_run_cannot_both_start_the_first_one(fact
         assert not started and second.id == first.id and model.calls == []         # the first run's number was taken, so no second model run
 
 
+def test_two_copies_of_one_request_are_answered_with_one_run(factory, monkeypatch):
+    with factory() as s:
+        dana = text_of(s, "Dana Whitfield")
+        first, _ = investigate(s, lookups_then_packet(s), dana, "request-0046")            # the request is answered with this run
+        real, asked = investigator._answered, []
+
+        def blind_once(session, request_id):                                    # a second copy looked before the first one was answered
+            asked.append(1)
+            return None if len(asked) == 1 else real(session, request_id)
+
+        monkeypatch.setattr(investigator, "_answered", blind_once)
+        model = Scripted()
+        second, started = investigate(s, model, dana, "request-0046", again=True)     # it would start run 2, but the request has its answer
+        assert not started and second.id == first.id and model.calls == []
+        assert s.scalar(select(func.count()).select_from(AgentRun).where(AgentRun.inbound_id == dana.id)) == 1       # no second run was left behind
+
+
 def test_the_tenants_words_cannot_close_the_block_they_are_sent_in(factory):
     with factory() as s:
         dana = text_of(s, "Dana Whitfield")
@@ -603,6 +620,8 @@ def test_what_makes_a_packet_acceptable():
     assert "$900.00" in packet_problem({**good, "summary": "She paid 900 dollars."}, facts)
     assert "Dec 25" in packet_problem({**good, "reason": "The sale is on December 25."}, facts)
     assert "Dec 25, 2030" in packet_problem({**good, "reason": "The sale is on 12/25/2030."}, facts)
+    assert "Dec 25, 2030" in packet_problem({**good, "reason": "The sale is on 25 December 2030."}, facts)            # day first, as in much of the world
+    assert packet_problem({**good, "reason": "Owed since 8 November 2026."}, facts) is None                          # the same day written day first
     assert "Nov 8, 2031" in packet_problem({**good, "reason": "She has owed it since Nov 8, 2031."}, facts)       # the same day of another year
     yearless = {"lease:1": "Unit B-1042. The tenant says the balance has been owed since Nov 8."}
     assert packet_problem({**good, "reason": "Owed since Nov 8."}, yearless) is None
