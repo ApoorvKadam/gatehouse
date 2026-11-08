@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -305,11 +305,11 @@ def outbound_view(m: OutboundMessage) -> dict:
             "created_at": m.created_at, "sent_at": m.sent_at}
 
 
-def inbox(session: Session, facility: Facility, limit: int = 50) -> list[dict]:
+def inbox(session: Session, facility: Facility, limit: int = 50, offset: int = 0) -> list[dict]:
     """The facility's texts, newest first, each with the tenant it was matched to, that tenant's leases and open cases,
     and what the desk sent back."""
     rows = session.scalars(select(InboundMessage).where(InboundMessage.facility_id == facility.id).order_by(
-        InboundMessage.received_at.desc(), InboundMessage.id.desc()).limit(limit)).all()
+        InboundMessage.received_at.desc(), InboundMessage.id.desc()).limit(limit).offset(offset)).all()
     out = []
     for m in rows:
         leases = []
@@ -328,9 +328,12 @@ def inbox(session: Session, facility: Facility, limit: int = 50) -> list[dict]:
     return out
 
 
-def unrouted(session: Session, limit: int = 50, offset: int = 0) -> list[dict]:
-    """Texts kept without a facility, so they are not lost while no facility is set for the number that received them."""
-    rows = session.scalars(select(InboundMessage).where(InboundMessage.facility_id.is_(None)).order_by(
+def unrouted(session: Session, served: Collection[str], limit: int = 50, offset: int = 0) -> list[dict]:
+    """Texts kept without a facility, so they are not lost while no facility is set for the number that received them. A text
+    that named a facility the desk no longer serves stays in the database but is not listed."""
+    rows = session.scalars(select(InboundMessage).where(
+        InboundMessage.facility_id.is_(None),
+        or_(InboundMessage.facility_provider_id.is_(None), InboundMessage.facility_provider_id.in_(list(served)))).order_by(
         InboundMessage.received_at.desc(), InboundMessage.id.desc()).limit(limit).offset(offset)).all()
     return [{"id": m.id, "from": m.phone, "to": m.to_number, "body": m.body, "received_at": m.received_at, "note": m.match_note}
             for m in rows]

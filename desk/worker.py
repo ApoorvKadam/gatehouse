@@ -30,8 +30,9 @@ def run_once(factory: sessionmaker[Session], adapter: FMSAdapter, run_id: str = 
         service = PaymentService(session, adapter)
         checked = service.reconcile_all()
         failures = service.read_failures
-        file_unrouted(session, text_numbers)
-        for facility in bound_facilities(session):
+        facilities = bound_facilities(session)
+        file_unrouted(session, text_numbers, {f.provider_id for f in facilities})
+        for facility in facilities:
             result = reconcile_access(session, adapter, facility, run_id)
             failures += len(result.failures)
             if result.opened or result.closed:

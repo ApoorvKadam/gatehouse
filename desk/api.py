@@ -282,15 +282,16 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         return {"stored": row is not None}
 
     @app.get("/api/facilities/{facility_id}/inbox")
-    def facility_inbox(facility_id: str, limit: int = 50, session: Session = Depends(db), _: str = Depends(viewer)):
+    def facility_inbox(facility_id: str, limit: int = 50, offset: int = 0, session: Session = Depends(db), _: str = Depends(viewer)):
         """The texts people sent this facility, newest first, each matched to a tenant or marked as not matched."""
         facility = known_facility(session, facility_id)
-        return {"messages": inbox(session, facility, min(max(limit, 1), 200)) if facility else []}
+        return {"messages": inbox(session, facility, min(max(limit, 1), 200), max(offset, 0)) if facility else []}
 
     @app.get("/api/inbox/unrouted")
     def unrouted_texts(limit: int = 50, offset: int = 0, session: Session = Depends(db), _: str = Depends(viewer)):
         """Texts kept without a facility because no facility is set for the number that received them."""
-        return {"messages": unrouted(session, min(max(limit, 1), 200), max(offset, 0))}
+        binding = session.get(DeskBinding, 1)
+        return {"messages": unrouted(session, binding.facility_ids if binding else [], min(max(limit, 1), 200), max(offset, 0))}
 
     @app.post("/api/inbox/{message_id}/reply")
     def reply_to_text(message_id: int, body: ReplyIn, session: Session = Depends(db), _: str = Depends(operator)):

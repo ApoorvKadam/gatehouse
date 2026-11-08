@@ -30,9 +30,14 @@ def make_session_factory(url: str | None = None) -> sessionmaker[Session]:
     return sessionmaker(engine, expire_on_commit=False)
 
 
-def same_account(before: set, now: set) -> bool:
-    """The stored facilities and the ones the key sees now are one account when one list contains the other and they share a
-    facility. A key that sees some old and some new facilities may be another operator on one site, so a person rebinds."""
+def same_account(before_facilities, now_facilities, before_orgs=(), now_orgs=()) -> bool:
+    """Is what the key sees now the account the desk was bound to? When the FMS names organizations on both sides they are
+    the account's identity: the same organizations are the same account whichever facilities come and go, and a key that
+    sees different organizations is another account. Without them, one facility list must contain the other and they must
+    share a facility, so a key that sees some old and some new facilities is left to a person to rebind."""
+    if before_orgs and now_orgs:
+        return set(before_orgs) == set(now_orgs)
+    before, now = set(before_facilities), set(now_facilities)
     return bool(before & now) and (before <= now or now <= before)
 
 
@@ -67,7 +72,7 @@ def bind_to_fms(factory, adapter, fms_base_url: str, attempts: int = 10) -> None
             session.add(DeskBinding(id=1, fms_base_url=fms_base_url, facility_ids=facilities, org_ids=orgs))
         else:
             # one kind of change at a time: facilities added, or facilities removed
-            if binding.fms_base_url != fms_base_url or not same_account(set(binding.facility_ids), set(facilities)):
+            if binding.fms_base_url != fms_base_url or not same_account(binding.facility_ids, facilities, binding.org_ids or [], orgs):
                 raise RuntimeError("this database belongs to another FMS account; each operator needs its own database")
             binding.facility_ids, binding.org_ids = facilities, orgs
         session.commit()
@@ -82,8 +87,8 @@ def refresh_binding(session, adapter) -> None:
     seen = adapter.facilities()
     facilities = sorted(f["facilityId"] for f in seen)
     binding = session.get(DeskBinding, 1)
-    if binding is None or not same_account(set(binding.facility_ids), set(facilities)):
+    orgs = sorted({f["organizationId"] for f in seen if f.get("organizationId")})
+    if binding is None or not same_account(binding.facility_ids, facilities, binding.org_ids or [], orgs):
         return
-    binding.facility_ids = facilities
-    binding.org_ids = sorted({f["organizationId"] for f in seen if f.get("organizationId")})
+    binding.facility_ids, binding.org_ids = facilities, orgs
     session.commit()

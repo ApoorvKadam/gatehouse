@@ -162,12 +162,12 @@ def test_a_text_from_a_number_shared_by_several_facilities_is_kept_unrouted_unti
     m = receive_text(session, text, None, SERVED)
     assert m is not None and m.facility_id is None and m.match_state == "unrouted" and "DESK_TEXT_NUMBERS" in m.match_note
     assert match_pending(session, adapter, desk) == 0 and inbox(session, desk) == []
-    [listed] = unrouted(session)
+    [listed] = unrouted(session, SERVED)
     assert listed["from"] == DANA and listed["to"] == "+14075550100" and "DESK_TEXT_NUMBERS" in listed["note"]
     # with the number set to a facility, the next such text is filed under it, and so is the one that was waiting
     filed = receive_text(session, adapter.inbound_text({**shared, "messageId": "SM-other"}), {"(407) 555-0100": ORLANDO}, SERVED)
     assert filed is not None and filed.facility_id == desk.id and filed.match_state == "pending"
-    assert file_unrouted(session, {"(407) 555-0100": ORLANDO}, SERVED) == 1 and unrouted(session) == []
+    assert file_unrouted(session, {"(407) 555-0100": ORLANDO}, SERVED) == 1 and unrouted(session, SERVED) == []
     session.refresh(m)
     assert (m.facility_id, m.match_state) == (desk.id, "pending")
 
@@ -655,16 +655,41 @@ def test_a_start_that_is_waiting_unrouted_cannot_lift_a_stop(session, desk):
 def test_the_unrouted_list_can_be_paged(sim, adapter, session):
     for n in range(3):
         arrive(session, adapter, {**texts_in(sim, DANA, f"text {n}"), "facilityId": None})
-    assert [m["body"] for m in unrouted(session, 2, 0)] == ["text 2", "text 1"]          # newest first
-    assert [m["body"] for m in unrouted(session, 2, 2)] == ["text 0"]
+    assert [m["body"] for m in unrouted(session, SERVED, 2, 0)] == ["text 2", "text 1"]          # newest first
+    assert [m["body"] for m in unrouted(session, SERVED, 2, 2)] == ["text 0"]
 
 
-def test_a_refresh_never_moves_the_desk_to_another_account(adapter, session):
-    session.add(DeskBinding(id=1, fms_base_url="http://fms", facility_ids=["fac_gone", ORLANDO], org_ids=["org_Northstar01"]))
+def test_a_refresh_follows_the_same_organization_and_never_moves_the_desk_to_another_one(adapter, session):
+    session.add(DeskBinding(id=1, fms_base_url="http://fms", facility_ids=["fac_gone", ORLANDO], org_ids=["org_Other"]))
     session.commit()
-    refresh_binding(session, adapter)                    # the key sees ORLANDO and ALBANY: some old, some new, so a person decides
+    refresh_binding(session, adapter)                    # the key sees another organization: nothing changes
+    assert sorted(session.get(DeskBinding, 1).facility_ids) == sorted(["fac_gone", ORLANDO])
+    session.get(DeskBinding, 1).org_ids = ["org_Northstar01"]
+    session.commit()
+    refresh_binding(session, adapter)                    # the same organization: its facilities, whichever came and went
+    assert sorted(session.get(DeskBinding, 1).facility_ids) == sorted(SERVED)
+
+
+def test_without_organization_ids_a_mixed_list_is_left_to_a_person(adapter, session):
+    session.add(DeskBinding(id=1, fms_base_url="http://fms", facility_ids=["fac_gone", ORLANDO], org_ids=[]))
+    session.commit()
+    refresh_binding(session, adapter)                    # some old, some new, and no organization to go by
     assert sorted(session.get(DeskBinding, 1).facility_ids) == sorted(["fac_gone", ORLANDO])
     session.get(DeskBinding, 1).facility_ids = [ORLANDO]
     session.commit()
     refresh_binding(session, adapter)                    # one more facility than before: the same account
     assert sorted(session.get(DeskBinding, 1).facility_ids) == sorted(SERVED)
+
+
+def test_an_unrouted_text_of_a_facility_the_desk_no_longer_serves_is_not_listed(sim, adapter, session):
+    arrive(session, adapter, {**texts_in(sim, DANA, "for albany"), "facilityId": ALBANY})
+    arrive(session, adapter, {**texts_in(sim, DANA, "for nobody in particular"), "facilityId": None})
+    assert sorted(m["body"] for m in unrouted(session, SERVED)) == ["for albany", "for nobody in particular"]
+    assert [m["body"] for m in unrouted(session, {ORLANDO})] == ["for nobody in particular"]      # ALBANY left the binding
+
+
+def test_the_inbox_can_be_paged(sim, adapter, session, desk):
+    for n in range(3):
+        arrive(session, adapter, texts_in(sim, DANA, f"text {n}"))
+    assert [m["body"] for m in inbox(session, desk, 2, 0)] == ["text 2", "text 1"]
+    assert [m["body"] for m in inbox(session, desk, 2, 2)] == ["text 0"]
