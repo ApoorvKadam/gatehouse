@@ -25,6 +25,8 @@ class Settings:
     run_id: str = "local"
     # an outside auction site's listing feed; unset, an outside listing's status is reported as unknown
     marketplace_url: str | None = None
+    # the shared secret Cubby's SMS Received webhook must present; Cubby documents no signing. Unset, the receiver is closed
+    webhook_token: str | None = None
 
     @staticmethod
     def from_env() -> "Settings":
@@ -42,4 +44,5 @@ class Settings:
             demo_seed=os.environ.get("DESK_DEMO_SEED") == "1",
             run_id=os.environ.get("DESK_RUN_ID", "local"),
             marketplace_url=os.environ.get("DESK_MARKETPLACE_URL") or None,
+            webhook_token=os.environ.get("DESK_WEBHOOK_TOKEN") or None,
         )

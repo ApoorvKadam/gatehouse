@@ -8,8 +8,9 @@ from datetime import datetime, timezone
 import httpx
 
 from .base import (
-    AccessCheck, FMSError, NotFound, PermissionDenied, ProviderAccessCode, ProviderCustomer, ProviderExemption, ProviderLease,
-    ProviderAuctionEntry, ProviderLedger, ProviderLock, ProviderPayment, ProviderTask, SubmitOutcome, TaskCreateOutcome,
+    AccessCheck, FMSError, InboundText, NotFound, PermissionDenied, ProviderAccessCode, ProviderCustomer, ProviderExemption,
+    ProviderLease, ProviderAuctionEntry, ProviderLedger, ProviderLock, ProviderPayment, ProviderTask, SmsOutcome, SmsPreference,
+    SubmitOutcome, TaskCreateOutcome,
 )
 
 AUCTION_STATUSES = ("LISTED", "NO_BIDS", "SOLD", "PAYMENT_RECEIVED", "COMPLETE", "CANCELLED")
@@ -41,6 +42,10 @@ def _json(response: httpx.Response) -> dict:
     except ValueError:
         return {}
     return body if isinstance(body, dict) else {}
+
+
+def _dict(value) -> dict:
+    return value if isinstance(value, dict) else {}
 
 
 log = logging.getLogger("desk.adapter")
@@ -114,13 +119,27 @@ class CubbyAdapter:
             raise FMSError(f"/v1/ledgers/search: no readable totalDue for {lease_provider_id}") from exc
         return ProviderLedger(lease_provider_id=lease_provider_id, total_due=total_due, prepaid=prepaid, raw=raw)
 
+    @staticmethod
+    def _customer(c: dict) -> ProviderCustomer:
+        contact = _dict(c.get("contact"))
+        sms = _dict(_dict(c.get("communicationPreferences")).get("sms"))
+        # a preference counts only when the FMS states both flags; a half-stated one is treated as not stated
+        known = isinstance(sms.get("marketing"), bool) and isinstance(sms.get("suppressed"), bool)
+        return ProviderCustomer(provider_id=c["customerId"], first_name=c.get("firstName"), last_name=c.get("lastName"),
+                                phone=contact.get("phone"),
+                                sms=SmsPreference(sms["marketing"], sms["suppressed"], sms.get("suppressionReason")) if known else None)
+
     def customer(self, customer_provider_id: str) -> ProviderCustomer:
         rows = self._read("/v1/customers/search", {"customerId": customer_provider_id}).get("customers", [])
         if not rows:
             raise NotFound(customer_provider_id)
-        c = rows[0]
-        return ProviderCustomer(provider_id=c["customerId"], first_name=c.get("firstName"), last_name=c.get("lastName"),
-                                phone=c.get("phone"))
+        return self._customer(rows[0])
+
+    def customers_by_phone(self, facility_provider_id: str, phone: str) -> list[ProviderCustomer]:
+        """Customers at a facility whose number contains this one. The FMS filter is a partial match, so the caller
+        compares whole numbers before treating anyone as the sender."""
+        rows = self._read("/v1/customers/search", {"facilityId": facility_provider_id, "phone": phone}).get("customers", [])
+        return [self._customer(c) for c in rows]
 
     def payments_for_lease(self, lease_provider_id: str) -> list[ProviderPayment]:
         data = self._read("/v1/payments/search", {"leaseId": lease_provider_id})
@@ -213,6 +232,46 @@ class CubbyAdapter:
             # a 5xx, a gateway page or a 200 without an id: the task may or may not exist
             return TaskCreateOutcome(kind="lost", detail=f"HTTP {response.status_code} without a task id")
         return TaskCreateOutcome(kind="created", task_id=task_id)
+
+    # ------------------------------------------------------------------ texts
+    @staticmethod
+    def inbound_text(payload: dict) -> InboundText:
+        """Cubby's SMS Received webhook. Raises ValueError for anything that is not one."""
+        def need(field: str) -> str:
+            value = payload.get(field)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"the payload has no usable {field}")
+            return value
+
+        facility = payload.get("facilityId")
+        customer = payload.get("customer")
+        received = _parse_time(need("receivedAt"))
+        if received is None or (facility is not None and not isinstance(facility, str)):
+            raise ValueError("the payload has no usable receivedAt or facilityId")
+        named = isinstance(customer, dict) and isinstance(customer.get("customerId"), str)
+        return InboundText(message_id=need("messageId"), facility_provider_id=facility or None, to=str(payload.get("to") or ""),
+                           sender=need("from"), body=need("body"), received_at=received,
+                           customer=CubbyAdapter._customer(customer) if named and isinstance(customer, dict) else None)
+
+    def send_sms(self, facility_provider_id: str, customer_provider_id: str, body: str) -> SmsOutcome:
+        """Cubby texts the customer's number on file. The call takes no idempotency key and the API has no way to look a
+        sent text up, so an answer that never arrives leaves the outcome unknown for good."""
+        request = {"customerId": customer_provider_id, "facilityId": facility_provider_id, "body": body}
+        try:
+            response = self._http.post("/v1/messages/sms/send", json=request)
+        except httpx.TimeoutException:
+            return SmsOutcome("lost", "no response before the timeout")
+        except httpx.HTTPError as exc:
+            # the request may have reached Cubby before the connection broke
+            log.info("text request lost after sending: %s", exc.__class__.__name__)
+            return SmsOutcome("lost", "the connection broke before the answer arrived")
+        payload = _json(response)
+        if 400 <= response.status_code < 500 and "errors" in payload:
+            return SmsOutcome("rejected", "; ".join(str(e) for e in payload.get("errors") or []) or f"HTTP {response.status_code}")
+        if response.status_code != 200 or payload.get("status") != 200:
+            # a 5xx, a gateway page, or a 200 that is not Cubby's envelope: the text may or may not have gone out
+            return SmsOutcome("lost", f"HTTP {response.status_code} without a confirmation")
+        return SmsOutcome("sent")
 
     # ------------------------------------------------------------------ the one write
     def make_payment(self, lease_provider_id: str, payment_method_id: str, amount: int) -> SubmitOutcome:

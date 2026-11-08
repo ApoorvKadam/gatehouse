@@ -26,10 +26,11 @@ KEYS = [
     ("sim_org_harbor_full", HARBOR, "OPERATOR", True),
 ]
 
+# facility id, organization, name, state, time zone, the number tenants text
 FACILITIES = [
-    ("fac_NSorlando01", NORTHSTAR, "Northstar Storage, Orlando East", "FL", "America/New_York"),
-    ("fac_NSalbany001", NORTHSTAR, "Northstar Storage, Albany Central", "NY", "America/New_York"),
-    ("fac_HBtampa0001", HARBOR, "Harbor Self Storage, Tampa", "FL", "America/New_York"),
+    ("fac_NSorlando01", NORTHSTAR, "Northstar Storage, Orlando East", "FL", "America/New_York", "+14075550100"),
+    ("fac_NSalbany001", NORTHSTAR, "Northstar Storage, Albany Central", "NY", "America/New_York", "+15185550100"),
+    ("fac_HBtampa0001", HARBOR, "Harbor Self Storage, Tampa", "FL", "America/New_York", "+18135550100"),
 ]
 
 # customer id, organization, first, last, phone, email
@@ -117,7 +118,7 @@ def reset(session: Session, id_seed: str | None = None) -> None:
         session.execute(delete(table))
     session.add_all(Organization(org_id=o, name=n) for o, n in [(NORTHSTAR, "Northstar Storage"), (HARBOR, "Harbor Self Storage")])
     session.add_all(ApiKey(key=k, org_id=o, role=r, pii=p) for k, o, r, p in KEYS)
-    session.add_all(Facility(facility_id=f, org_id=o, name=n, state=s, time_zone=tz) for f, o, n, s, tz in FACILITIES)
+    session.add_all(Facility(facility_id=f, org_id=o, name=n, state=s, time_zone=tz, sms_number=num) for f, o, n, s, tz, num in FACILITIES)
     session.add_all(Customer(customer_id=c, org_id=o, first_name=fn, last_name=ln, phone=ph, email=em)
                     for c, o, fn, ln, ph, em in CUSTOMERS)
     session.flush()

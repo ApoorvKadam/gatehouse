@@ -88,6 +88,8 @@ curl -X POST -H "$H" -H "$J" localhost:8000/api/cases/1/proposals/<proposal_id>/
   -d '{"confirmed_by": "J. Ortiz", "tenant_answer": "Yes, go ahead"}'
 ```
 
+Texts reach the desk as Cubby's SMS Received webhook (`POST /webhooks/cubby/sms-received`, with `X-Webhook-Token: <DESK_WEBHOOK_TOKEN>`). Each one is kept once, matched to a tenant by the FMS's own record, and listed at `GET /api/facilities/{id}/inbox`. `POST /api/inbox/{id}/reply` answers one through Cubby's text call, and refuses with the reason when the number texted STOP, the FMS has texts switched off, or Cubby would send the text to a different number than the one that asked.
+
 The conversation endpoint needs `ANTHROPIC_API_KEY` in `.env` (Claude Haiku 5.5 by default, `DESK_CHAT_MODEL` to change it). Each model call's tokens and estimated cost are logged; a whole conversation costs about a tenth of a cent.
 
 ```bash

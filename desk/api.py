@@ -24,7 +24,10 @@ from .conversation import Conversation
 from .lien_files import ensure_append_only, evaluate_case, record_evidence, replay
 from .liens import FL_R1, ValidationError
 from .db import bind_to_fms, make_session_factory
-from .models import CaseEvent, DelinquencyCase, DeskBinding, Facility, Lease, LedgerSnapshot, LienEvaluation, PaymentCommand
+from .messaging import inbox, match_pending, outbound_view, receive_text, send_text
+from .models import (
+    CaseEvent, DelinquencyCase, DeskBinding, Facility, InboundMessage, Lease, LedgerSnapshot, LienEvaluation, PaymentCommand,
+)
 from .payments import (
     IdentityClaim, PaymentRefused, PaymentService, check_identity, collected, confirm, propose, tenant_message,
 )
@@ -64,6 +67,13 @@ class EvidenceIn(BaseModel):
 class ConfirmIn(BaseModel):
     confirmed_by: str = Field(min_length=2, description="the person at the desk who heard the tenant's yes")
     tenant_answer: str = Field(min_length=1, max_length=500, description="what the tenant said, in their words")
+
+
+class ReplyIn(BaseModel):
+    text: str = Field(min_length=1, max_length=1600)
+    staff: str = Field(min_length=2, description="the person at the desk who wrote the reply")
+    request_id: str | None = Field(default=None, min_length=8, max_length=64,
+                                   description="chosen by the screen for each reply; sending it twice sends one text")
 
 
 class StaffResolutionIn(BaseModel):
@@ -223,6 +233,65 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
     def facility_queue(facility_id: str, session: Session = Depends(db), _: str = Depends(viewer)):
         check_facility(session, facility_id)
         return {"rows": [r.__dict__ for r in queue(session, facility_id)], "collected": collected(session, adapter.provider, facility_id)}
+
+    def known_facility(session: Session, facility_id: str) -> Facility | None:
+        """The desk's row for a facility the FMS key can see, or None when nothing has been synced from it yet."""
+        check_facility(session, facility_id)
+        return session.scalar(select(Facility).where(Facility.provider_id == facility_id))
+
+    @app.post("/webhooks/cubby/sms-received")
+    def sms_received(payload: dict, x_webhook_token: str | None = Header(default=None), session: Session = Depends(db)):
+        """Cubby's SMS Received webhook. Cubby documents no signing, so the sender must present the shared token, in a header
+        that a gateway such as Make.com adds. A 200 tells Cubby the text is kept, and a text already kept is a 200 too,
+        because Cubby may deliver one twice."""
+        if settings.webhook_token is None:
+            raise HTTPException(503, "the desk has no webhook token configured")
+        if x_webhook_token is None or not hmac.compare_digest(x_webhook_token, settings.webhook_token):
+            raise HTTPException(401, "webhook token required")
+        try:
+            text = adapter.inbound_text(payload)
+        except ValueError as exc:
+            raise HTTPException(422, f"not an SMS Received payload: {exc}") from exc
+        if text.facility_provider_id is not None:
+            check_facility(session, text.facility_provider_id)
+        try:
+            row = receive_text(session, text)
+        except LookupError as exc:
+            # a non-200 makes Cubby try again, which is right: this facility will be read soon
+            raise HTTPException(503, str(exc)) from exc
+        if row is not None and row.facility_id is not None:
+            try:
+                match_pending(session, adapter, session.get(Facility, row.facility_id))
+            except FMSError as exc:
+                # the text is kept; the worker checks it on its next pass
+                log.warning("could not match text %s yet: %s", row.id, exc)
+        return {"stored": row is not None}
+
+    @app.get("/api/facilities/{facility_id}/inbox")
+    def facility_inbox(facility_id: str, limit: int = 50, session: Session = Depends(db), _: str = Depends(viewer)):
+        """The texts people sent this facility, newest first, each matched to a tenant or marked as not matched."""
+        facility = known_facility(session, facility_id)
+        return {"messages": inbox(session, facility, min(max(limit, 1), 200)) if facility else []}
+
+    @app.post("/api/inbox/{message_id}/reply")
+    def reply_to_text(message_id: int, body: ReplyIn, session: Session = Depends(db), _: str = Depends(operator)):
+        """A person at the desk answers a text through Cubby. The rule still applies: a number that texted STOP, one the FMS
+        has switched off, or one that is not the customer's number on file gets nothing, and the answer says why."""
+        message = session.get(InboundMessage, message_id)
+        facility = session.get(Facility, message.facility_id) if message is not None and message.facility_id is not None else None
+        if message is None or facility is None:
+            raise HTTPException(404, "text not found")
+        check_facility(session, facility.provider_id)
+        if message.match_state in ("pending", "ambiguous"):
+            raise HTTPException(409, "not sent: " + (message.match_note or "this text is not matched to a tenant yet; try again in a moment"))
+        try:
+            row = send_text(session, adapter, facility, message.customer_provider_id if message.match_state == "matched" else None,
+                            body.text, f"staff: {body.staff}", reply_to=message, request_id=body.request_id)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if row.state in ("blocked", "rejected"):
+            raise HTTPException(409, f"not sent: {row.reason}")
+        return outbound_view(row)
 
     @app.get("/api/cases/{case_id}")
     def case_detail(case_id: int, session: Session = Depends(db), _: str = Depends(viewer)):

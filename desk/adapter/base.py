@@ -39,12 +39,23 @@ class ProviderLedger:
 
 
 @dataclass(frozen=True)
+class SmsPreference:
+    """What a customer told the FMS about texts. `reason` is OPTED_OUT or UNDELIVERABLE when the channel is suppressed."""
+
+    marketing: bool
+    suppressed: bool
+    reason: str | None
+
+
+@dataclass(frozen=True)
 class ProviderCustomer:
     provider_id: str
     # None when the API key cannot see personal data
     first_name: str | None
     last_name: str | None
     phone: str | None
+    # None when the key cannot see communication preferences, or the FMS did not send them
+    sms: SmsPreference | None = None
 
 
 @dataclass(frozen=True)
@@ -132,6 +143,30 @@ class TaskCreateOutcome:
     detail: str | None = None
 
 
+@dataclass(frozen=True)
+class InboundText:
+    """A text sent to a facility's number, as the FMS reported it. `customer` is the FMS's own match, present only when
+    the number belongs to a customer with a lease; `facility_provider_id` is None when the receiving number serves
+    several facilities."""
+
+    message_id: str
+    facility_provider_id: str | None
+    to: str
+    sender: str
+    body: str
+    received_at: datetime
+    customer: ProviderCustomer | None
+
+
+@dataclass(frozen=True)
+class SmsOutcome:
+    """What sending a text told us. 'lost' means no usable answer came back: the text may or may not have gone out, and
+    the FMS offers no way to look it up afterwards."""
+
+    kind: Literal["sent", "rejected", "lost"]
+    detail: str | None = None
+
+
 class FMSAdapter(Protocol):
     provider: str
 
@@ -139,6 +174,9 @@ class FMSAdapter(Protocol):
     def lease(self, lease_provider_id: str) -> ProviderLease: ...
     def ledger(self, lease_provider_id: str) -> ProviderLedger: ...
     def customer(self, customer_provider_id: str) -> ProviderCustomer: ...
+    def customers_by_phone(self, facility_provider_id: str, phone: str) -> list[ProviderCustomer]: ...
+    def inbound_text(self, payload: dict) -> InboundText: ...
+    def send_sms(self, facility_provider_id: str, customer_provider_id: str, body: str) -> SmsOutcome: ...
     def facilities(self) -> list[dict]: ...
     def make_payment(self, lease_provider_id: str, payment_method_id: str, amount: int) -> SubmitOutcome: ...
     def payments_for_lease(self, lease_provider_id: str) -> list[ProviderPayment]: ...

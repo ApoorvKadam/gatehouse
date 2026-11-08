@@ -1,0 +1,276 @@
+"""Texts in and out of a facility, the way Cubby carries them.
+
+Cubby delivers each text a tenant sends as an SMS Received webhook and may deliver one twice, so the desk keeps every text
+as received and deduplicates on the carrier's message id. A text goes out through messages/sms/send, which takes a customer
+rather than a number, has no idempotency key, cannot be looked up afterwards, and checks none of the customer's preferences:
+Cubby's documentation says nothing enforces them for an integrator, and that the FMS's opt-out flag can lag a STOP by one
+message. So the desk decides who may be texted (can_text), writes the intent before it calls, calls once, and holds a text
+whose answer never arrived for a person instead of sending it again."""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from datetime import datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from .adapter import FMSAdapter, InboundText, NotFound, PermissionDenied, ProviderCustomer
+from .cases import current_case
+from .db import utcnow
+from .models import Facility, InboundMessage, Lease, OutboundMessage
+
+# the words a carrier acts on; a number that sent one of these is not texted until it sends a START word
+STOP_WORDS = ("STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT")
+START_WORDS = ("START", "UNSTOP", "YES")
+# a text the desk starts is not sent from 9 PM to 8 AM at the facility
+QUIET_FROM, QUIET_UNTIL = time(21, 0), time(8, 0)
+# a tenant who texted in the last day has opened a conversation; an answer to it is not a text out of the blue
+REPLY_WINDOW = timedelta(hours=24)
+# what messages/sms/send accepts
+SMS_LIMIT = 320
+
+
+def e164(phone: str | None) -> str:
+    """A US or Canadian number as +1 and ten digits; any other number as + and its digits. Whole numbers only, so two
+    numbers that end the same way in different countries are two numbers."""
+    digits = re.sub(r"\D", "", phone or "")
+    return "+" + ("1" + digits if len(digits) == 10 else digits)
+
+
+def last4(phone: str | None) -> str:
+    return re.sub(r"\D", "", phone or "")[-4:]
+
+
+def keyword(body: str) -> str:
+    """A whole message that is one word, however it was punctuated: 'Stop.' counts, 'stop charging me' does not."""
+    return re.sub(r"[^A-Za-z]+", "", body).upper()
+
+
+def full_name(customer: ProviderCustomer | None) -> str | None:
+    if customer is None:
+        return None
+    return " ".join(p for p in (customer.first_name, customer.last_name) if p) or None
+
+
+# ---------------------------------------------------------------- inbound
+
+
+def receive_text(session: Session, text: InboundText) -> InboundMessage | None:
+    """Keep one text from Cubby's webhook. None when it is already kept. Raises LookupError when its facility is not one
+    this desk has read yet, so the sender is told to try again later."""
+    if session.scalar(select(InboundMessage.id).where(InboundMessage.provider_message_id == text.message_id)) is not None:
+        return None
+    facility = None
+    if text.facility_provider_id is not None:
+        facility = session.scalar(select(Facility).where(Facility.provider_id == text.facility_provider_id))
+        if facility is None:
+            raise LookupError(f"facility {text.facility_provider_id} has not been read yet")
+    row = InboundMessage(
+        facility_id=facility.id if facility else None, provider_message_id=text.message_id, phone=text.sender,
+        phone_key=e164(text.sender), to_number=text.to or None, body=text.body, received_at=text.received_at,
+        match_state="pending" if facility else "unrouted",
+        match_note=None if facility else "The receiving number serves more than one facility, so this text is not filed under one yet.",
+        customer_provider_id=text.customer.provider_id if text.customer else None, customer_name=full_name(text.customer))
+    session.add(row)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()          # the same text was delivered a second time at the same moment
+        return None
+    return row
+
+
+@dataclass(frozen=True)
+class Match:
+    state: str                      # matched, unmatched or ambiguous
+    customer_id: str | None = None
+    customer_name: str | None = None
+    note: str | None = None
+
+
+def decide(hint_id: str | None, hint_name: str | None, found: list[ProviderCustomer] | None, sender: str) -> Match:
+    """Who sent a text. Cubby's webhook names a tenant only when the number belongs to a customer with a lease, and a
+    search of the facility by phone is the check on that. `found` is None when the key cannot search by phone. The FMS's
+    phone filter is a partial match, so only a customer whose whole number is the sender's counts."""
+    if found is None:
+        if hint_id:
+            return Match("matched", hint_id, hint_name, "Named by Cubby's webhook; this API key cannot search by phone to check it.")
+        return Match("unmatched", note="This API key cannot read customers' phone numbers, so the sender cannot be matched.")
+    same = {c.provider_id: c for c in found if c.phone and e164(c.phone) == e164(sender)}
+    if len(same) > 1:
+        return Match("ambiguous", note=f"{len(same)} tenants at this facility have this number on file. A person decides who it is.")
+    if len(same) == 1:
+        (found_id, person), = same.items()
+        if hint_id and hint_id != found_id:
+            return Match("ambiguous", note="Cubby's webhook names one tenant and a phone search finds another. A person decides who it is.")
+        return Match("matched", found_id, full_name(person), None if hint_id else "Found by phone search; Cubby's webhook named nobody.")
+    if hint_id:
+        return Match("matched", hint_id, hint_name, "Named by Cubby's webhook; no number on file matched the sender's whole number.")
+    return Match("unmatched", note="No tenant at this facility has this number on file.")
+
+
+def match_pending(session: Session, adapter: FMSAdapter, facility: Facility) -> int:
+    """Check every kept text that has not been checked. An FMS read that fails leaves the rest pending for the next pass."""
+    pending = session.scalars(select(InboundMessage).where(InboundMessage.facility_id == facility.id,
+                                                           InboundMessage.match_state == "pending").order_by(InboundMessage.id)).all()
+    searched: dict[str, list[ProviderCustomer] | None] = {}
+    done = 0
+    try:
+        for m in pending:
+            if m.phone_key not in searched:
+                try:
+                    searched[m.phone_key] = adapter.customers_by_phone(facility.provider_id, m.phone)
+                except PermissionDenied:
+                    searched[m.phone_key] = None
+            found = decide(m.customer_provider_id, m.customer_name, searched[m.phone_key], m.phone)
+            m.match_state, m.match_note = found.state, found.note
+            m.customer_provider_id, m.customer_name = found.customer_id, found.customer_name
+            done += 1
+    finally:
+        session.commit()   # what was checked before a failed read is kept
+    return done
+
+
+# ---------------------------------------------------------------- who may be texted
+
+
+@dataclass(frozen=True)
+class Verdict:
+    ok: bool
+    reason: str = ""
+
+
+def stop_text(session: Session, phone: str) -> InboundMessage | None:
+    """The text in which this number asked to stop, unless a later one asked to start again. It covers every facility
+    this desk serves: a tenant who told one office to stop has told the operator."""
+    newest_first = select(InboundMessage).where(InboundMessage.phone_key == e164(phone)).order_by(
+        InboundMessage.received_at.desc(), InboundMessage.id.desc())
+    for m in session.scalars(newest_first):
+        word = keyword(m.body)
+        if word in START_WORDS:
+            return None
+        if word in STOP_WORDS:
+            return m
+    return None
+
+
+def can_text(session: Session, facility: Facility, customer: ProviderCustomer | None, now: datetime, *,
+             reply_to: InboundMessage | None = None) -> Verdict:
+    """May the desk text this customer now? Cubby texts the number it holds for the customer and looks at no preference,
+    so every check is here. `customer` is the tenant as the FMS shows them at this moment, or None when nobody is named.
+    Gatehouse sends account messages and never promotions, so the marketing flag is not consulted; suppression always is."""
+    if customer is None:
+        return Verdict(False, "Cubby texts only a customer on file, so a person has to answer this number.")
+    if not customer.phone:
+        return Verdict(False, "This API key cannot read the tenant's phone number, so Gatehouse cannot tell where Cubby would send a text.")
+    if reply_to is not None and reply_to.phone_key != e164(customer.phone):
+        return Verdict(False, f"Cubby would text the number on file (ending {last4(customer.phone)}), "
+                              f"not the number that texted (ending {last4(reply_to.phone)}).")
+    stop = stop_text(session, customer.phone)
+    if stop is not None:
+        return Verdict(False, f"This number texted {keyword(stop.body)} on {stop.received_at:%b %-d}. It stays off until they text START.")
+    sms = customer.sms
+    if sms is not None and sms.suppressed:
+        if sms.reason == "UNDELIVERABLE":
+            return Verdict(False, "The FMS marks this number undeliverable. Someone should check it before it is texted again.")
+        if sms.reason == "OPTED_OUT":
+            return Verdict(False, "The FMS records this tenant as opted out of texts.")
+        return Verdict(False, "The FMS has this tenant's texts switched off.")
+    if reply_to is not None and now - reply_to.received_at <= REPLY_WINDOW:
+        return Verdict(True)
+    # a text the tenant did not just ask for
+    if sms is None:
+        return Verdict(False, "A text the tenant did not just ask for needs text preferences the FMS shows, and it shows none.")
+    local = now.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(facility.time_zone)).time()
+    if local >= QUIET_FROM or local < QUIET_UNTIL:
+        return Verdict(False, "Quiet hours at this facility: no text it starts goes out between 9 PM and 8 AM local time.")
+    return Verdict(True)
+
+
+# ---------------------------------------------------------------- outbound
+
+
+def _same_request(earlier: OutboundMessage, customer_provider_id: str | None, body: str) -> OutboundMessage:
+    if (earlier.customer_provider_id, earlier.body) != (customer_provider_id, body):
+        raise ValueError("this request id was already used for a different text")
+    return earlier
+
+
+def send_text(session: Session, adapter: FMSAdapter, facility: Facility, customer_provider_id: str | None, body: str, author: str,
+              *, reply_to: InboundMessage | None = None, request_id: str | None = None, now: datetime | None = None) -> OutboundMessage:
+    """Decide, write down what is meant to go out, then call Cubby once. The row says what happened: sent, blocked by the
+    rule (Cubby was never called), rejected by Cubby, or not known because no usable answer came back, in which case the
+    desk never sends it again. A repeated request id returns the first row. Reading the tenant can raise FMSError, and then
+    nothing has been written."""
+    if not body.strip() or len(body) > SMS_LIMIT:
+        raise ValueError(f"A text is 1 to {SMS_LIMIT} characters; this one is {len(body)}.")
+    if request_id:
+        earlier = session.scalar(select(OutboundMessage).where(OutboundMessage.request_id == request_id))
+        if earlier is not None:
+            return _same_request(earlier, customer_provider_id, body)
+    customer = None
+    if customer_provider_id:
+        try:
+            customer = adapter.customer(customer_provider_id)
+        except (NotFound, PermissionDenied):
+            customer = None
+    verdict = can_text(session, facility, customer, now or utcnow(), reply_to=reply_to)
+    row = OutboundMessage(
+        facility_id=facility.id, inbound_id=reply_to.id if reply_to is not None else None, customer_provider_id=customer_provider_id,
+        phone=customer.phone if customer is not None and customer.phone else (reply_to.phone if reply_to is not None else ""),
+        body=body, author=author, request_id=request_id, state="intent" if verdict.ok else "blocked",
+        reason=None if verdict.ok else verdict.reason)
+    session.add(row)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()          # the same request id arrived twice at once
+        return _same_request(session.scalars(select(OutboundMessage).where(OutboundMessage.request_id == request_id)).one(),
+                             customer_provider_id, body)
+    if not verdict.ok or customer is None:
+        return row
+    outcome = adapter.send_sms(facility.provider_id, customer.provider_id, body)
+    if outcome.kind == "sent":
+        row.state, row.sent_at = "sent", utcnow()
+    elif outcome.kind == "rejected":
+        row.state, row.reason = "rejected", outcome.detail
+    else:
+        row.state = "outcome_unknown"
+        row.reason = (f"No usable answer came back ({outcome.detail}). The text may have gone out, so Gatehouse does not send "
+                      "it again. Check the conversation with this tenant in Cubby.")
+    session.commit()
+    return row
+
+
+# ---------------------------------------------------------------- what a screen or an API shows
+
+
+def outbound_view(m: OutboundMessage) -> dict:
+    return {"id": m.id, "body": m.body, "author": m.author, "state": m.state, "reason": m.reason,
+            "created_at": m.created_at, "sent_at": m.sent_at}
+
+
+def inbox(session: Session, facility: Facility, limit: int = 50) -> list[dict]:
+    """The facility's texts, newest first, each with the tenant it was matched to, that tenant's leases and open cases,
+    and what the desk sent back."""
+    rows = session.scalars(select(InboundMessage).where(InboundMessage.facility_id == facility.id).order_by(
+        InboundMessage.received_at.desc(), InboundMessage.id.desc()).limit(limit)).all()
+    out = []
+    for m in rows:
+        leases = []
+        if m.customer_provider_id:
+            for lease in session.scalars(select(Lease).where(Lease.facility_id == facility.id,
+                                                             Lease.provider_customer_id == m.customer_provider_id).order_by(Lease.id)):
+                case = current_case(session, lease)
+                leases.append({"lease_id": lease.provider_id, "unit": lease.unit_name,
+                               "case_id": case.id if case else None, "case_state": case.state if case else None})
+        replies = session.scalars(select(OutboundMessage).where(OutboundMessage.inbound_id == m.id).order_by(OutboundMessage.id)).all()
+        out.append({"id": m.id, "from": m.phone, "body": m.body, "received_at": m.received_at,
+                    "match": {"state": m.match_state, "note": m.match_note, "customer_id": m.customer_provider_id,
+                              "customer_name": m.customer_name, "leases": leases},
+                    "stopped": stop_text(session, m.phone) is not None,
+                    "replies": [outbound_view(r) for r in replies]})
+    return out

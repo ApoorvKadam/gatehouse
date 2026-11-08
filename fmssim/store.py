@@ -27,6 +27,11 @@ def new_id(prefix: str) -> str:
     return f"{prefix}_" + "".join(_ids.choice(_ALPHABET) for _ in range(11))
 
 
+def carrier_id() -> str:
+    """A text's id as a carrier writes it: SM and 32 hex digits."""
+    return "SM" + "".join(_ids.choice("0123456789abcdef") for _ in range(32))
+
+
 def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -58,6 +63,8 @@ class Facility(Base):
     state: Mapped[str] = mapped_column(String)
     time_zone: Mapped[str] = mapped_column(String)
     billing_cycle: Mapped[str] = mapped_column(String, default="MONTHLY")
+    # the Cubby number tenants text, E.164
+    sms_number: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class Customer(Base):
@@ -68,6 +75,13 @@ class Customer(Base):
     last_name: Mapped[str] = mapped_column(String)
     phone: Mapped[str] = mapped_column(String)
     email: Mapped[str] = mapped_column(String)
+    # what the customer told the FMS about texts; one who never said anything accepts everything
+    sms_marketing: Mapped[bool] = mapped_column(Boolean, default=True)
+    sms_suppressed: Mapped[bool] = mapped_column(Boolean, default=False)
+    sms_suppression_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    # the carrier's record that this number texted STOP; never returned by the API. The flag above only catches up
+    # when a send to the customer is rejected, as Cubby documents ("sms.suppressed can lag a customer's STOP")
+    sms_carrier_stop: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class Lease(Base):
@@ -212,7 +226,8 @@ class Exemption(Base):
 class AccessFault(Base):
     """A named fault the simulator is told to have, kept inspectable in its truth reader:
     gate_sync_stale (customer at a facility: the automation stops updating that code),
-    lose_task_response (facility: tasks/create makes the task, then the connection breaks)."""
+    lose_task_response (facility: tasks/create makes the task, then the connection breaks),
+    lose_send_response (facility: messages/sms/send sends the text, then the connection breaks)."""
 
     __tablename__ = "access_faults"
     fault_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -272,6 +287,22 @@ class ExternalListing(Base):
     lease_id: Mapped[str] = mapped_column(String)
     status: Mapped[str] = mapped_column(String, default="LISTED")   # LISTED or WITHDRAWN
     observed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class TextMessage(Base):
+    """One text on a facility's Cubby number, in or out, as the simulator's own record of what the carrier carried.
+    Not something a real FMS shows: the desk never reads it, and the preview shows it only next to what Gatehouse
+    concluded. An inbound text is also what Cubby turns into its SMS Received webhook."""
+
+    __tablename__ = "text_messages"
+    message_id: Mapped[str] = mapped_column(String, primary_key=True)
+    facility_id: Mapped[str] = mapped_column(String)
+    customer_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    direction: Mapped[str] = mapped_column(String)               # INBOUND or OUTBOUND
+    phone: Mapped[str] = mapped_column(String)                   # the other party's number, E.164
+    body: Mapped[str] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String)                  # RECEIVED, SENT or REJECTED
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 def unit_id_of(lease: "Lease") -> str:

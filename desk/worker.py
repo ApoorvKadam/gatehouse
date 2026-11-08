@@ -14,7 +14,8 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session, sessionmaker
 
 from .access import bound_facilities, reconcile_access
-from .adapter import FMSAdapter
+from .adapter import FMSAdapter, FMSError
+from .messaging import match_pending
 from .payments import PaymentService
 from .sales import reconcile_sales
 
@@ -22,7 +23,8 @@ log = logging.getLogger("desk.worker")
 
 
 def run_once(factory: sessionmaker[Session], adapter: FMSAdapter, run_id: str = "local", feed_url: str | None = None) -> tuple[int, int]:
-    """One pass: how many payments were checked, and how many FMS reads failed along the way (payments, access, sales)."""
+    """One pass: how many payments were checked, and how many FMS reads failed along the way (payments, access, sales, and
+    matching texts that arrived while the FMS could not be asked)."""
     with factory() as session:
         service = PaymentService(session, adapter)
         checked = service.reconcile_all()
@@ -36,6 +38,14 @@ def run_once(factory: sessionmaker[Session], adapter: FMSAdapter, run_id: str = 
             failures += len(sales.failures)
             if sales.opened or sales.closed:
                 log.info("sales at %s: %d opened, %d closed", facility.provider_id, sales.opened, sales.closed)
+            try:
+                matched = match_pending(session, adapter, facility)
+            except FMSError as exc:
+                failures += 1
+                log.warning("texts at %s: %s", facility.provider_id, exc)
+            else:
+                if matched:
+                    log.info("texts at %s: %d matched", facility.provider_id, matched)
         return checked, failures
 
 
