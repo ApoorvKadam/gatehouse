@@ -621,6 +621,7 @@ def test_what_makes_a_packet_acceptable():
     assert "$240.50" in packet_problem({**good, "summary": "She owes $240.5."}, facts)                  # the whole number is read, not its first digits
     assert "$240.50" in packet_problem({**good, "summary": "She owes 240.5 dollars."}, facts)
     assert "$240.567" in packet_problem({**good, "summary": "She owes $240.567."}, facts)              # a fraction of a cent matches no record
+    assert "$240.000000000000000000000000001" in packet_problem({**good, "summary": "She owes $240.000000000000000000000000001."}, facts)       # nothing is rounded
     assert packet_problem({**good, "summary": "She owes $240.0 and $240.00 and 240 dollars."}, facts) is None
     assert "Dec 25" in packet_problem({**good, "reason": "The sale is on December 25."}, facts)
     assert "Dec 25, 2030" in packet_problem({**good, "reason": "The sale is on 12/25/2030."}, facts)

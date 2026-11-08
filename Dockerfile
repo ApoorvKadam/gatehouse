@@ -25,8 +25,10 @@ CMD ["bash", "start.sh"]
 # production: docker build --target test -t gatehouse:test . && docker run --rm gatehouse:test
 FROM app AS test
 USER root
-RUN pip install --no-cache-dir "pytest>=8"
+RUN pip install --no-cache-dir "pytest>=8" "ruff>=0.5"
 COPY tests ./tests
+# undefined names only: an edit that drops a helper fails this build, not the first request that needs it
+RUN ruff check --select F821,F822,F823 --no-cache desk fmssim tests
 USER gatehouse
 CMD ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
 

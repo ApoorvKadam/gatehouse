@@ -285,13 +285,18 @@ ISO = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
 
 
 def amounts(text: str) -> set[Decimal]:
-    """The dollar amounts a text names, in cents. The whole written number is read, so $240.5 is 24050 cents and $240.567 is a
-    fraction of a cent that matches no record."""
+    """The dollar amounts a text names, as exact decimals in dollars. The whole written number is read with every decimal place
+    it has, and nothing is rounded, so $240.5 is 240.50 and $240.567, or a fraction of a cent however small, matches no record."""
     found = set()
     for m in MONEY.finditer(text):
         whole, fraction = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
-        found.add(Decimal(whole.replace(",", "") + ("." + fraction if fraction else "")) * 100)
+        found.add(Decimal(whole.replace(",", "") + ("." + fraction if fraction else "")))
     return found
+
+
+def written(amount: Decimal) -> str:
+    """An amount the way a person writes it: two decimals, or all of them when it has more."""
+    return f"${amount:,.2f}" if amount.as_tuple().exponent >= -2 else f"${amount:,f}"
 
 
 def days(text: str) -> set[tuple[str, int, int | None]]:
@@ -320,7 +325,7 @@ def ungrounded(packet: dict, facts: dict[str, str], tenant_text: str = "") -> li
     known = days(shown)
     money = sorted(amounts(words) - amounts(shown))
     loose = sorted((d for d in days(words) if not any(d[:2] == k[:2] and (d[2] is None or d[2] == k[2]) for k in known)), key=lambda d: (d[0], d[1], d[2] or 0))
-    return [f"${c / 100:,.2f}" if c % 1 == 0 else f"${(c / 100).normalize():,f}" for c in money] + [f"{m.title()} {d}" + (f", {y}" if y else "") for m, d, y in loose]
+    return [written(c) for c in money] + [f"{m.title()} {d}" + (f", {y}" if y else "") for m, d, y in loose]
 
 
 def packet_problem(packet, facts: dict[str, str], tenant_text: str = "") -> str | None:
