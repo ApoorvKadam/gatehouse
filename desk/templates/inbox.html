@@ -190,7 +190,14 @@
       error.textContent = "The request failed. Try again."; error.hidden = false;
     });
   });
-  if (button.hasAttribute("data-running")) { start(); before = before - 1; (function again() { fetch("/api/inbox/" + id + "/progress").then(function (r) { return r.json(); }).then(function (p) { if (p.status !== "running") location.reload(); else setTimeout(again, 1200); }); })(); }
+  if (button.hasAttribute("data-running")) {
+    start(); before = before - 1;
+    (function again() {
+      fetch("/api/inbox/" + id + "/progress").then(function (r) { return r.ok ? r.json() : null; }).then(function (p) {
+        if (p && p.status !== "running") location.reload(); else setTimeout(again, 1200);
+      }).catch(function () { setTimeout(again, 3000); });
+    })();
+  }
 })();
 </script>
 {% endblock %}
