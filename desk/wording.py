@@ -5,13 +5,16 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
-# the codes the FMS and the desk use for a payment, as words a person reads; the model reads the same words
+# the codes the FMS and the desk use for a payment or a sale, as words a person reads; the model reads the same words
 STATE_WORDS = {"NEEDS_STAFF": "needs staff", "CONFIRMED": "confirmed", "AWAITING_APPLICATION": "accepted but not yet on the ledger",
                "PENDING_AT_FMS": "pending at the FMS", "OUTCOME_UNKNOWN": "outcome unknown", "DECLINED": "declined", "REJECTED": "rejected",
                "NOT_SUBMITTED": "not sent", "SUBMITTING": "being sent", "NEEDS_REAUTHORIZATION": "needs a new authorization",
                "RETURNED": "returned by the bank", "REFUNDED": "refunded", "REFUND_PENDING": "refund pending", "DISPUTED": "disputed",
                "CLEARED_BY_STAFF": "cleared by staff", "SUCCEEDED": "succeeded", "PENDING": "pending", "FAILED": "failed",
-               "DIRECT_DEBIT_RETURN": "returned by the bank", "REFUND_INITIATED": "refund started"}
+               "DIRECT_DEBIT_RETURN": "returned by the bank", "REFUND_INITIATED": "refund started",
+               # the statuses of a lien sale at the FMS and of a listing on an outside site
+               "LISTED": "listed", "CANCELLED": "cancelled", "WITHDRAWN": "withdrawn", "SOLD": "sold", "NO_BIDS": "settled with no bids",
+               "PAYMENT_RECEIVED": "sold, and the bidder paid", "COMPLETE": "complete"}
 
 # an id the FMS or the simulator made up: payment_ofK0Ux1ENYC, listing_x7Hq2..., lease_WhitB1042
 _PROVIDER_ID = r"(?:payment|auction|listing|task|lease|be|dex|cust|customer|fac|facility)_[A-Za-z0-9]{4,}"
