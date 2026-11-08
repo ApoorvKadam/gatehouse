@@ -1,106 +1,203 @@
 {% extends "base.html" %}
-{% block title %}Texts, {{ facility.name }} | Gatehouse{% endblock %}
+{% block title %}Messages, {{ facility.name }} | Gatehouse{% endblock %}
+{% macro flags(t) %}
+  {% set run = t.investigation %}
+  {% if t.stopped %}<span class="chip act">Texting stopped</span>{% endif %}
+  {% if run and run.status == 'running' %}<span class="chip wait">Exploring</span>
+  {% elif run and run.notes.summary %}{% if run.notes.needs_person %}<span class="chip act">Needs a person</span>{% else %}<span class="chip done">No person needed</span>{% endif %}
+  {% elif t.match.state != 'matched' %}<span class="chip plain">No tenant</span>
+  {% else %}<span class="chip plain">Not explored</span>{% endif %}
+{% endmacro %}
 {% block main %}
 <div class="wrap">
   <div class="head">
-    <h1>Texts at {{ facility.name }}</h1>
-    <p>{{ texts|length }} {{ 'text' if texts|length == 1 else 'texts' }}, newest first</p>
-  </div>
-  <p class="lede">Every text a tenant sent to this facility's number. Gatehouse matches each one to a tenant through the FMS, never by a number someone typed, and it does not text anyone who said STOP.</p>
-  {% if live %}
-  <p class="note live-note">Prepare the case reads this tenant's records and writes case notes, with the records they rest on listed under them. It changes nothing in the FMS. You have {{ left.cases_left }} of {{ cases_per_day }} cases left today.</p>
-  {% else %}
-  <p class="note live-note">Case preparation is off here, so no text has notes yet.</p>
-  {% endif %}
-
-  {% for t in texts %}
-  {% set run = t.investigation %}
-  <article class="text-card" id="text-{{ t.id }}">
-    <div class="text-head">
-      <span class="text-who">{{ t.match.customer_name or 'Unknown number' }}</span>
-      <span class="muted small mono">{{ t['from'] }}</span>
-      <span class="muted small">{{ local(t.received_at) }}</span>
-      {% if t.stopped %}<span class="chip act">{% include "icons/hand.svg" %}Texting stopped</span>{% endif %}
+    <h1>Messages at {{ facility.name }}</h1>
+    {% if live %}
+    <div class="meter">
+      <span class="meter-cells" aria-hidden="true">{% for n in range(cases_per_day) %}<i class="{{ 'left' if n < left.cases_left else '' }}"></i>{% endfor %}</span>
+      <span><b>{{ left.cases_left }}</b> of {{ cases_per_day }} explorations left today</span>
     </div>
-    <blockquote class="said">{{ t.body }}</blockquote>
-    <p class="match-line">
-      {% if t.match.state == 'matched' %}
-        <span class="chip done">{% include "icons/user-check.svg" %}Matched</span>
-        <span class="small muted">{% for l in t.match.leases %}Unit {{ l.unit }}{% if not loop.last %}, {% endif %}{% endfor %}</span>
-      {% elif t.match.state == 'ambiguous' %}<span class="chip wait">Two tenants share this number. A person decides.</span>
-      {% elif t.match.state == 'pending' %}<span class="chip wait">Being matched</span>
-      {% else %}<span class="chip plain">No tenant found for this number</span>{% endif %}
-    </p>
-    {% for r in t.replies %}
-    <p class="reply-line">
-      <span class="chip {{ 'done' if r.state == 'sent' else ('act' if r.state in ('blocked', 'rejected') else 'wait') }}">{% include "icons/send.svg" %}{{ {'sent': 'Reply sent', 'blocked': 'Reply blocked', 'rejected': 'Reply refused', 'outcome_unknown': 'Reply not confirmed', 'intent': 'Reply being sent'}.get(r.state, r.state) }}</span>
-      <span class="small">{{ r.body }}</span>
-      {% if r.reason %}<span class="small muted">{{ r.reason }}</span>{% endif %}
-    </p>
-    {% endfor %}
+    {% else %}<p>Our agent is switched off on this copy</p>{% endif %}
+  </div>
+  <p class="lede">What tenants texted this facility, each matched to a tenant through the FMS. Nobody who sent STOP is texted.</p>
 
-    <section class="reading" aria-label="Case notes for this text">
-    {% if run and run.status == 'running' %}
-      <p><span class="chip wait">The case is being prepared</span></p>
-    {% elif run and run.notes.summary %}
-      <div class="reading-head">
-        <span class="reading-label">{{ run.notes.label }}</span>
-        {% if run.notes.needs_person %}<span class="chip act">A person has to act</span>{% else %}<span class="chip done">No person needed</span>{% endif %}
-        <span class="muted small">{{ run.notes.intent|replace('_', ' ') }}</span>
-      </div>
-      <p class="reading-summary">{{ run.notes.summary }}</p>
-      {% if run.notes.reason %}<p class="reading-reason"><b>Why:</b> {{ run.notes.reason }}</p>{% endif %}
-      <details class="records" open>
-        <summary>{{ run.records|length }} {{ 'record' if run.records|length == 1 else 'records' }} these notes rest on</summary>
-        <ul>{% for rec in run.records %}<li><span class="rec-kind">{{ rec.kind }}</span> {{ rec.text }}</li>{% endfor %}</ul>
-      </details>
-      <p class="deskcheck">
-        {% if run.verified and run.verified.checked %}
-          <span class="chip {{ 'done' if run.verified.sale_listed_nothing_owed else 'wait' }}">{% include "icons/shield-check.svg" %}{{ 'The desk confirms the sale' if run.verified.sale_listed_nothing_owed else 'The desk does not confirm the sale' }}</span>
-        {% else %}<span class="chip plain">Not checked by the desk</span>{% endif %}
-        <span class="small">{{ run.verified.says if run.verified else '' }}</span>
-      </p>
-      {% for a in run.actions %}
-      <p class="deskcheck"><span class="chip {{ a.tone }}">{% include "icons/list-checks.svg" %}{{ a.label }}</span> <span class="small">{{ a.text }}</span></p>
+  {% if selected %}
+  {% set t = selected %}
+  {% set run = t.investigation %}
+  <div class="mail">
+    <nav class="threads" aria-label="Messages">
+      <p class="threads-head">{{ texts|length }} {{ 'message' if texts|length == 1 else 'messages' }}, newest first</p>
+      {% for m in texts %}
+      <a class="thread" href="/inbox?facility={{ facility.provider_id }}&amp;text={{ m.id }}" {% if m.id == t.id %}aria-current="true"{% endif %}>
+        <span class="thread-top"><b>{{ m.match.customer_name or 'Unknown number' }}</b><time>{{ local(m.received_at) }}</time></span>
+        <span class="thread-line">{{ m.body }}</span>
+        <span class="thread-chips">{{ flags(m) }}</span>
+      </a>
       {% endfor %}
-    {% elif run %}
-      <p><span class="chip act">The case could not be prepared</span> <span class="small">{{ run.error or 'No notes were written.' }}</span></p>
-    {% endif %}
-    {% if t.match.state == 'matched' %}
-      {% if live %}
-      <p class="run-row"><button class="button primary" type="button" data-investigate="{{ t.id }}">{{ 'Prepare again' if run else 'Prepare the case' }}</button>
-        <span class="small muted" id="status-{{ t.id }}" role="status"></span></p>
-      {% elif not run %}<p class="small muted">No case notes for this text.</p>{% endif %}
-    {% endif %}
-    </section>
-  </article>
+    </nav>
+
+    <article class="case">
+      <header class="case-head">
+        <div class="case-who">
+          <h2>{{ t.match.customer_name or 'Unknown number' }}</h2>
+          <span class="muted small mono">{{ t['from'] }}</span>
+        </div>
+        <div class="case-chips">
+          {% if t.match.state == 'matched' %}
+            <span class="chip done">{% include "icons/user-check.svg" %}Matched</span>
+            <span class="small muted">{% for l in t.match.leases %}Unit {{ l.unit }}{% if not loop.last %}, {% endif %}{% endfor %}</span>
+          {% elif t.match.state == 'ambiguous' %}<span class="chip wait">Two tenants share this number. A person decides.</span>
+          {% elif t.match.state == 'pending' %}<span class="chip wait">Being matched</span>
+          {% else %}<span class="chip plain">No tenant found for this number</span>{% endif %}
+          {% if t.stopped %}<span class="chip act">{% include "icons/hand.svg" %}Texting stopped</span>{% endif %}
+        </div>
+      </header>
+
+      <div class="case-body">
+        <section class="convo" aria-label="Conversation">
+          <p class="pane-title">Conversation</p>
+          <div class="bubble in">{{ t.body }}</div>
+          <p class="bubble-meta">{{ local(t.received_at) }}</p>
+          {% for r in t.replies %}
+          <div class="bubble out">{{ r.body }}</div>
+          <p class="bubble-meta out">
+            <span class="chip {{ 'done' if r.state == 'sent' else ('act' if r.state in ('blocked', 'rejected') else 'wait') }}">{% include "icons/send.svg" %}{{ {'sent': 'Sent', 'blocked': 'Blocked', 'rejected': 'Refused', 'outcome_unknown': 'Not confirmed', 'intent': 'Sending'}.get(r.state, r.state) }}</span>
+            {% if r.reason %}<span>{{ r.reason }}</span>{% endif %}
+          </p>
+          {% endfor %}
+        </section>
+
+        <section class="work" aria-label="What our agent did" aria-live="polite">
+          <p class="pane-title">Our agent</p>
+          <div id="progress" hidden>
+            <div class="work-title"><h3>Exploring this message</h3></div>
+            <ol class="live-steps" id="steps"></ol>
+            <div class="skeleton" aria-hidden="true"><i></i><i></i><i></i></div>
+          </div>
+          <div id="work-main">
+          {% if run and run.status == 'running' %}
+            <div class="work-title"><h3>Exploring this message</h3><span class="chip wait">Running</span></div>
+            <div class="skeleton" aria-hidden="true"><i></i><i></i><i></i></div>
+          {% elif run and run.notes.summary %}
+            <div class="work-title">
+              <h3>{{ run.notes.label }}</h3>
+              {% if run.notes.needs_person %}<span class="chip act">A person has to act</span>{% else %}<span class="chip done">No person needed</span>{% endif %}
+              <span class="muted small">{{ run.notes.intent|replace('_', ' ') }}</span>
+            </div>
+            <p class="reading-summary">{{ run.notes.summary }}</p>
+            {% if run.notes.reason %}<p class="reading-reason"><b>Why:</b> {{ run.notes.reason }}</p>{% endif %}
+            <div class="checks">
+              <p class="deskcheck">
+                {% if run.verified and run.verified.checked %}
+                  <span class="chip {{ 'done' if run.verified.sale_listed_nothing_owed else 'wait' }}">{% include "icons/shield-check.svg" %}{{ 'The desk confirms the sale' if run.verified.sale_listed_nothing_owed else 'The desk does not confirm the sale' }}</span>
+                {% else %}<span class="chip plain">Not checked by the desk</span>{% endif %}
+                <span class="small">{{ run.verified.says if run.verified else '' }}</span>
+              </p>
+              {% for a in run.actions %}
+              <p class="deskcheck"><span class="chip {{ a.tone }}">{% include "icons/list-checks.svg" %}{{ a.label }}</span> <span class="small">{{ a.text }}</span></p>
+              {% endfor %}
+            </div>
+            <details class="records" open>
+              <summary>{{ run.records|length }} {{ 'record' if run.records|length == 1 else 'records' }} these notes rest on</summary>
+              <ul>{% for rec in run.records %}<li><span class="rec-kind">{{ rec.kind }}</span><span>{{ rec.text }}</span></li>{% endfor %}</ul>
+            </details>
+          {% elif run %}
+            <div class="work-title"><h3>Our agent could not finish</h3><span class="chip act">No case notes</span></div>
+            <p class="reading-reason">{{ run.error or 'No notes were written.' }}</p>
+          {% elif t.match.state != 'matched' %}
+            <div class="empty-work">
+              <h3>There is no tenant to look up</h3>
+              <p class="muted">The FMS did not match this number to one tenant, so there are no records for our agent to read. A person has to answer it.</p>
+            </div>
+          {% else %}
+            <div class="empty-work">
+              <h3>Our agent has not looked at this message yet</h3>
+              <ul>
+                <li>It reads this tenant's account, payments and sale status.</li>
+                <li>It may ask staff to review a sale that is still listed.</li>
+                <li>It writes the case notes. It changes nothing in the FMS.</li>
+              </ul>
+            </div>
+          {% endif %}
+          </div>
+          <p class="small" id="run-error" role="alert" hidden></p>
+          {% if t.match.state == 'matched' %}
+          <p class="work-foot">
+            {% if live %}
+            <button class="button primary" type="button" id="explore" data-explore="{{ t.id }}" data-run="{{ run.id if run else 0 }}" {% if run and run.status == 'running' %}data-running="1"{% endif %}>{{ 'Explore again' if run and run.status != 'running' else 'Explore with our agent' }}</button>
+            {% if run and run.notes.summary %}<span class="small muted">Written by our agent from the desk's records. The desk checks what it can.</span>{% endif %}
+            {% elif not run %}<span class="small muted">Our agent is switched off on this copy, so there are no case notes yet.</span>{% endif %}
+          </p>
+          {% endif %}
+        </section>
+      </div>
+    </article>
+  </div>
   {% else %}
-  <p class="empty">No text has reached this facility's number yet.</p>
-  {% endfor %}
+  <p class="empty">No message has reached this facility's number yet.</p>
+  {% endif %}
 </div>
 <script>
 (function () {
-  function requestId() {
-    return (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2);
+  var button = document.getElementById("explore");
+  if (!button) return;
+  var id = button.getAttribute("data-explore"), before = Number(button.getAttribute("data-run")) || 0, label = button.textContent;
+  var box = document.getElementById("progress"), main = document.getElementById("work-main"), list = document.getElementById("steps");
+  var error = document.getElementById("run-error"), foot = button.parentNode;
+  var TICK = '<svg class="icon" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>';
+  var shown = [], waiting = false, finished = false;
+
+  function paint() {
+    shown.forEach(function (li, n) {
+      var now = n === shown.length - 1 && !finished;
+      li.className = now ? "now" : "done";
+      li.firstChild.outerHTML = now ? '<span class="now-dot"></span>' : TICK;
+    });
   }
-  document.querySelectorAll("[data-investigate]").forEach(function (button) {
-    button.addEventListener("click", function () {
-      var id = button.getAttribute("data-investigate");
-      var status = document.getElementById("status-" + id);
-      button.disabled = true;
-      status.textContent = "Reading the records and writing the notes. This takes about ten seconds.";
-      fetch("/api/inbox/" + id + "/investigate", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ request_id: requestId(), again: true })
-      }).then(function (r) {
-        return r.json().then(function (body) { return { code: r.status, body: body }; });
-      }).then(function (res) {
-        if (res.code === 200 || res.code === 202) { location.hash = "text-" + id; location.reload(); return; }
-        status.textContent = (res.body && res.body.detail) || "The case could not be prepared.";
-        button.disabled = false;
-      }).catch(function () { status.textContent = "The request failed. Try again."; button.disabled = false; });
+  function step(text) {
+    var li = document.createElement("li");
+    li.innerHTML = "<span></span>";
+    li.appendChild(document.createTextNode(text));
+    list.appendChild(li); shown.push(li); paint();
+  }
+  function poll() {
+    if (!waiting) return;
+    fetch("/api/inbox/" + id + "/progress").then(function (r) { return r.ok ? r.json() : null; }).then(function (p) {
+      if (p && p.run > before) {
+        p.steps.forEach(function (text, n) { if (n + 1 >= shown.length) step(text); });
+        if (p.status !== "running" && shown[shown.length - 1].textContent !== "Checking the notes and the staff task") step("Checking the notes and the staff task");
+      }
+    }).catch(function () {}).then(function () { if (waiting) setTimeout(poll, 800); });
+  }
+  function start() {
+    waiting = true; error.hidden = true; button.disabled = true; button.textContent = "Exploring...";
+    main.hidden = true; box.hidden = false; list.innerHTML = ""; shown = []; finished = false;
+    step("Reading the message");
+    setTimeout(poll, 600);
+  }
+  button.addEventListener("click", function () {
+    start();
+    fetch("/api/inbox/" + id + "/investigate", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ request_id: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2), again: true })
+    }).then(function (r) { return r.json().then(function (body) { return { code: r.status, body: body }; }); }).then(function (res) {
+      waiting = false;
+      if (res.code === 200 || res.code === 202) { finished = true; paint(); location.reload(); return; }
+      box.hidden = true; main.hidden = false; button.disabled = false; button.textContent = label;
+      error.textContent = (res.body && res.body.detail) || "Our agent could not run just now. Try again in a minute."; error.hidden = false;
+    }).catch(function () {
+      waiting = false; box.hidden = true; main.hidden = false; button.disabled = false; button.textContent = label;
+      error.textContent = "The request failed. Try again."; error.hidden = false;
     });
   });
+  if (button.hasAttribute("data-running")) {
+    start(); before = before - 1;
+    (function again() {
+      fetch("/api/inbox/" + id + "/progress").then(function (r) { return r.ok ? r.json() : null; }).then(function (p) {
+        if (p && p.status !== "running") location.reload(); else setTimeout(again, 1200);
+      }).catch(function () { setTimeout(again, 3000); });
+    })();
+  }
 })();
 </script>
 {% endblock %}

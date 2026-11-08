@@ -134,7 +134,7 @@ def test_the_page_shows_the_staff_review_under_the_desks_check(fms_url, sim):
         with client.app.state.session_factory() as s:
             model.turns = asking(s).turns
         assert click(client, message_ids(client)["Dana Whitfield"], "visitor-click-review", A).status_code == 200
-        html = client.get("/inbox").text
+        html = client.get(f"/inbox?text={message_ids(client)['Dana Whitfield']}").text
         assert "Existing FMS task linked" in html and "read it back from the FMS" in html
         for code in ("task_", "workitem:", "OPEN"):
             assert code not in html, code

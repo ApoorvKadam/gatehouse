@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from copy import deepcopy
 from dataclasses import dataclass
 from collections.abc import Callable
 from datetime import datetime, timedelta
@@ -502,13 +503,18 @@ class Investigation:
             self.session.commit()           # the call is paid for whatever happens next, so its cost is kept
             entry = {"turn": turn + 1, "stop_reason": response.stop_reason, "forced": forced, "calls": []}
             self.trace.append(entry)
-            self.row.trace, self.row.facts = list(self.trace), dict(self.lookups.facts)
+            self.row.trace, self.row.facts = deepcopy(self.trace), dict(self.lookups.facts)
             if response.stop_reason in ("refusal", "max_tokens"):
                 if response.stop_reason == "max_tokens":
                     log.warning("agent run %s: the model ran out of tokens on turn %d", self.row.id, turn + 1)
                 return self._end("needs_person", response.stop_reason, f"the model stopped: {response.stop_reason}")
             messages.append({"role": "assistant", "content": response.content})
             calls = [b for b in response.content if b.type == "tool_use"]
+            entry["asked"] = [c.name for c in calls]
+            # the page shows the steps of a run that is still going, so what was asked is saved now. Every save is a copy: the saved
+            # value and the live one must not be the same objects, or a later change to a call would look like no change at all.
+            self.row.trace = deepcopy(self.trace)
+            self.session.commit()
             entry["wrote_text"] = any(b.type == "text" and b.text.strip() for b in response.content)       # the text itself is not kept
             reads = [c for c in calls if c.name != "submit_case_packet"]
             # a packet may list only what earlier turns returned: the model had not seen this turn's results when it wrote it
@@ -528,13 +534,13 @@ class Investigation:
                 entry["calls"].append({"tool": "submit_case_packet", "input": {"intent": packet.get("intent") if packet.get("intent") in INTENTS else None,
                                                                                 "records": [shown_id(i) for i in listed[:MAX_RECORDS + 1]]},
                                        "records": [], "error": problem})
-                self.row.trace, self.row.facts = list(self.trace), dict(self.lookups.facts)
+                self.row.trace, self.row.facts = deepcopy(self.trace), dict(self.lookups.facts)
                 # a packet that fails the check is sent back once; the second is final, and so is one on the forced last turn
                 if problem is None or sent_back or forced:
                     return self._accept(packet, response.stop_reason, problem)
                 sent_back = True
                 results += [{"type": "tool_result", "tool_use_id": c.id, "is_error": True, "content": NOT_ACCEPTED} for c in submitted]
-            self.row.trace, self.row.facts = list(self.trace), dict(self.lookups.facts)
+            self.row.trace, self.row.facts = deepcopy(self.trace), dict(self.lookups.facts)
             if results:
                 messages.append({"role": "user", "content": results})
             else:
@@ -779,6 +785,28 @@ def _act(session: Session, adapter, inv: Investigation) -> None:
         done.append({"kind": "staff_review", "work_item_id": item_id, **result})
     row.actions = list(row.actions or []) + done
     session.commit()
+
+
+# the words the page shows for each step of a run, taken from what the run really did
+STEP_WORDS = {"get_account": "Reading the tenant's account", "get_payments": "Checking payments",
+              "get_sale_status": "Checking the sale and its outside listing", "get_lien_file": "Checking the lien file",
+              "get_recent_texts": "Reading the recent messages", "request_staff_review": "Asking staff to review the sale",
+              "submit_case_packet": "Writing the case notes"}
+
+
+def progress(session: Session, inbound_id: int) -> dict:
+    """What the latest run on a text has done so far, as plain steps read from the run's own trace, which is saved as the run goes.
+    Nothing here is timed or invented, and no id leaves it except the run's own number, which lets a page tell a new run from an old one."""
+    row = session.scalar(select(AgentRun).where(AgentRun.inbound_id == inbound_id).order_by(AgentRun.id.desc()))
+    if row is None:
+        return {"run": 0, "status": "none", "steps": []}
+    steps: list[str] = []
+    for turn in row.trace or []:
+        names = list(turn.get("asked") or []) + [c.get("tool") for c in turn.get("calls", [])]
+        for label in (STEP_WORDS.get(n) for n in names):
+            if label and label not in steps:
+                steps.append(label)
+    return {"run": row.id, "status": row.status, "steps": steps}
 
 
 def run_view(row: AgentRun, trace: bool = False) -> dict:
