@@ -72,7 +72,7 @@ def test_reading_every_page_writes_nothing(fms_url, sim):
     app = preview(fms_url)
     with TestClient(app) as visitor:
         before = counts(app)
-        pages = ["/", "/today", "/today?facility=fac_NSalbany001", "/limits"]
+        pages = ["/", "/today", "/today?facility=fac_NSalbany001", "/inbox", "/evaluation", "/operations"]
         for case_id in range(1, 7):
             pages += [f"/accounts/{case_id}", f"/accounts/{case_id}/lien"]
         pages += ["/payments/1", "/payments/2"]

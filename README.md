@@ -26,6 +26,7 @@ A 29-second loop of one lost payment, built from the app's own screens (click th
 | Florida lien evidence | Built | Every requirement has a record; the best a file reaches is a packet for a person to review |
 | Access and overlocks | Built | The FMS's gate code and unit locks match the facility's recorded lockout rule, in both directions, on a complete reading |
 | Lien sales | Built | A sale still listed after the account was paid is cancelled in the FMS (auctions/search shows it), and an outside listing is withdrawn by that site's own report |
+| Messages | Built | A tenant's text is matched to a tenant through the FMS, never by a number someone typed, and every STOP is honoured. "Explore with our agent" reads that tenant's records and writes case notes; a staff review of a listed sale is linked or asked for, and read back from the FMS |
 | Leads and move-ins | Planned | A missed call counts as recovered only when a specific lease is linked to it |
 | Rent changes | Planned | An approved increase is saved, noticed and charged in the FMS, with what happened after |
 
@@ -54,6 +55,12 @@ The hosted preview is read-only and runs on synthetic data. Its home page shows 
 - **A payment is not a legal conclusion.** A payment after the notice that leaves a balance, and a sale already settled on an account with nothing owed or payments since the notice, go to a person and counsel. The FMS does not say whether a sale came before or after a payment, so Gatehouse claims no order, and a bidder's payment is never read as the tenant's.
 - **Closing needs its own evidence.** "FMS lien cancellation verified" means auctions/search shows that auction and lease cancelled, and nothing more; a completed task closes nothing. If a payment comes back before the cancellation, the item moves to review and its task is marked as resting on the older reading. A listing on an outside auction site is its own item, closed only by that site's feed. Gatehouse never cancels, settles or completes a sale.
 
+## Messages
+
+The Messages page lists what tenants texted a facility, newest first. For the message you choose it shows the conversation beside what our agent did about it. "Explore with our agent" reads that tenant's account, payments and sale status, may ask for a staff review of a sale that is still listed, and writes the case notes. It changes nothing in the FMS. While it runs, the page shows each step as it happens, taken from the run itself.
+
+The case notes are written by a language model from the records the desk holds. The desk checks what it can and shows the records beside the notes: the sale the notes rely on must be open and read lately, and every amount and date in the notes must appear in a record. A run costs about a fifth of a cent. The preview allows ten explorations per visitor per day and one dollar a day in all.
+
 ## How it is built
 
 - A FastAPI service with a database and a reconciliation worker.
@@ -72,7 +79,7 @@ docker compose up --build       # one container: Gatehouse and its worker on :80
 
 The hosted preview sets `DESK_DEMO_SEED=1` and `DESK_PUBLIC_VIEW=1`: on an empty database Gatehouse builds a synthetic world by running its own flows against the simulator (a payment whose answer was lost, a returned payment, a Florida lien file reopened by a payment, a New York file sent to counsel), and anyone may read it without a token. Every change still needs the operator token, and the public view refuses to start against anything but the local simulator.
 
-With `DESK_PUBLIC_INVESTIGATE=1` and a model key, any visitor of the preview can press Prepare the case on a seeded text at `/inbox` and watch the case notes get written live. The limits are `DESK_DAILY_BUDGET_USD` (one dollar a day in all, counting the most each run still going could cost) and `DESK_VISITOR_CASES_PER_DAY` (ten per visitor, a visitor being a hash of where the request came from, never the address). Both count in New York time. A refused request is told why in plain words. The counts live in the desk's database, so a restart of the preview starts them again; a public link needs a guard that a restart cannot reset.
+With `DESK_PUBLIC_INVESTIGATE=1` and a model key, any visitor of the preview can press "Explore with our agent" on a message at `/inbox` and watch the case notes get written live. The limits are `DESK_DAILY_BUDGET_USD` (one dollar a day in all, counting the most each run still going could cost) and `DESK_VISITOR_CASES_PER_DAY` (ten per visitor, a visitor being a hash of where the request came from, never the address). Both count in New York time. A refused request is told why in plain words. The counts live in the desk's database, so a restart of the preview starts them again; a public link needs a guard that a restart cannot reset.
 
 There are no migrations yet: after pulling schema changes, start from fresh volumes (`docker compose down -v`). That includes moving from the earlier three-service compose file, whose `desk-data` and `fms-data` volumes the single container does not use.
 

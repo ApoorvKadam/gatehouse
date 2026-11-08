@@ -509,6 +509,9 @@ class Investigation:
                 return self._end("needs_person", response.stop_reason, f"the model stopped: {response.stop_reason}")
             messages.append({"role": "assistant", "content": response.content})
             calls = [b for b in response.content if b.type == "tool_use"]
+            entry["asked"] = [c.name for c in calls]
+            self.row.trace = list(self.trace)
+            self.session.commit()           # the page shows the steps of a run that is still going, so what was asked is saved now
             entry["wrote_text"] = any(b.type == "text" and b.text.strip() for b in response.content)       # the text itself is not kept
             reads = [c for c in calls if c.name != "submit_case_packet"]
             # a packet may list only what earlier turns returned: the model had not seen this turn's results when it wrote it
@@ -779,6 +782,28 @@ def _act(session: Session, adapter, inv: Investigation) -> None:
         done.append({"kind": "staff_review", "work_item_id": item_id, **result})
     row.actions = list(row.actions or []) + done
     session.commit()
+
+
+# the words the page shows for each step of a run, taken from what the run really did
+STEP_WORDS = {"get_account": "Reading the tenant's account", "get_payments": "Checking payments",
+              "get_sale_status": "Checking the sale and its outside listing", "get_lien_file": "Checking the lien file",
+              "get_recent_texts": "Reading the recent messages", "request_staff_review": "Asking staff to review the sale",
+              "submit_case_packet": "Writing the case notes"}
+
+
+def progress(session: Session, inbound_id: int) -> dict:
+    """What the latest run on a text has done so far, as plain steps read from the run's own trace, which is saved as the run goes.
+    Nothing here is timed or invented, and no id leaves it except the run's own number, which lets a page tell a new run from an old one."""
+    row = session.scalar(select(AgentRun).where(AgentRun.inbound_id == inbound_id).order_by(AgentRun.id.desc()))
+    if row is None:
+        return {"run": 0, "status": "none", "steps": []}
+    steps: list[str] = []
+    for turn in row.trace or []:
+        names = list(turn.get("asked") or []) + [c.get("tool") for c in turn.get("calls", [])]
+        for label in (STEP_WORDS.get(n) for n in names):
+            if label and label not in steps:
+                steps.append(label)
+    return {"run": row.id, "status": row.status, "steps": steps}
 
 
 def run_view(row: AgentRun, trace: bool = False) -> dict:

@@ -1,4 +1,4 @@
-"""A visitor can prepare a case live on the preview, inside the limits, and the Texts page shows the result.
+"""A visitor can explore a message with our agent live on the preview, inside the limits, and the Messages page shows the result.
 The model is scripted here; the limits, the refusals and the page are the real ones."""
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ A = {"cf-connecting-ip": "203.0.113.7"}
 
 
 def no_vendor_name(page: str) -> bool:
-    """No page names the model or its maker; the one disclosure on the Limits page says a language model."""
+    """No page names the model or its maker. The agent is called our agent."""
     return not any(word in page.lower() for word in ("claude", "anthropic", "haiku"))
 
 
@@ -113,40 +113,50 @@ def test_without_the_switch_a_visitor_still_cannot_start_a_run(fms_url, sim):
         assert click(client, dana, "visitor-click-030").status_code == 401
 
 
-# ---------------------------------------------------------------- the Texts page
+# ---------------------------------------------------------------- the Messages page
 
 
-def test_the_texts_page_shows_each_text_who_it_matches_and_the_switch(fms_url, sim):
+def test_the_messages_page_lists_each_message_and_shows_the_chosen_one_beside_what_our_agent_did(fms_url, sim):
     with TestClient(live_app(fms_url, Scripted(), visitor_cases_per_day=10)) as client:
+        ids = message_ids(client)
         page = client.get("/inbox")
         html = page.text
-        assert page.status_code == 200 and 'href="/inbox"' in html and "Texts at " in html
-        assert all(name in html for name in ("Dana Whitfield", "Priya Raman", "Marcus Bell", "Unknown number"))
-        assert "Texting stopped" in html and "Reply blocked" in html and "Reply sent" in html
-        assert "You have 10 of 10 cases left today." in html
-        assert html.count('data-investigate="') == 3                                  # a button for each of the three matched texts, none for the stranger
-        assert no_vendor_name(html)                                                 # the page never names the model
+        assert page.status_code == 200 and 'href="/inbox"' in html and "Messages at " in html and ">Messages</a>" in html
+        assert all(name in html for name in ("Dana Whitfield", "Priya Raman", "Marcus Bell", "Unknown number"))      # every message is in the list
+        assert "Texting stopped" in html                                                                           # Marcus's chip, in the list
+        assert "of 10 explorations left today" in html and html.count('<i class="left">') == 10
+        assert html.count("data-explore=") == 1 and "Explore with our agent" in html                             # one button, for the chosen matched message
+        assert no_vendor_name(html)                                                                              # the page never names the model
+        priya = client.get(f"/inbox?text={ids['Priya Raman']}").text
+        assert "Hi Priya, yes. Your payment plan" in priya and ">Sent<" in priya.replace("</svg>", "")
+        marcus = client.get(f"/inbox?text={ids['Marcus Bell']}").text
+        assert "Blocked" in marcus and "This number texted STOP" in marcus
+        stranger = client.get(f"/inbox?text={ids['stranger']}").text
+        assert "There is no tenant to look up" in stranger and "data-explore=" not in stranger
 
 
-def test_the_texts_page_says_so_when_live_runs_are_off(fms_url, sim):
+def test_the_messages_page_says_so_when_live_runs_are_off(fms_url, sim):
     with TestClient(preview(fms_url, None)) as client:
         html = client.get("/inbox").text
-        assert "Case preparation is off here" in html and "Prepare the case" not in html
-        assert "No case notes for this text." in html and no_vendor_name(html)
+        assert "Our agent is switched off on this copy" in html and "Explore with our agent" not in html and "data-explore=" not in html
+        assert no_vendor_name(html)
 
 
-def test_the_limits_page_says_a_language_model_writes_the_notes_and_names_no_vendor(fms_url, sim):
+def test_there_is_no_limits_page_and_no_page_links_to_one(fms_url, sim):
     with TestClient(preview(fms_url, None)) as client:
-        html = client.get("/limits").text
-        assert "written by a language model from the records" in html and no_vendor_name(html)
+        assert client.get("/limits").status_code == 404
+        for path in ("/", "/today", "/inbox", "/evaluation", "/operations"):
+            html = client.get(path).text
+            assert "Limits" not in html and "/limits" not in html and "What this is and is not" not in html, path
 
 
 def test_after_a_run_the_page_shows_the_case_notes_under_their_label_the_records_and_the_desks_check(fms_url, sim):
     model = Scripted()
     with TestClient(live_app(fms_url, model)) as client:
         fill(client, model, 1)
-        assert click(client, message_ids(client)["Dana Whitfield"], "visitor-click-040", A).status_code == 200
-        html = client.get("/inbox").text
+        dana = message_ids(client)["Dana Whitfield"]
+        assert click(client, dana, "visitor-click-040", A).status_code == 200
+        html = client.get(f"/inbox?text={dana}").text
         assert "Case notes" in html and no_vendor_name(html)
         assert "Dana says she paid $240.00, and her unit is still on the sale list." in html
         assert "a person has to ask for the sale to be cancelled" in html
@@ -154,7 +164,7 @@ def test_after_a_run_the_page_shows_the_case_notes_under_their_label_the_records
         assert 'class="rec-kind">Sale<' in html and 'class="rec-kind">Payment attempt<' in html      # the two records the packet cites, by kind
         for code in ("workitem:", "payment:", "observed:", "lease:", "lease_", "payment_", "NEEDS_STAFF", "sale_listed"):          # no raw id or code on the page
             assert code not in html, code
-        assert "The desk confirms the sale" in html and "Prepare again" in html
+        assert "The desk confirms the sale" in html and "Explore again" in html and "Written by our agent from the desk" in html
 
 
 # ---------------------------------------------------------------- the check, asked again once the run is written
