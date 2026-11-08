@@ -31,6 +31,7 @@ from .wording import plain
 
 HERE = Path(__file__).parent
 templates = Jinja2Templates(directory=HERE / "templates")
+templates.env.filters["readable"] = lambda text: plain(text, ids=False)      # times and state codes as words; the ids on an evidence page stay
 
 # The four kinds of entry an account's record keeps apart. Every event kind lands in exactly one of them.
 FMS, OBSERVED, CONCLUDED, DECIDED = "fms", "observed", "concluded", "decided"
@@ -566,7 +567,7 @@ def router(pages: Pages) -> APIRouter:
             read_at, listed_at = when(o.get("read_at")), when((o.get("listing") or {}).get("observedAt"))
             return templates.TemplateResponse(request, "sale.html", {
                 "w": w, "o": o, "facility": facility, "case_id": case_id, "related": related, "hours": hours,
-                "read_at": read_at, "listed_at": listed_at, "on": on,
+                "read_at": read_at, "listed_at": listed_at, "on": on, "sale_local": sales.sale_local,
                 "kind_names": sales.KIND_NAMES, "status_words": sales.STATUS_WORDS, "cancelled_by": sales.CANCELLED_BY,
                 "outside_note": sales.OUTSIDE_NOTE, "money": money, "local": local, "nav": "today", "facilities": pages.facilities(s)})
 

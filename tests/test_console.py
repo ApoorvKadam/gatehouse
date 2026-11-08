@@ -62,3 +62,12 @@ def test_the_progress_of_a_run_is_read_from_the_steps_it_really_took(fms_url, si
         assert later["steps"][-2:] == ["Asking staff to review the sale", "Writing the case notes"]
         assert "workitem" not in str(later) and "lease:" not in str(later)                      # steps are words, never a record id
         assert client.get("/api/inbox/99999/progress").status_code == 404
+
+
+def test_a_sale_page_writes_its_times_as_a_person_reads_them_and_keeps_the_ids_it_compares(fms_url, sim):
+    with TestClient(preview(fms_url, None)) as client:
+        links = sorted(set(re.findall(r'href="(/sales/\d+)"', client.get("/today").text)))
+        assert links
+        for link in links:
+            text = visible(client.get(link).text)
+            assert re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", text) is None, link

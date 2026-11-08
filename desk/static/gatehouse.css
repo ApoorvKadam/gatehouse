@@ -504,10 +504,11 @@ html { scrollbar-color: var(--frame) var(--paper); }
 }
 
 /* Operations: counts as bars, so a long list is read at a glance */
-.bar-row { display: grid; grid-template-columns: minmax(9rem, 14rem) minmax(0, 1fr) 3rem; align-items: center; gap: var(--s3); padding: var(--s2) 0; font-size: var(--t-sm); }
+.bar-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 6px var(--s3); padding: var(--s2) 0; font-size: var(--t-sm); }
+.bar-row .bar-track { grid-column: 1 / -1; grid-row: 2; }
+.bar-row .num { grid-column: 2; grid-row: 1; text-align: right; font-weight: 600; }
 .bar-track { display: block; height: 10px; border-radius: 5px; background: var(--band); overflow: hidden; }
 .bar-fill { display: block; height: 100%; border-radius: 5px; background: var(--ink-3); }
-.bar-row .num { text-align: right; font-weight: 600; }
 .tally { display: grid; grid-template-columns: 1fr auto; gap: var(--s2) var(--s4); font-size: var(--t-sm); margin: 0; }
 .tally dt { color: var(--ink-3); }
 .tally dd { margin: 0; text-align: right; font-weight: 600; }

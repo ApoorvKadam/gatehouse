@@ -9,16 +9,16 @@
 </div>
 <div class="state"><span class="chip {{ 'done' if w.state == 'closed' else ('act' if w.kind in ('sale_listed_nothing_owed', 'sale_settled_review') else 'wait') }}">{% include "icons/gavel.svg" %}{{ 'Closed: ' ~ w.verification if w.state == 'closed' else kind_names[w.kind] }}</span>
   <span class="muted small">last read {{ local(w.updated_at) }}</span></div>
-<p class="lede">{{ w.problem }}</p>
+<p class="lede">{{ w.problem|readable }}</p>
 {% if o.get('task_warning') %}<p class="note" style="font-size:var(--t-body);color:var(--ink)">{{ o.task_warning }}</p>{% endif %}
-{% if w.note %}<p class="note" style="font-size:var(--t-body);color:var(--ink)">{{ w.note }}</p>{% endif %}
+{% if w.note %}<p class="note" style="font-size:var(--t-body);color:var(--ink)">{{ w.note|readable }}</p>{% endif %}
 
 <div class="grid2 align-start">
   <section class="panel">
     <h2><span class="lane-dot lane-fms"></span>The sale, as the FMS lists it</h2>
     <dl class="kv">
       <dt>Auction</dt><dd>{{ o.get('auction_id', 'not read') }}</dd>
-      <dt>Sale time</dt><dd>{{ o.get('sale_local') or o.get('auction_time') }}, facility time ({{ facility.time_zone|replace('_', ' ') }})</dd>
+      <dt>Sale time</dt><dd>{{ o.get('sale_local') or (sale_local(o['auction_time']) if o.get('auction_time') else 'not known') }}, facility time ({{ facility.time_zone|replace('_', ' ') }})</dd>
       <dt>Time left</dt><dd>{% if o.get('sale_time_problem') %}Not worked out: {{ o.sale_time_problem }}{% elif hours is none %}Not known{% elif hours > 0 %}{{ hours|round|int }} hours{% else %}The scheduled time has passed{% endif %}</dd>
       <dt>Status</dt><dd>{{ status_words.get(o.get('status'), o.get('status', 'not read'))|capitalize }}</dd>
       {% if read_at %}<dt>Read</dt><dd>{{ local(read_at) }}</dd>{% endif %}

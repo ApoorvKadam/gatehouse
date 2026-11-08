@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from copy import deepcopy
 from dataclasses import dataclass
 from collections.abc import Callable
 from datetime import datetime, timedelta
@@ -502,7 +503,7 @@ class Investigation:
             self.session.commit()           # the call is paid for whatever happens next, so its cost is kept
             entry = {"turn": turn + 1, "stop_reason": response.stop_reason, "forced": forced, "calls": []}
             self.trace.append(entry)
-            self.row.trace, self.row.facts = list(self.trace), dict(self.lookups.facts)
+            self.row.trace, self.row.facts = deepcopy(self.trace), dict(self.lookups.facts)
             if response.stop_reason in ("refusal", "max_tokens"):
                 if response.stop_reason == "max_tokens":
                     log.warning("agent run %s: the model ran out of tokens on turn %d", self.row.id, turn + 1)
@@ -510,8 +511,10 @@ class Investigation:
             messages.append({"role": "assistant", "content": response.content})
             calls = [b for b in response.content if b.type == "tool_use"]
             entry["asked"] = [c.name for c in calls]
-            self.row.trace = list(self.trace)
-            self.session.commit()           # the page shows the steps of a run that is still going, so what was asked is saved now
+            # the page shows the steps of a run that is still going, so what was asked is saved now. Every save is a copy: the saved
+            # value and the live one must not be the same objects, or a later change to a call would look like no change at all.
+            self.row.trace = deepcopy(self.trace)
+            self.session.commit()
             entry["wrote_text"] = any(b.type == "text" and b.text.strip() for b in response.content)       # the text itself is not kept
             reads = [c for c in calls if c.name != "submit_case_packet"]
             # a packet may list only what earlier turns returned: the model had not seen this turn's results when it wrote it
@@ -531,13 +534,13 @@ class Investigation:
                 entry["calls"].append({"tool": "submit_case_packet", "input": {"intent": packet.get("intent") if packet.get("intent") in INTENTS else None,
                                                                                 "records": [shown_id(i) for i in listed[:MAX_RECORDS + 1]]},
                                        "records": [], "error": problem})
-                self.row.trace, self.row.facts = list(self.trace), dict(self.lookups.facts)
+                self.row.trace, self.row.facts = deepcopy(self.trace), dict(self.lookups.facts)
                 # a packet that fails the check is sent back once; the second is final, and so is one on the forced last turn
                 if problem is None or sent_back or forced:
                     return self._accept(packet, response.stop_reason, problem)
                 sent_back = True
                 results += [{"type": "tool_result", "tool_use_id": c.id, "is_error": True, "content": NOT_ACCEPTED} for c in submitted]
-            self.row.trace, self.row.facts = list(self.trace), dict(self.lookups.facts)
+            self.row.trace, self.row.facts = deepcopy(self.trace), dict(self.lookups.facts)
             if results:
                 messages.append({"role": "user", "content": results})
             else:
