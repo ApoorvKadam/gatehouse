@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Texts, {{ facility.name }} | Gatehouse{% endblock %}
+{% block main %}
+<div class="wrap">
+  <div class="head">
+    <h1>Texts at {{ facility.name }}</h1>
+    <p>{{ texts|length }} {{ 'text' if texts|length == 1 else 'texts' }}, newest first</p>
+  </div>
+  <p class="lede">Every text a tenant sent to this facility's number. Gatehouse matches each one to a tenant through the FMS, never by a number someone typed, and it does not text anyone who said STOP.</p>
+  {% if live %}
+  <p class="note live-note">Prepare the case reads this tenant's records and writes case notes, with the records they rest on listed under them. It changes nothing in the FMS. You have {{ left.cases_left }} of {{ cases_per_day }} cases left today.</p>
+  {% else %}
+  <p class="note live-note">Case preparation is off here, so no text has notes yet.</p>
+  {% endif %}
+
+  {% for t in texts %}
+  {% set run = t.investigation %}
+  <article class="text-card" id="text-{{ t.id }}">
+    <div class="text-head">
+      <span class="text-who">{{ t.match.customer_name or 'Unknown number' }}</span>
+      <span class="muted small mono">{{ t['from'] }}</span>
+      <span class="muted small">{{ local(t.received_at) }}</span>
+      {% if t.stopped %}<span class="chip act">{% include "icons/hand.svg" %}Texting stopped</span>{% endif %}
+    </div>
+    <blockquote class="said">{{ t.body }}</blockquote>
+    <p class="match-line">
+      {% if t.match.state == 'matched' %}
+        <span class="chip done">{% include "icons/user-check.svg" %}Matched</span>
+        <span class="small muted">{% for l in t.match.leases %}Unit {{ l.unit }}{% if not loop.last %}, {% endif %}{% endfor %}</span>
+      {% elif t.match.state == 'ambiguous' %}<span class="chip wait">Two tenants share this number. A person decides.</span>
+      {% elif t.match.state == 'pending' %}<span class="chip wait">Being matched</span>
+      {% else %}<span class="chip plain">No tenant found for this number</span>{% endif %}
+    </p>
+    {% for r in t.replies %}
+    <p class="reply-line">
+      <span class="chip {{ 'done' if r.state == 'sent' else ('act' if r.state in ('blocked', 'rejected') else 'wait') }}">{% include "icons/send.svg" %}{{ {'sent': 'Reply sent', 'blocked': 'Reply blocked', 'rejected': 'Reply refused', 'outcome_unknown': 'Reply not confirmed', 'intent': 'Reply being sent'}.get(r.state, r.state) }}</span>
+      <span class="small">{{ r.body }}</span>
+      {% if r.reason %}<span class="small muted">{{ r.reason }}</span>{% endif %}
+    </p>
+    {% endfor %}
+
+    <section class="reading" aria-label="Case notes for this text">
+    {% if run and run.status == 'running' %}
+      <p><span class="chip wait">The case is being prepared</span></p>
+    {% elif run and run.notes.summary %}
+      <div class="reading-head">
+        <span class="reading-label">{{ run.notes.label }}</span>
+        {% if run.notes.needs_person %}<span class="chip act">A person has to act</span>{% else %}<span class="chip done">No person needed</span>{% endif %}
+        <span class="muted small">{{ run.notes.intent|replace('_', ' ') }}</span>
+      </div>
+      <p class="reading-summary">{{ run.notes.summary }}</p>
+      {% if run.notes.reason %}<p class="reading-reason"><b>Why:</b> {{ run.notes.reason }}</p>{% endif %}
+      <details class="records" open>
+        <summary>{{ run.records|length }} {{ 'record' if run.records|length == 1 else 'records' }} these notes rest on</summary>
+        <ul>{% for rec in run.records %}<li><span class="rec-kind">{{ rec.kind }}</span> {{ rec.text }}</li>{% endfor %}</ul>
+      </details>
+      <p class="deskcheck">
+        {% if run.verified and run.verified.checked %}
+          <span class="chip {{ 'done' if run.verified.sale_listed_nothing_owed else 'wait' }}">{% include "icons/shield-check.svg" %}{{ 'The desk confirms the sale' if run.verified.sale_listed_nothing_owed else 'The desk does not confirm the sale' }}</span>
+        {% else %}<span class="chip plain">Not checked by the desk</span>{% endif %}
+        <span class="small">{{ run.verified.says if run.verified else '' }}</span>
+      </p>
+    {% elif run %}
+      <p><span class="chip act">The case could not be prepared</span> <span class="small">{{ run.error or 'No notes were written.' }}</span></p>
+    {% endif %}
+    {% if t.match.state == 'matched' %}
+      {% if live %}
+      <p class="run-row"><button class="button primary" type="button" data-investigate="{{ t.id }}">{{ 'Prepare again' if run else 'Prepare the case' }}</button>
+        <span class="small muted" id="status-{{ t.id }}" role="status"></span></p>
+      {% elif not run %}<p class="small muted">No case notes for this text.</p>{% endif %}
+    {% endif %}
+    </section>
+  </article>
+  {% else %}
+  <p class="empty">No text has reached this facility's number yet.</p>
+  {% endfor %}
+</div>
+<script>
+(function () {
+  function requestId() {
+    return (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2);
+  }
+  document.querySelectorAll("[data-investigate]").forEach(function (button) {
+    button.addEventListener("click", function () {
+      var id = button.getAttribute("data-investigate");
+      var status = document.getElementById("status-" + id);
+      button.disabled = true;
+      status.textContent = "Reading the records and writing the notes. This takes about ten seconds.";
+      fetch("/api/inbox/" + id + "/investigate", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ request_id: requestId(), again: true })
+      }).then(function (r) {
+        return r.json().then(function (body) { return { code: r.status, body: body }; });
+      }).then(function (res) {
+        if (res.code === 200 || res.code === 202) { location.hash = "text-" + id; location.reload(); return; }
+        status.textContent = (res.body && res.body.detail) || "The case could not be prepared.";
+        button.disabled = false;
+      }).catch(function () { status.textContent = "The request failed. Try again."; button.disabled = false; });
+    });
+  });
+})();
+</script>
+{% endblock %}

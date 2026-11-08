@@ -428,3 +428,30 @@ dl.kv.pairs { grid-template-columns: 11rem minmax(0, 1fr) 11rem minmax(0, 1fr); 
 @media (max-width: 340px) { .top nav a { padding: 12px 2px; } }
 
 @media (max-width: 640px) { .film video { aspect-ratio: 4 / 5; } .open-col { display: none; } }
+
+
+/* Texts: one card per text, the tenant's words, what the desk did, and the case notes under their own label */
+.text-card { border: 1px solid var(--frame); border-radius: 10px; background: var(--paper); padding: var(--s4) var(--s5); margin-top: var(--s4); scroll-margin-top: 5.5rem; }
+.text-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s3); }
+.text-who { font-weight: 600; font-size: var(--t-lg); }
+.said { margin: var(--s3) 0 var(--s2); padding-left: var(--s4); border-left: 3px solid var(--rule); color: var(--ink); font-size: var(--t-lg); max-width: 70ch; }
+.match-line, .reply-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s3); margin-top: var(--s2); }
+.reading { margin-top: var(--s4); padding-top: var(--s4); border-top: 1px solid var(--rule); }
+.reading-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s3); }
+.reading-label { font-family: var(--display); font-size: var(--t-h3); font-weight: 500; }
+.reading-summary { margin-top: var(--s2); max-width: 75ch; }
+.reading-reason { margin-top: var(--s2); color: var(--ink-2); max-width: 75ch; }
+.records { margin-top: var(--s3); border: 1px solid var(--rule); border-radius: 8px; background: var(--hover); }
+.records summary { cursor: pointer; padding: var(--s2) var(--s3); font-size: var(--t-sm); font-weight: 600; color: var(--ink-2); }
+.records ul { list-style: none; margin: 0; padding: 0 var(--s3) var(--s3); }
+.records li { display: grid; grid-template-columns: 9.5rem minmax(0, 1fr); gap: var(--s3); padding: var(--s2) 0; border-top: 1px solid var(--rule); font-size: var(--t-sm); color: var(--ink-2); }
+.records li .rec-kind { font-size: var(--t-xs); font-weight: 600; color: var(--ink-3); }
+.deskcheck { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s3); margin-top: var(--s3); }
+.run-note { margin-top: var(--s2); }
+.run-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s3); margin-top: var(--s4); }
+.live-note { margin: 0 0 var(--s2); }
+@media (max-width: 640px) {
+  .text-card { padding: var(--s4); }
+  .said { font-size: var(--t-body); }
+  .records li { grid-template-columns: 1fr; gap: 2px; }
+}

@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from datetime import timedelta
 from urllib.parse import urlsplit
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm.exc import StaleDataError
 from pydantic import BaseModel, Field
@@ -22,6 +22,7 @@ from .adapter.cubby import CubbyAdapter
 from .cases import queue, sync_facility
 from .config import Settings
 from .conversation import Conversation
+from . import spend
 from .investigator import CALL_TIMEOUT, SALE_FRESH_FOR, investigate, run_view
 from .lien_files import ensure_append_only, evaluate_case, record_evidence, replay
 from .liens import FL_R1, ValidationError
@@ -81,7 +82,7 @@ class ReplyIn(BaseModel):
 class InvestigateIn(BaseModel):
     request_id: str = Field(min_length=8, max_length=64,
                             description="chosen by the screen for each request and kept for its retries; sending it twice is one run")
-    again: bool = Field(default=False, description="run Claude again on a text that already has a run")
+    again: bool = Field(default=False, description="prepare the case again on a text that already has notes")
 
 
 class StaffResolutionIn(BaseModel):
@@ -149,7 +150,9 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
 
         from .web import HERE, Pages, router
         app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
-        app.include_router(router(Pages(factory, trace, worker if start_worker else None)))
+        app.include_router(router(Pages(factory, trace, worker if start_worker else None,
+                                        live=chat_client is not None and settings.public_investigate,
+                                        budget_usd=settings.daily_budget_usd, cases_per_day=settings.visitor_cases_per_day)))
 
     @app.exception_handler(StaleDataError)
     async def changed_meanwhile(_, exc: StaleDataError):
@@ -172,6 +175,13 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         if x_desk_token is None or not hmac.compare_digest(x_desk_token, settings.operator_token):
             raise HTTPException(401, "operator token required")
         return "operator"
+
+    def actor(x_desk_token: str | None = Header(default=None)) -> str:
+        """Who is starting a run: the operator, or, in the preview with live runs switched on, any visitor, within the limits.
+        A token that is sent is always checked."""
+        if x_desk_token is None and settings.public_view and settings.public_investigate:
+            return "visitor"
+        return operator(x_desk_token)
 
     def viewer(x_desk_token: str | None = Header(default=None)) -> str:
         """Reading. In the public preview anyone may read without a token; a token that is sent is still checked."""
@@ -323,8 +333,9 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         return outbound_view(row)
 
     @app.post("/api/inbox/{message_id}/investigate")
-    def investigate_text(message_id: int, body: InvestigateIn, response: Response, session: Session = Depends(db), _: str = Depends(operator)):
-        """Claude reads a matched text, looks up the desk's records and prepares the case. The desk checks the packet against
+    def investigate_text(message_id: int, body: InvestigateIn, request: Request, response: Response, session: Session = Depends(db),
+                         who: str = Depends(actor)):
+        """Reads a matched text, looks up the desk's records and prepares the case. The desk checks the packet against
         its own records. Needs a model key. A text has one run unless `again` is set, and a double click is one run."""
         if chat_client is None:
             raise HTTPException(503, "the desk has no model key configured")
@@ -335,15 +346,20 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         check_facility(session, facility.provider_id)
         if message.match_state != "matched" or not message.customer_provider_id:
             raise HTTPException(409, "this text is not matched to one tenant yet, so there is nothing to look up")
+        visitor = spend.visitor_of(request) if who == "visitor" else None
         try:
             # a sale item counts as read lately if the worker has passed over it a few times since, however slowly it is set to run
-            run, _started = investigate(session, chat_client, message, body.request_id, body.again,
-                                        max(SALE_FRESH_FOR, timedelta(seconds=6 * settings.reconcile_every_seconds)))
+            run, _started = investigate(session, chat_client, message, body.request_id, body.again or who == "visitor",
+                                        max(SALE_FRESH_FOR, timedelta(seconds=6 * settings.reconcile_every_seconds)), visitor,
+                                        lambda s, exclude: spend.refusal(s, settings.daily_budget_usd, settings.visitor_cases_per_day, visitor, exclude))
+        except spend.Refused as exc:
+            raise HTTPException(429, str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         if run.status == "running":
             response.status_code = 202          # a retry gets the run that is going, so the screen can poll it by its id
-        return run_view(run)
+        left = spend.allowance(session, settings.daily_budget_usd, settings.visitor_cases_per_day, visitor)
+        return {**run_view(run), "limits": {"cases_left": left.cases_left, "budget_left_usd": round(left.budget_left_usd, 4)}}
 
     @app.get("/api/agent-runs/{run_id}")
     def agent_run(run_id: int, session: Session = Depends(db), _: str = Depends(viewer)):
