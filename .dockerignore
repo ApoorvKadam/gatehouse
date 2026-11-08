@@ -6,4 +6,3 @@ data/
 __pycache__
 *.pyc
 .worktrees
-film/

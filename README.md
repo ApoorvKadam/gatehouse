@@ -8,7 +8,7 @@ Gatehouse finds that work, keeps the evidence, and closes an item only when the 
 
 [![One lost payment in Gatehouse: held without a retry, named by a person, confirmed from the FMS ledger, then described to the tenant as applied](desk/static/film/gatehouse-film.jpg)](desk/static/film/gatehouse-film.mp4)
 
-A 29-second loop of one lost payment, built from the app's own screens (click the frame for the video). Its source is in `film/`.
+A 29-second loop of one lost payment, built from the app's own screens (click the frame for the video).
 
 ## Screens
 
