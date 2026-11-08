@@ -51,6 +51,7 @@ def plain(text: str | None, ids: bool = True) -> str | None:
         text = _RECORD_ID.sub("", _BARE_ID.sub("", _IN_BRACKETS.sub("", text)))
     text = _STAMP.sub(_when, text)
     text = _CODE.sub(lambda m: STATE_WORDS[m.group(0)], text)
+    text = re.sub(r"\s*\(\s*\)", "", text)                  # the brackets an id leaves behind
     return re.sub(r"\s+([.,;:])", r"\1", re.sub(r"[ \t]{2,}", " ", text)).strip()
 
 
@@ -78,3 +79,41 @@ def review_view(action: dict) -> dict:
     if outcome in ("linked", "requested") and status == "completed":
         text += " A completed task does not close the sale."
     return {"kind": action.get("kind"), "label": label, "tone": tone, "text": text}
+
+
+# What an acknowledgement may say. Every sentence is written here, in advance, and filled from a verified record. Nothing a model writes
+# reaches a tenant, so no id, code, promise or legal claim can: the catalog is the whole vocabulary. A test keeps these free of
+# "paid in full", cancel, will, within, hours, legal and compliant.
+REPLY_PHRASES = {
+    "message_received": "Hi {first}, we got your message from {when}.",
+    "payment_applied": "Your payment of {amount} has been applied to your account.",
+    "balance_as_of": "The FMS shows {balance} owed on unit {unit} as of {when}.",
+    "sale_status": "Unit {unit} is listed for a lien sale on {when}.",
+    "staff_review": "A staff member has an open task to review this.",
+    "acknowledgment": "Call the office if anything changes.",
+}
+# the kinds a model may propose, and what a screen calls each part
+REPLY_KINDS = tuple(REPLY_PHRASES)
+REPLY_PART_LABELS = {"message_received": "Message received", "payment_applied": "Payment applied", "balance_as_of": "Balance",
+                     "sale_status": "Sale status", "staff_review": "Staff review", "acknowledgment": "Closing line"}
+# how the outcome of sending reads, and which chip colour it takes. "sent" is what the messaging system answered, never delivery.
+REPLY_OUTCOMES = {"sent": ("Reply accepted by the messaging system", "done"), "blocked": ("Reply blocked", "act"),
+                  "rejected": ("Reply refused by the messaging system", "act"), "not_confirmed": ("Reply not confirmed", "wait"),
+                  "not_sent": ("No reply sent", "plain")}
+
+
+def action_view(action: dict) -> dict | None:
+    """One thing the desk did for a run, as a screen shows it, or None for a kind that has no view."""
+    if action.get("kind") == "staff_review":
+        return review_view(action)
+    if action.get("kind") == "reply":
+        return reply_view(action)
+    return None
+
+
+def reply_view(action: dict) -> dict:
+    """The acknowledgement the desk wrote from the parts a model proposed: how sending went, the text, each sentence with the record it
+    came from, and what was left out and why."""
+    label, tone = REPLY_OUTCOMES.get(action.get("outcome"), ("Reply", "plain"))
+    return {"kind": "reply", "label": label, "tone": tone, "text": action.get("reason") or "",
+            "body": action.get("body") or "", "parts": list(action.get("parts") or []), "dropped": list(action.get("dropped") or [])}

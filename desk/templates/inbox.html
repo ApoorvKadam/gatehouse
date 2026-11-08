@@ -3,6 +3,7 @@
 {% macro flags(t) %}
   {% set run = t.investigation %}
   {% if t.stopped %}<span class="chip act">Texting stopped</span>{% endif %}
+  {% if t.replies|selectattr('state', 'equalto', 'sent')|list %}<span class="chip done">Replied</span>{% endif %}
   {% if run and run.status == 'running' %}<span class="chip wait">Exploring</span>
   {% elif run and run.notes.summary %}{% if run.notes.needs_person %}<span class="chip act">Needs a person</span>{% else %}<span class="chip done">No person needed</span>{% endif %}
   {% elif t.match.state != 'matched' %}<span class="chip plain">No tenant</span>
@@ -94,7 +95,11 @@
                 <span class="small">{{ run.verified.says if run.verified else '' }}</span>
               </p>
               {% for a in run.actions %}
-              <p class="deskcheck"><span class="chip {{ a.tone }}">{% include "icons/list-checks.svg" %}{{ a.label }}</span> <span class="small">{{ a.text }}</span></p>
+              <p class="deskcheck"><span class="chip {{ a.tone }}">{% include ("icons/send.svg" if a.kind == 'reply' else "icons/list-checks.svg") %}{{ a.label }}</span> <span class="small">{{ a.text }}</span></p>
+              {% if a.kind == 'reply' %}
+                {% if a.parts %}<ul class="parts">{% for p in a.parts %}<li><span class="rec-kind">{{ p.label }}</span><span>{{ p.text }}</span><span class="part-source">from {{ p.source }}</span></li>{% endfor %}</ul>{% endif %}
+                {% if a.dropped %}<ul class="parts">{% for d in a.dropped %}<li><span class="rec-kind">Left out</span><span>{{ d.label }}: {{ d.why }}.</span><span></span></li>{% endfor %}</ul>{% endif %}
+              {% endif %}
               {% endfor %}
             </div>
             <details class="records" open>
@@ -145,7 +150,7 @@
   var box = document.getElementById("progress"), main = document.getElementById("work-main"), list = document.getElementById("steps");
   var error = document.getElementById("run-error"), foot = button.parentNode;
   var TICK = '<svg class="icon" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>';
-  var shown = [], waiting = false, finished = false;
+  var shown = [], waiting = false, finished = false, tail = false;
 
   function paint() {
     shown.forEach(function (li, n) {
@@ -165,13 +170,13 @@
     fetch("/api/inbox/" + id + "/progress").then(function (r) { return r.ok ? r.json() : null; }).then(function (p) {
       if (p && p.run > before) {
         p.steps.forEach(function (text, n) { if (n + 1 >= shown.length) step(text); });
-        if (p.status !== "running" && shown[shown.length - 1].textContent !== "Checking the notes and the staff task") step("Checking the notes and the staff task");
+        if (p.status !== "running" && !tail && p.steps[p.steps.length - 1] === "Writing the case notes") { tail = true; step("Checking the notes and the staff task"); }
       }
     }).catch(function () {}).then(function () { if (waiting) setTimeout(poll, 800); });
   }
   function start() {
     waiting = true; error.hidden = true; button.disabled = true; button.textContent = "Exploring...";
-    main.hidden = true; box.hidden = false; list.innerHTML = ""; shown = []; finished = false;
+    main.hidden = true; box.hidden = false; list.innerHTML = ""; shown = []; finished = false; tail = false;
     step("Reading the message");
     setTimeout(poll, 600);
   }
