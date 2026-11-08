@@ -1,44 +1,108 @@
 {% extends "base.html" %}
 {% block title %}Evaluation | Gatehouse{% endblock %}
+{% macro bar(groups, label) %}
+  <div class="segbar" role="img" aria-label="{{ label }}">
+    {% for name, items in groups %}
+    <div class="seggroup" style="flex: {{ items|length }} 1 0">
+      {% for tip, ok in items %}<i class="seg {{ '' if ok else 'fail' }}" tabindex="0" data-tip="{{ tip }}"></i>{% endfor %}
+    </div>
+    {% endfor %}
+  </div>
+  <div class="segkey" aria-hidden="true">
+    {% for name, items in groups %}<span style="flex: {{ items|length }} 1 0">{{ name }} <b>{{ items|length }}</b></span>{% endfor %}
+  </div>
+{% endmacro %}
 {% block main %}
 <div class="wrap">
 <div class="head">
   <h1>Evaluation</h1>
-  <p>{% if report %}Run when this build was made, {{ local(report.generated) }}{% endif %}</p>
+  {% if report %}<p class="head-result"><span class="chip {{ 'done' if report.ok else 'act' }}">{% include "icons/circle-check.svg" %}{{ 'Passed' if report.ok else 'Failed' }}</span> Run when this build was made, {{ local(report.generated) }}</p>{% endif %}
 </div>
 {% if report %}
-<p class="lede">Every build of this preview runs each scenario against its own throwaway simulator, counts the red lines across all of them, and runs builds that are wrong on purpose to show the counts can catch them. A red line that is not zero stops the build, so a version that breaks one never reaches this page.</p>
-<dl class="facts">
-  <div><dt>Scenarios behaving as they should</dt><dd>{{ report.rows|selectattr('passed')|list|length }} of {{ report.rows|length }}</dd></div>
-  <div><dt>Red lines at zero</dt><dd>{{ report.red_lines|selectattr('count', 'equalto', 0)|list|length }} of {{ report.red_lines|length }}</dd></div>
-  <div><dt>Wrong builds caught</dt><dd>{{ report.controls|selectattr('caught')|list|length }} of {{ report.controls|length }}</dd></div>
-  <div><dt>Result</dt><dd>{{ 'Passed' if report.ok else 'Failed' }}</dd></div>
-</dl>
+<p class="lede">Every build runs each scenario against its own throwaway simulator and counts the red lines. A red line above zero stops the build, so a version that breaks one never reaches this page.</p>
+
+<section class="panel glance" aria-label="Result at a glance">
+  <div class="meter-row">
+    <div class="meter-name"><b>Scenarios</b><span>{{ passed }} of {{ total }} behave as they should</span></div>
+    <div>{{ bar(scenario_marks, passed ~ ' of ' ~ total ~ ' scenarios behave as they should') }}</div>
+  </div>
+  <div class="meter-row">
+    <div class="meter-name"><b>Red lines</b><span>{{ at_zero }} of {{ lines_total }} at zero</span></div>
+    <div>{{ bar(line_marks, at_zero ~ ' of ' ~ lines_total ~ ' red lines at zero') }}</div>
+  </div>
+  <div class="meter-row">
+    <div class="meter-name"><b>Wrong builds</b><span>{{ caught }} of {{ controls_total }} caught</span></div>
+    <div>{{ bar(control_marks, caught ~ ' of ' ~ controls_total ~ ' wrong builds caught') }}</div>
+  </div>
+</section>
+
+{% for part, rows in scenarios %}
+<section class="panel flows">
+  <h2>{{ part }}<span class="muted">{{ rows|selectattr('passed')|list|length }} of {{ rows|length }} behave as they should</span></h2>
+  <div class="flow flow-head" aria-hidden="true">
+    <span>Scenario</span>
+    <span><i class="lane-dot lane-fms"></i>The FMS did</span><span></span>
+    <span><i class="lane-dot lane-concluded"></i>Gatehouse did</span><span></span>
+    <span><i class="lane-dot lane-observed"></i>Who hears what</span>
+    <span></span>
+  </div>
+  {% for r in rows %}
+  <div class="flow">
+    <b class="flow-name">{{ r.name }}</b>
+    <p class="node">{{ r.fms }}</p>
+    <span class="arrow" aria-hidden="true">{% include "icons/arrow-right.svg" %}</span>
+    <p class="node">{{ r.gatehouse }}</p>
+    <span class="arrow" aria-hidden="true">{% include "icons/arrow-right.svg" %}</span>
+    <p class="node told">{{ r.told }}</p>
+    <span class="flow-result"><span class="chip {{ 'done' if r.passed else 'act' }}">{% include "icons/circle-check.svg" %}{{ 'Pass' if r.passed else 'Fail' }}</span></span>
+  </div>
+  {% endfor %}
+</section>
+{% endfor %}
 
 <section class="panel">
-  <h2><span class="lane-dot lane-concluded"></span>Red lines, all must be zero</h2>
-  <table>
-    <thead><tr><th>Part</th><th>Red line</th><th class="num">Count</th></tr></thead>
-    <tbody>{% for r in report.red_lines %}<tr><td>{{ r.module }}</td><td>{{ r.line[:1]|upper }}{{ r.line[1:] }}</td><td class="num"><span class="status {{ 'met' if r.count == 0 else 'review' }}">{{ r.count }}</span></td></tr>{% endfor %}</tbody>
-  </table>
+  <h2>Red lines, all must be zero<span class="muted">{{ at_zero }} of {{ lines_total }} at zero</span></h2>
+  <div class="board">
+    {% for part, lines in red_lines %}
+    <div class="board-col">
+      <h3>{{ part }}</h3>
+      <ul>{% for l in lines %}<li class="{{ 'ok' if l.count == 0 else 'bad' }}"><i class="dot" aria-hidden="true"></i><span>{{ l.line[:1]|upper }}{{ l.line[1:] }}</span><b>{{ l.count }}</b></li>{% endfor %}</ul>
+    </div>
+    {% endfor %}
+  </div>
 </section>
 
-<section class="panel" style="margin-top:var(--s5)">
-  <h2><span class="lane-dot lane-decided"></span>Wrong on purpose: builds the checks must catch</h2>
-  <table>
-    <thead><tr><th>Broken build</th><th>What it does wrong</th><th class="num">Caught</th></tr></thead>
-    <tbody>{% for c in report.controls %}<tr><td>{{ c.name }}</td><td>{{ c.broken[:1]|upper }}{{ c.broken[1:] }}</td><td class="num"><span class="status {{ 'met' if c.caught else 'review' }}">{{ 'yes' if c.caught else 'no' }}</span></td></tr>{% endfor %}</tbody>
-  </table>
+<section class="panel flows">
+  <h2>Wrong on purpose<span class="muted">{{ caught }} of {{ controls_total }} caught by the checks</span></h2>
+  <div class="flow flow-head control" aria-hidden="true">
+    <span>Broken build</span><span><i class="lane-dot lane-decided"></i>What it does wrong</span><span></span><span><i class="lane-dot lane-concluded"></i>The checks</span>
+  </div>
+  {% for c in report.controls %}
+  <div class="flow control">
+    <b class="flow-name">{{ c.name }}</b>
+    <p class="node">{{ c.broken[:1]|upper }}{{ c.broken[1:] }}</p>
+    <span class="arrow" aria-hidden="true">{% include "icons/arrow-right.svg" %}</span>
+    <span class="flow-result left"><span class="chip {{ 'done' if c.caught else 'act' }}">{% include "icons/circle-check.svg" %}{{ 'Caught' if c.caught else 'Missed' }}</span></span>
+  </div>
+  {% endfor %}
 </section>
 
-<section class="panel" style="margin-top:var(--s5)">
-  <h2><span class="lane-dot lane-fms"></span>Scenarios</h2>
+<details class="table-view">
+  <summary>Table view of every result</summary>
   <table>
     <thead><tr><th>Part</th><th>Scenario</th><th>What the FMS did</th><th>What Gatehouse did</th><th>Who hears what</th><th class="num">Result</th></tr></thead>
-    <tbody>{% for r in report.rows %}<tr><td class="small">{{ r.module }}</td><td><b>{{ r.name }}</b></td><td class="small">{{ r.fms }}</td><td class="small">{{ r.gatehouse }}</td><td class="small muted">{{ r.told }}</td><td class="num"><span class="status {{ 'met' if r.passed else 'review' }}">{{ 'pass' if r.passed else 'fail' }}</span></td></tr>{% endfor %}</tbody>
+    <tbody>{% for part, rows in scenarios %}{% for r in rows %}<tr><td class="small">{{ part }}</td><td><b>{{ r.name }}</b></td><td class="small">{{ r.fms }}</td><td class="small">{{ r.gatehouse }}</td><td class="small muted">{{ r.told }}</td><td class="num"><span class="status {{ 'met' if r.passed else 'review' }}">{{ 'Pass' if r.passed else 'Fail' }}</span></td></tr>{% endfor %}{% endfor %}</tbody>
   </table>
-  <p class="note">The scenarios run in desk/scenarios.py and desk/evaluate.py; the simulator follows Cubby's public Operator API. A real FMS, gate system, auction site or processor is not part of this run.</p>
-</section>
+  <table>
+    <thead><tr><th>Part</th><th>Red line</th><th class="num">Count</th></tr></thead>
+    <tbody>{% for part, lines in red_lines %}{% for l in lines %}<tr><td>{{ part }}</td><td>{{ l.line[:1]|upper }}{{ l.line[1:] }}</td><td class="num"><span class="status {{ 'met' if l.count == 0 else 'review' }}">{{ l.count }}</span></td></tr>{% endfor %}{% endfor %}</tbody>
+  </table>
+  <table>
+    <thead><tr><th>Broken build</th><th>What it does wrong</th><th class="num">Caught</th></tr></thead>
+    <tbody>{% for c in report.controls %}<tr><td>{{ c.name }}</td><td>{{ c.broken[:1]|upper }}{{ c.broken[1:] }}</td><td class="num"><span class="status {{ 'met' if c.caught else 'review' }}">{{ 'Yes' if c.caught else 'No' }}</span></td></tr>{% endfor %}</tbody>
+  </table>
+  <p class="note">The scenarios run in desk/scenarios.py and desk/evaluate.py. The simulator follows Cubby's public Operator API. A real FMS, gate system, auction site or processor is not part of this run.</p>
+</details>
 {% else %}
 <p class="lede">This build has no evaluation report. The image build writes one with <code>python -m desk.evaluate</code>.</p>
 {% endif %}
