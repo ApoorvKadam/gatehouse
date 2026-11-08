@@ -152,8 +152,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         from .web import HERE, Pages, router
         app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
         app.include_router(router(Pages(factory, trace, worker if start_worker else None,
-                                        live=chat_client is not None and settings.public_investigate,
-                                        budget_usd=settings.daily_budget_usd)))
+                                        live=chat_client is not None and settings.public_investigate)))
 
     @app.exception_handler(StaleDataError)
     async def changed_meanwhile(_, exc: StaleDataError):

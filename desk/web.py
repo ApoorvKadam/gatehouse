@@ -283,7 +283,6 @@ class Pages:
     trace: dict = field(default_factory=dict)   # simulator truth saved when the world was built, keyed by lease
     worker: object | None = None                 # the reconciliation worker in this process, for the operations page
     live: bool = False                           # a visitor may prepare a case from the inbox (a model key and the switch are both there)
-    budget_usd: float = 1.0
 
     def facilities(self, s: Session) -> list[Facility]:
         binding = s.get(DeskBinding, 1)
@@ -667,7 +666,7 @@ def router(pages: Pages) -> APIRouter:
                         "Access": ago(s.scalar(select(func.max(AccessView.observed_at))), now)}
             runs = s.scalars(select(AgentRun).where(AgentRun.started_at >= spend.day_start(now))).all()
             outcomes = Counter(a.get("outcome") for r in runs for a in (r.actions or []) if a.get("kind") == "staff_review")
-            agent = {"runs": len(runs), "cost": sum(r.cost_usd for r in runs), "budget": pages.budget_usd,
+            agent = {"runs": len(runs), "cost": sum(r.cost_usd for r in runs),
                      "confirmed": outcomes["linked"] + outcomes["requested"], "unconfirmed": outcomes["not_confirmed"] + outcomes["refused"]}
             return templates.TemplateResponse(request, "operations.html", {
                 "open_work": open_work, "by_who": by_who.most_common(), "by_part": by_part.most_common(), "peak": max(by_who.values(), default=1),
