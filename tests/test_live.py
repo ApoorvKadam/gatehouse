@@ -124,7 +124,7 @@ def test_the_messages_page_lists_each_message_and_shows_the_chosen_one_as_a_sequ
         assert page.status_code == 200 and 'href="/inbox"' in html and "Messages at " in html and ">Messages</a>" in html
         assert all(name in html for name in ("Dana Whitfield", "Priya Raman", "Marcus Bell", "Unknown number"))      # every message is in the list
         assert "Texting stopped" in html                                                                           # Marcus's chip, in the list
-        assert "of 10 explorations left today" in html and html.count('<i class="left">') == 10
+        assert "explorations left" not in html and 'class="meter' not in html            # no allowance counter: the server stops a visitor at the limit and says so then
         assert html.count("data-explore=") == 1 and "Explore with our agent" in html                             # one button, for the chosen matched message
         assert no_vendor_name(html)                                                                              # the page never names the model
         dana = client.get(f"/inbox?text={ids['Dana Whitfield']}").text                                           # nobody has explored her message yet
@@ -142,6 +142,7 @@ def test_the_messages_page_says_so_when_live_runs_are_off(fms_url, sim):
     with TestClient(preview(fms_url, None)) as client:
         html = client.get("/inbox").text
         assert "Our agent is switched off on this copy" in html and "Explore with our agent" not in html and "data-explore=" not in html
+        assert 'class="step pending' not in html and 'id="progress"' not in html         # nothing waits for an agent that is off
         assert no_vendor_name(html)
 
 

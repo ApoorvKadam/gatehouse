@@ -13,12 +13,7 @@
 <div class="wrap">
   <div class="head">
     <h1>Messages at {{ facility.name }}</h1>
-    {% if live %}
-    <div class="meter">
-      <span class="meter-cells" aria-hidden="true">{% for n in range(cases_per_day) %}<i class="{{ 'left' if n < left.cases_left else '' }}"></i>{% endfor %}</span>
-      <span><b>{{ left.cases_left }}</b> of {{ cases_per_day }} explorations left today</span>
-    </div>
-    {% else %}<p>Our agent is switched off on this copy</p>{% endif %}
+    {% if not live %}<p>Our agent is switched off on this copy</p>{% endif %}
   </div>
   <p class="lede">What tenants texted this facility, each matched to a tenant through the FMS. Nobody who sent STOP is texted.</p>
 
@@ -43,21 +38,12 @@
           <h2>{{ t.match.customer_name or 'Unknown number' }}</h2>
           <span class="muted small mono">{{ t['from'] }}</span>
         </div>
-        <div class="case-chips">
-          {% if t.match.state == 'matched' %}
-            <span class="chip done">{% include "icons/user-check.svg" %}Matched</span>
-            <span class="small muted">{% for l in t.match.leases %}Unit {{ l.unit }}{% if not loop.last %}, {% endif %}{% endfor %}</span>
-          {% elif t.match.state == 'ambiguous' %}<span class="chip wait">Two tenants share this number. A person decides.</span>
-          {% elif t.match.state == 'pending' %}<span class="chip wait">Being matched</span>
-          {% else %}<span class="chip plain">No tenant found for this number</span>{% endif %}
-          {% if t.stopped %}<span class="chip act">{% include "icons/hand.svg" %}Texting stopped</span>{% endif %}
-        </div>
       </header>
 
       <div class="case-body">
         <section class="work" aria-label="What happened to this message" aria-live="polite">
           <ol class="seq" id="seq">
-            {% for s in sequence(t) %}
+            {% for s in sequence(t, live) %}
             <li class="step {{ s.state }}{{ '' if loop.first else ' after' }}" data-step="{{ s.key }}">
               <span class="node {{ s.tone }}" aria-hidden="true">{% include ("icons/" ~ s.icon ~ ".svg") %}</span>
               <div class="step-body">
@@ -72,7 +58,7 @@
                 {% if s.bubble %}<div class="bubble {{ s.bubble.side }}">{{ s.bubble.text }}</div>{% endif %}
               </div>
             </li>
-            {% if loop.first and t.match.state == 'matched' %}
+            {% if loop.first and t.match.state == 'matched' and live %}
             <li class="step now" id="progress" {% if not (run and run.status == 'running') %}hidden{% endif %}>
               <span class="node wait" aria-hidden="true"><span class="now-dot"></span></span>
               <div class="step-body">
@@ -84,11 +70,9 @@
             {% endfor %}
           </ol>
           <p class="small" id="run-error" role="alert" hidden></p>
-          {% if t.match.state == 'matched' %}
+          {% if t.match.state == 'matched' and live %}
           <p class="work-foot">
-            {% if live %}
             <button class="button primary" type="button" id="explore" data-explore="{{ t.id }}" data-run="{{ run.id if run else 0 }}" {% if run and run.status == 'running' %}data-running="1"{% endif %}>{{ 'Explore again' if run and run.status != 'running' else 'Explore with our agent' }}</button>
-            {% elif not run %}<span class="small muted">Our agent is switched off on this copy, so there are no case notes yet.</span>{% endif %}
           </p>
           {% endif %}
 

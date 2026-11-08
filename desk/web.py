@@ -284,7 +284,6 @@ class Pages:
     worker: object | None = None                 # the reconciliation worker in this process, for the operations page
     live: bool = False                           # a visitor may prepare a case from the inbox (a model key and the switch are both there)
     budget_usd: float = 1.0
-    cases_per_day: int = 10
 
     def facilities(self, s: Session) -> list[Facility]:
         binding = s.get(DeskBinding, 1)
@@ -524,12 +523,11 @@ def router(pages: Pages) -> APIRouter:
             current = next((f for f in facilities if f.provider_id == facility), None) if facility is not None else facilities[0]
             if current is None:
                 raise HTTPException(404, "No such facility")
-            left = spend.allowance(s, pages.budget_usd, pages.cases_per_day, spend.visitor_of(request)) if pages.live else None
             texts = inbox_of(s, current, limit=30)
             selected = next((t for t in texts if t["id"] == text), texts[0] if texts else None)
             return templates.TemplateResponse(request, "inbox.html", {
                 "facilities": facilities, "facility": current, "texts": texts, "selected": selected, "local": local, "sequence": sequence, "nav": "inbox",
-                "live": pages.live, "left": left, "cases_per_day": pages.cases_per_day})
+                "live": pages.live})
 
     @r.get("/accounts/{case_id}", response_class=HTMLResponse)
     def account(request: Request, case_id: int):

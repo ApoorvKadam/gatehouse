@@ -446,12 +446,8 @@ dl.kv.pairs { grid-template-columns: 11rem minmax(0, 1fr) 11rem minmax(0, 1fr); 
 @media (max-width: 640px) { .film video { aspect-ratio: 4 / 5; } .open-col { display: none; } }
 
 
-/* Messages: a list of what tenants sent, and for the one chosen the conversation beside what our agent did about it */
+/* Messages: a list of what tenants sent, and for the one chosen the steps it went through */
 html { scrollbar-color: var(--frame) var(--paper); }
-.meter { display: inline-flex; align-items: center; gap: var(--s3); font-size: var(--t-sm); color: var(--ink-2); }
-.meter-cells { display: inline-flex; gap: 3px; }
-.meter-cells i { width: 8px; height: 16px; border-radius: 2px; background: var(--rule); }
-.meter-cells i.left { background: var(--ink); }
 .mail { display: grid; grid-template-columns: 21rem minmax(0, 1fr); gap: var(--s5); margin-top: var(--s5); align-items: start; }
 .threads { border: 1px solid var(--frame); border-radius: 10px; background: var(--paper); overflow: hidden; position: sticky; top: calc(72px + var(--s4)); }
 .threads-head { padding: var(--s3) var(--s4); border-bottom: 1px solid var(--rule); font-size: var(--t-xs); font-weight: 600; color: var(--ink-3); }
@@ -469,7 +465,6 @@ html { scrollbar-color: var(--frame) var(--paper); }
 .case-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s2) var(--s4); padding: var(--s4) var(--s5); border-bottom: 1px solid var(--rule); }
 .case-head h2 { font-family: var(--display); font-size: var(--t-h2); font-weight: 500; line-height: 1.15; }
 .case-who { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s2) var(--s4); }
-.case-chips { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
 .work { padding: var(--s5); min-width: 0; }
 .bubble { border-radius: 14px; padding: 10px 14px; max-width: 92%; font-size: var(--t-body); line-height: 1.5; overflow-wrap: anywhere; }
 .bubble.in { background: var(--band); border-top-left-radius: 4px; }

@@ -88,13 +88,13 @@ def _placed(steps: list[dict], step: dict) -> None:
     steps.append(step)
 
 
-def sequence(t: dict) -> list[dict]:
-    """The steps for one text of the inbox view, in the order they happened. A text nobody has answered or explored shows the steps that wait.
-    A reply a person sent is placed by its own time."""
+def sequence(t: dict, explorable: bool = True) -> list[dict]:
+    """The steps for one text of the inbox view, in the order they happened. A text nobody has answered or explored shows the steps that wait,
+    unless the agent is switched off on this copy. A reply a person sent is placed by its own time."""
     run, replies = t.get("investigation"), t.get("replies") or []
     steps = [_received(t)]
     if run is None:
-        if t["match"]["state"] == "matched" and not replies:
+        if t["match"]["state"] == "matched" and not replies and explorable:
             ahead = AHEAD[:3] + (NO_REPLY,) if t.get("stopped") else AHEAD
             steps += [_step(key, icon, title, line, state="pending") for key, icon, title, line in ahead]
     elif run["status"] == "failed" or (run["status"] != "running" and not run["notes"].get("summary")):

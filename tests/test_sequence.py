@@ -104,3 +104,7 @@ def test_a_step_that_is_hidden_stays_hidden():
     from pathlib import Path
     css = (Path(__file__).parent.parent / "desk" / "static" / "gatehouse.css").read_text()
     assert ".step[hidden] { display: none; }" in css
+
+
+def test_a_copy_where_the_agent_is_off_shows_no_waiting_steps():
+    assert keys(sequence(message(), explorable=False)) == ["received"]
