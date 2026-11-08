@@ -41,6 +41,13 @@ def test_a_message_nobody_has_explored_shows_the_steps_that_wait():
     assert steps[0]["at"] == datetime(2026, 11, 8, 15, 20) and all(s["at"] is None for s in steps[1:])        # a waiting step has no time
 
 
+def test_a_text_a_visitor_typed_does_not_promise_a_new_fms_task():
+    """The desk never asks the FMS for a task over a text typed on the preview; the webhook's texts still can."""
+    typed = {s["key"]: s["line"] for s in sequence(message(own=True))}
+    assert "never makes a new one" in typed["review"] and "reads it back" not in typed["review"]
+    assert "reads it back" in {s["key"]: s["line"] for s in sequence(message(own=False))}["review"]
+
+
 def test_a_number_that_sent_stop_is_told_nothing_will_be_sent():
     steps = sequence(message(stopped=True))
     assert keys(steps)[-1] == "reply" and steps[-1]["title"] == "No reply will be sent" and steps[0]["chip"] == "Texting stopped"
