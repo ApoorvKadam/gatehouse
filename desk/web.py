@@ -573,9 +573,28 @@ def router(pages: Pages) -> APIRouter:
 
     @r.get("/evaluation", response_class=HTMLResponse)
     def evaluation(request: Request):
+        report = evaluation_report()
+        view: dict = {}
+        if report is not None:
+            # the parts in the order the report lists them; the state codes in what Gatehouse did are written as words
+            scenarios: dict[str, list[dict]] = {}
+            for row in report["rows"]:
+                scenarios.setdefault(row["module"], []).append({**row, "fms": plain(row["fms"]), "gatehouse": plain(row["gatehouse"]), "told": plain(row["told"])})
+            red_lines: dict[str, list[dict]] = {}
+            for line in report["red_lines"]:
+                red_lines.setdefault(line["module"], []).append(line)
+            controls = report["controls"]
+            view = {
+                "scenarios": list(scenarios.items()), "red_lines": list(red_lines.items()),
+                "scenario_marks": [(part, [(f"{r['name']}: {'pass' if r['passed'] else 'fail'}", r["passed"]) for r in rows]) for part, rows in scenarios.items()],
+                "line_marks": [(part, [(f"{l['line'].capitalize()}: {l['count']}", l["count"] == 0) for l in lines]) for part, lines in red_lines.items()],
+                "control_marks": [("Wrong builds", [(f"{c['name']}: {'caught' if c['caught'] else 'missed'}", c["caught"]) for c in controls])],
+                "passed": sum(1 for r in report["rows"] if r["passed"]), "total": len(report["rows"]),
+                "at_zero": sum(1 for l in report["red_lines"] if l["count"] == 0), "lines_total": len(report["red_lines"]),
+                "caught": sum(1 for c in controls if c["caught"]), "controls_total": len(controls)}
         with session() as s:
             return templates.TemplateResponse(request, "evaluation.html", {
-                "report": evaluation_report(), "nav": "evaluation", "facilities": pages.facilities(s), "local": local})
+                "report": report, **view, "nav": "evaluation", "facilities": pages.facilities(s), "local": local})
 
     @r.get("/operations", response_class=HTMLResponse)
     def operations(request: Request):
