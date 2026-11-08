@@ -369,11 +369,13 @@ class AgentRun(Base):
     it against its records, and the two are kept apart on purpose."""
 
     __tablename__ = "agent_runs"
-    # the database, not a read before the insert, keeps two requests from running the model twice on the same text
-    __table_args__ = (Index("one_running_run_per_text", "inbound_id", unique=True,
-                            sqlite_where=_RUNNING_SQL, postgresql_where=_RUNNING_SQL),)
+    # the database, not a read before the insert, keeps two requests from running the model twice on the same text: one run
+    # at a time, and a text's runs are numbered, so a second run without `again` finds the first one's number taken
+    __table_args__ = (Index("one_running_run_per_text", "inbound_id", unique=True, sqlite_where=_RUNNING_SQL, postgresql_where=_RUNNING_SQL),
+                      UniqueConstraint("inbound_id", "generation"))
     id: Mapped[int] = mapped_column(primary_key=True)
     inbound_id: Mapped[int] = mapped_column(ForeignKey("inbound_messages.id"))
+    generation: Mapped[int] = mapped_column(Integer, default=1)
     # the screen's own id for this request, so a double click or a retry is one run
     request_id: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
     model: Mapped[str] = mapped_column(String)
