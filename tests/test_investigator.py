@@ -101,7 +101,8 @@ def test_dana_is_investigated_and_the_desk_checks_the_packet_itself(factory):
         assert "nothing owed on unit B-1042" in run.verified["says"] and "reports a payment" in run.verified["says"]
         assert "card payment attempt" in run.facts[dana_facts(s)["payment"]] and " took " not in run.facts[dana_facts(s)["payment"]]
         view = run_view(run, trace=True)
-        assert view["intent"] == "sale_after_payment" and view["needs_person"] is True
+        assert view["claude"]["intent"] == "sale_after_payment" and view["claude"]["needs_person"] is True
+        assert view["claude"]["label"] == "Claude's reading" and view["claude"]["summary"] and view["claude"]["reason"]    # Claude's words carry their label
         assert view["records"][1]["text"].startswith("Sale still listed, nothing owed (open).")                       # the record, word for word
         assert [c["tool"] for c in view["trace"][0]["calls"]] == ["get_account", "get_sale_status", "get_payments"]
         assert '"tenant": "Dana Whitfield"' in model.calls[1]["messages"][-1]["content"][0]["content"]       # the name arrives as data in a result
@@ -110,6 +111,9 @@ def test_dana_is_investigated_and_the_desk_checks_the_packet_itself(factory):
         # the inbox shows the run beside the text
         shown = next(m for m in inbox(s, s.scalar(select(Facility).where(Facility.provider_id == ORLANDO))) if m["id"] == dana.id)
         assert shown["investigation"]["status"] == "done" and shown["investigation"]["verified"]["sale_listed_nothing_owed"] is True
+        assert shown["investigation"]["claude"]["label"] == "Claude's reading"                                           # the inbox carries the label too,
+        assert [r["id"] for r in shown["investigation"]["records"]] == [r["id"] for r in view["records"]]                # and the records beside it
+        assert shown["investigation"]["records"][1]["text"].startswith("Sale still listed, nothing owed (open).")
 
 
 def test_a_packet_that_cites_a_record_no_lookup_returned_is_not_accepted(factory):

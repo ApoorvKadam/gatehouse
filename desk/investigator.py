@@ -623,12 +623,9 @@ def investigate(session: Session, client, inbound: InboundMessage, request_id: s
 
 
 def run_view(row: AgentRun, trace: bool = False) -> dict:
-    """A run as a screen or the API shows it: Claude's summary and reason, the records it relied on written out word for word,
-    and the desk's own check next to them."""
-    packet = row.packet or {}
-    view = {"id": row.id, "inbound_id": row.inbound_id, "status": row.status, "intent": packet.get("intent"), "summary": packet.get("summary"),
-            "records": [{"id": i, "text": (row.facts or {}).get(i)} for i in packet.get("records", [])],
-            "needs_person": packet.get("needs_person"), "reason": packet.get("reason"), "verified": row.verified, "error": row.error,
+    """A run as a screen or the API shows it: the reading (Claude's words, the records word for word, the desk's check), then how
+    the run went and what it cost."""
+    view = {"id": row.id, "inbound_id": row.inbound_id, "status": row.status, **row.reading(), "error": row.error,
             "model": row.model, "effort": row.effort, "turns": row.turns, "input_tokens": row.input_tokens, "output_tokens": row.output_tokens,
             "cost_usd": round(row.cost_usd, 6), "started_at": row.started_at, "finished_at": row.finished_at}
     if trace:

@@ -397,6 +397,15 @@ class AgentRun(Base):
     verified: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    def reading(self) -> dict:
+        """What staff are shown of a run, in every place it appears: Claude's own words under their label, the records it relied on
+        word for word, and the desk's own check apart from both."""
+        packet = self.packet or {}
+        return {"claude": {"label": "Claude's reading", "intent": packet.get("intent"), "summary": packet.get("summary"),
+                           "reason": packet.get("reason"), "needs_person": packet.get("needs_person")},
+                "records": [{"id": i, "text": (self.facts or {}).get(i)} for i in packet.get("records", [])],
+                "verified": self.verified}
+
 
 class AgentRequest(Base):
     """A request id, the text it was first used for, and the run it was answered with. The screen picks a request id for each
