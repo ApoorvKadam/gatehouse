@@ -351,7 +351,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
             # a sale item counts as read lately if the worker has passed over it a few times since, however slowly it is set to run
             run, _started = investigate(session, chat_client, message, body.request_id, body.again or who == "visitor",
                                         max(SALE_FRESH_FOR, timedelta(seconds=6 * settings.reconcile_every_seconds)), visitor,
-                                        lambda s, exclude: spend.refusal(s, settings.daily_budget_usd, settings.visitor_cases_per_day, visitor, exclude))
+                                        lambda s, exclude: spend.refusal(s, settings.daily_budget_usd, settings.visitor_cases_per_day, visitor, exclude), adapter=adapter)
         except spend.Refused as exc:
             raise HTTPException(429, str(exc)) from exc
         except ValueError as exc:
