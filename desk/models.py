@@ -376,8 +376,6 @@ class AgentRun(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     inbound_id: Mapped[int] = mapped_column(ForeignKey("inbound_messages.id"))
     generation: Mapped[int] = mapped_column(Integer, default=1)
-    # the screen's own id for this request, so a double click or a retry is one run
-    request_id: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
     model: Mapped[str] = mapped_column(String)
     effort: Mapped[str] = mapped_column(String)
     # running, done (a packet the desk accepted), needs_person (no accepted packet, or one the records do not support) or failed
@@ -401,12 +399,14 @@ class AgentRun(Base):
 
 
 class AgentRequest(Base):
-    """The text a request id was first used for. The screen picks a request id for each request and keeps it for the retries,
-    so an id that turns up for another text is a mistake, and it is refused, whether or not the first request started a run."""
+    """A request id, the text it was first used for, and the run it was answered with. The screen picks a request id for each
+    request and keeps it for the retries, so a retry gets the same run, and an id that turns up for another text is a mistake
+    and is refused. The run is the one the request started, or the one that already existed when the request was answered."""
 
     __tablename__ = "agent_requests"
     request_id: Mapped[str] = mapped_column(String, primary_key=True)
     inbound_id: Mapped[int] = mapped_column(ForeignKey("inbound_messages.id"))
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("agent_runs.id"), nullable=True)
 
 
 class AccessView(Base):

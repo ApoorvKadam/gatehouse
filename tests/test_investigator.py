@@ -20,7 +20,7 @@ from desk.db import make_session_factory, utcnow
 from desk.investigator import (CALL_TIMEOUT, MAX_TURNS, NOT_ACCEPTED, TOOLS, UNCHECKED, fail_stranded_runs, investigate, packet_problem, run_view)
 from desk.lien_files import ensure_append_only
 from desk.messaging import STOP_WORDS, inbox
-from desk.models import AgentRun, Facility, InboundMessage, Lease, PaymentCommand, WorkItem
+from desk.models import AgentRequest, AgentRun, Facility, InboundMessage, Lease, PaymentCommand, WorkItem
 from desk.rules import import_stitch
 from desk.sales import AFTER_NOTICE, LISTED_PAID
 from desk.usage import PRICES, cost_usd
@@ -399,18 +399,18 @@ def test_a_text_that_is_not_matched_is_not_investigated_and_a_pending_hint_is_ne
         assert not any("SECRET WORDS" in t for t in run.facts.values())
 
 
-def test_a_request_id_that_collides_while_a_run_starts_cannot_return_another_texts_run(factory, monkeypatch):
+def test_a_request_id_that_collides_while_it_is_claimed_cannot_return_another_texts_run(factory, monkeypatch):
     with factory() as s:
         dana, priya = text_of(s, "Dana Whitfield"), text_of(s, "Priya Raman")
-        s.add(AgentRun(inbound_id=priya.id, request_id="request-0032", model="claude-haiku-5-5", effort="medium", status="done"))
+        s.add(AgentRequest(request_id="request-0032", inbound_id=priya.id))
         s.commit()
-        real, asked = investigator._existing, []
+        real, asked = investigator._request, []
 
-        def blind_once(*args):                                              # the other request has not written its run yet when this one looks
+        def blind_once(session, request_id):                                # the other request has not written its claim yet when this one looks
             asked.append(1)
-            return None if len(asked) == 1 else real(*args)
+            return None if len(asked) == 1 else real(session, request_id)
 
-        monkeypatch.setattr(investigator, "_existing", blind_once)
+        monkeypatch.setattr(investigator, "_request", blind_once)
         with pytest.raises(ValueError, match="another text"):
             investigate(s, Scripted(), dana, "request-0032")
 
@@ -531,6 +531,9 @@ def test_a_request_id_answered_with_an_existing_run_still_belongs_to_that_text(f
         first, _ = investigate(s, lookups_then_packet(s), dana, "request-0044")
         retry, started = investigate(s, Scripted(), dana, "request-0045")             # a retry with a new id is answered with the finished run
         assert not started and retry.id == first.id
+        model = Scripted()
+        again_same, started = investigate(s, model, dana, "request-0045", again=True)    # the same request again: the same answer, not a new run
+        assert not started and again_same.id == first.id and model.calls == []
         with pytest.raises(ValueError, match="another text"):
             investigate(s, Scripted(), priya, "request-0045")                         # the id was spent on Dana's text
 
@@ -604,6 +607,8 @@ def test_what_makes_a_packet_acceptable():
     yearless = {"lease:1": "Unit B-1042. The tenant says the balance has been owed since Nov 8."}
     assert packet_problem({**good, "reason": "Owed since Nov 8."}, yearless) is None
     assert "Nov 8, 2031" in packet_problem({**good, "reason": "Owed since Nov 8, 2031."}, yearless)                 # a year no record gives is a claim
+    both = packet_problem({**good, "summary": "Owed since Dec 3.", "reason": "Or Dec 3, 2031."}, {"lease:1": "Unit B-1042."})
+    assert "Dec 3, Dec 3, 2031" in both                                                                             # the same day with and without a year does not crash the sort
     assert "$1,200.50" in packet_problem({**good, "reason": "She paid $1,200.50."}, facts)
     assert len(packet_problem(packet("other", ["x" * 500]), facts)) < 150
 
@@ -668,7 +673,10 @@ def test_a_retry_of_a_request_whose_run_is_still_going_gets_that_run_to_poll(fms
         ids = message_ids(client)
         operator = {"X-Desk-Token": TOKEN}
         with client.app.state.session_factory() as s:
-            s.add(AgentRun(inbound_id=ids["Dana Whitfield"], request_id="request-api-06", model="claude-haiku-5-5", effort="medium", status="running"))
+            going = AgentRun(inbound_id=ids["Dana Whitfield"], model="claude-haiku-5-5", effort="medium", status="running")
+            s.add(going)
+            s.flush()
+            s.add(AgentRequest(request_id="request-api-06", inbound_id=ids["Dana Whitfield"], run_id=going.id))
             s.commit()
         same = client.post(f"/api/inbox/{ids['Dana Whitfield']}/investigate", json={"request_id": "request-api-06"}, headers=operator)
         other = client.post(f"/api/inbox/{ids['Dana Whitfield']}/investigate", json={"request_id": "request-api-07"}, headers=operator)

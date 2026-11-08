@@ -312,7 +312,7 @@ def ungrounded(packet: dict, facts: dict[str, str], tenant_text: str = "") -> li
     words = " ".join([packet["summary"], packet["reason"]])
     known = days(shown)
     money = sorted(amounts(words) - amounts(shown))
-    loose = sorted(d for d in days(words) if not any(d[:2] == k[:2] and (d[2] is None or d[2] == k[2]) for k in known))
+    loose = sorted((d for d in days(words) if not any(d[:2] == k[:2] and (d[2] is None or d[2] == k[2]) for k in known)), key=lambda d: (d[0], d[1], d[2] or 0))
     return [f"${c / 100:,.2f}" for c in money] + [f"{m.title()} {d}" + (f", {y}" if y else "") for m, d, y in loose]
 
 
@@ -502,32 +502,39 @@ def fail_stranded_runs(session: Session, now: datetime | None = None) -> int:
     return done.rowcount
 
 
-def _claim(session: Session, inbound: InboundMessage, request_id: str | None) -> None:
-    """Remember that this request id belongs to this text, and refuse it if it was first used for another. Every accepted request
-    is remembered, including one that is answered with a run that already exists."""
+def _request(session: Session, request_id: str) -> AgentRequest | None:
+    return session.get(AgentRequest, request_id)
+
+
+def _claim(session: Session, inbound: InboundMessage, request_id: str | None) -> AgentRequest | None:
+    """The record of this request id, made if the id is new. An id first used for another text is refused. Every accepted request
+    is recorded, including one that is answered with a run that already exists."""
     if not request_id:
-        return
-    owner = session.get(AgentRequest, request_id)
-    if owner is None:
+        return None
+    request = _request(session, request_id)
+    if request is None:
         session.add(AgentRequest(request_id=request_id, inbound_id=inbound.id))
         try:
             session.commit()
         except IntegrityError:
             session.rollback()          # another request claimed it a moment ago
-            owner = session.get(AgentRequest, request_id)
-    if owner is not None and owner.inbound_id != inbound.id:
+        request = _request(session, request_id)
+    if request.inbound_id != inbound.id:
         raise ValueError("this request id was already used for another text")
+    return request
 
 
-def _existing(session: Session, inbound: InboundMessage, request_id: str | None) -> AgentRun | None:
-    """The run this request already has, or the run going on this text. A request id belongs to one text."""
-    if request_id:
-        earlier = session.scalar(select(AgentRun).where(AgentRun.request_id == request_id))
-        if earlier is not None:
-            if earlier.inbound_id != inbound.id:
-                raise ValueError("this request id was already used for another text")
-            return earlier
+def _going(session: Session, inbound: InboundMessage) -> AgentRun | None:
+    """The run going on this text, if there is one."""
     return session.scalar(select(AgentRun).where(AgentRun.inbound_id == inbound.id, AgentRun.status == "running"))
+
+
+def _answer(session: Session, request: AgentRequest | None, run: AgentRun) -> AgentRun:
+    """This request's answer is this run: a retry of the request gets it again, whatever else has happened to the text since."""
+    if request is not None and request.run_id is None:
+        request.run_id = run.id
+        session.commit()
+    return run
 
 
 def _latest(session: Session, inbound: InboundMessage) -> AgentRun | None:
@@ -536,30 +543,35 @@ def _latest(session: Session, inbound: InboundMessage) -> AgentRun | None:
 
 
 def investigate(session: Session, client, inbound: InboundMessage, request_id: str | None, again: bool = False) -> tuple[AgentRun, bool]:
-    """Run Claude over a matched text, once. Returns the run and whether this call started it. A run already going, a run
-    with this request id, or a finished run is returned as it is, so a double click costs one model run; `again` asks for a new
-    run on a text that has one. A text's runs are numbered and the database takes each number once, so two requests that
-    both find no run cannot both start the first one."""
+    """Run Claude over a matched text, once. Returns the run and whether this call started it. A request id is answered once: a
+    retry gets the same run, whatever `again` says. A run already going, or a finished run, is returned as it is, so a double click
+    costs one model run; `again` asks for a new run on a text that has one. A text's runs are numbered and the database takes each
+    number once, so two requests that both find no run cannot both start the first."""
     if inbound.match_state != "matched" or not inbound.customer_provider_id or inbound.facility_id is None:
         raise ValueError("this text is not matched to one tenant at a facility")
-    _claim(session, inbound, request_id)
+    request = _claim(session, inbound, request_id)
+    if request is not None and request.run_id is not None:
+        answered = session.get(AgentRun, request.run_id)
+        session.refresh(answered)
+        return answered, False
     fail_stranded_runs(session)
-    found = _existing(session, inbound, request_id)
+    found = _going(session, inbound) or (None if again else _latest(session, inbound))
     if found is not None:
-        return found, False
+        return _answer(session, request, found), False
     last = _latest(session, inbound)
-    if last is not None and not again:
-        return last, False
-    row = AgentRun(inbound_id=inbound.id, generation=last.generation + 1 if last else 1, request_id=request_id, model=MODEL, effort=EFFORT)
+    row = AgentRun(inbound_id=inbound.id, generation=last.generation + 1 if last else 1, model=MODEL, effort=EFFORT)
     session.add(row)
     try:
+        session.flush()             # the unique constraints decide a race here
+        if request is not None:
+            request.run_id = row.id
         session.commit()
     except IntegrityError:
-        session.rollback()          # another request started a run, or used this request id, a moment ago
-        winner = _existing(session, inbound, request_id) or _latest(session, inbound)
+        session.rollback()          # another request started a run a moment ago
+        winner = _going(session, inbound) or _latest(session, inbound)
         if winner is None:
             raise
-        return winner, False
+        return _answer(session, _request(session, request_id) if request_id else None, winner), False
     try:
         Investigation(session, client, row, scope_of(session, inbound), inbound).run()
     except Exception as exc:
