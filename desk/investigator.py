@@ -150,10 +150,15 @@ class Lookups:
     def __init__(self, session: Session, scope: Scope, inbound: InboundMessage):
         self.session, self.scope, self.inbound = session, scope, inbound
         self.facts: dict[str, str] = {}
+        self._seen: dict[str, dict] = {}
 
     def _record(self, fact_id: str, text: str, **more) -> dict:
-        self.facts[fact_id] = text
-        return {"record_id": fact_id, "text": text, **more}
+        """A record as this run first read it. A run is one reading of the desk's records: if the same record is looked up again
+        and has changed since, the run still sees the first version, so what the packet was checked against is what staff are shown."""
+        if fact_id not in self._seen:
+            self.facts[fact_id] = text
+            self._seen[fact_id] = {"record_id": fact_id, "text": text, **more}
+        return self._seen[fact_id]
 
     def text_in(self, m: InboundMessage) -> dict:
         """What the tenant wrote, as a record. The text under investigation is registered before the first turn."""
@@ -368,8 +373,10 @@ def verify(session: Session, scope: Scope, packet: dict) -> dict:
     if packet["intent"] != "sale_after_payment":
         return {"checked": False, "says": UNCHECKED}
     cited = {int(i.split(":")[1]) for i in packet["records"] if re.fullmatch(r"workitem:\d+", i)}
+    # populate_existing: an item the lookups loaded may have changed since (the worker can mark it not freshly verified)
     items = [i for i in session.scalars(select(WorkItem).where(WorkItem.id.in_(cited), WorkItem.facility_id == scope.facility.id,
-                                                               WorkItem.kind.in_(LISTED_KINDS), WorkItem.state == "open").order_by(WorkItem.id))
+                                                               WorkItem.kind.in_(LISTED_KINDS), WorkItem.state == "open").order_by(WorkItem.id)
+                                        .execution_options(populate_existing=True))
              if lease_of_item(i, scope.leases) is not None and not (i.note or "").startswith("Not freshly verified")] if cited else []
     if not items:
         return {"checked": True, "sale_listed_nothing_owed": False, "payment_found": None, "work_item_id": None, "lease_id": None, "as_of": None,

@@ -378,6 +378,48 @@ def test_an_item_that_stayed_open_under_its_kind_does_not_confirm_a_sale_its_lat
         assert investigate(s, Scripted(reads, [tool("submit_case_packet", cited)]), dana, "request-0041-z", again=True)[0].status == "done"
 
 
+def test_a_record_changes_between_two_lookups_of_one_run_but_the_run_keeps_the_first_reading(factory):
+    with factory() as s:
+        dana = text_of(s, "Dana Whitfield")
+
+        class StopArrives(Scripted):
+            def create(self, **kwargs):
+                if len(self.calls) == 1:                                    # between the two lookups, a STOP reaches the desk from Dana's number
+                    with factory() as other:
+                        other.add(InboundMessage(facility_id=None, provider_message_id="stop-mid-run", phone=dana.phone, phone_key=dana.phone_key, body="STOP",
+                                                 received_at=utcnow(), match_state="unrouted"))
+                        other.commit()
+                return super().create(**kwargs)
+
+        model = StopArrives([tool("get_recent_texts", id_="a1")], [tool("get_recent_texts", id_="a2")],
+                            [tool("submit_case_packet", packet("other", ["texting:now"], True, "x"), id_="a3")])
+        run, _ = investigate(s, model, dana, "request-0047")
+        assert run.status == "done" and run.facts["texting:now"] == "No STOP from this number is in effect."       # what the packet was checked against
+        again = model.calls[2]["messages"][-1]["content"][0]["content"]
+        assert "No STOP from this number is in effect." in again and "Texting this number is stopped" not in again   # the second lookup saw the first reading
+        assert "Texting this number is stopped" in investigate(s, Scripted([tool("get_recent_texts", id_="b1")], [tool("submit_case_packet", packet("other", ["texting:now"], True, "x"), id_="b2")]),
+                                                              dana, "request-0048", again=True)[0].facts["texting:now"]      # a new run reads it afresh
+
+
+def test_the_sale_check_sees_a_note_the_worker_wrote_while_the_model_was_answering(factory):
+    with factory() as s:
+        dana = text_of(s, "Dana Whitfield")
+        item = dana_facts(s)["sale"]
+        cited = dana_packet(s)
+
+        class WorkerMarksItem(Scripted):
+            def create(self, **kwargs):
+                if len(self.calls) == 1:                                    # the model is answering; the worker reads the lease and fails
+                    with factory() as other:
+                        other.get(type(item), item.id).note = "Not freshly verified: the FMS could not be read on the last pass."
+                        other.commit()
+                return super().create(**kwargs)
+
+        reads = [tool("get_account", id_="a1"), tool("get_sale_status", {"lease_id": DANA_LEASE}, id_="a2"), tool("get_payments", {"lease_id": DANA_LEASE}, id_="a3")]
+        run, _ = investigate(s, WorkerMarksItem(reads, [tool("submit_case_packet", cited, id_="a4")]), dana, "request-0049")
+        assert run.status == "needs_person" and run.verified["sale_listed_nothing_owed"] is False and run.verified["work_item_id"] is None
+
+
 def test_a_packet_for_any_other_intent_says_the_desk_did_not_check_it(factory):
     with factory() as s:
         run, _ = investigate(s, Scripted([tool("submit_case_packet", packet("other", [], True, "x"))]), text_of(s, "Dana Whitfield"), "request-0029")
