@@ -140,6 +140,14 @@ class CubbyAdapter:
             raise NotFound(customer_provider_id)
         return self._customer(rows[0])
 
+    def has_customer(self, facility_provider_id: str, customer_provider_id: str) -> bool:
+        """Is this customer at this facility? Customers search by facility and customer id answers it, and it needs no
+        personal data."""
+        rows = self._read("/v1/customers/search", {"facilityId": facility_provider_id, "customerId": customer_provider_id}).get("customers")
+        if not isinstance(rows, list):
+            raise FMSError("/v1/customers/search: the answer has no customers list")
+        return any(isinstance(r, dict) and r.get("customerId") == customer_provider_id for r in rows)
+
     def customers_by_phone(self, facility_provider_id: str, phone: str) -> list[ProviderCustomer]:
         """Customers at a facility whose number contains this one. The FMS filter is a partial match, so the caller
         compares whole numbers before treating anyone as the sender."""

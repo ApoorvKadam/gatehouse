@@ -12,6 +12,7 @@ import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from desk.adapter import FMSError
 from desk.adapter.base import ProviderCustomer, SmsPreference
@@ -799,3 +800,37 @@ def test_an_answer_that_is_not_a_facility_list_is_not_an_empty_portfolio():
         with pytest.raises(FMSError):
             asking(odd).facilities()
     assert asking(httpx.Response(200, json={"status": 200, "data": {"facilities": []}})).facilities() == []
+
+
+def test_a_tenant_cubby_names_who_is_not_at_this_facility_goes_to_a_person():
+    named = decide("cust_9", "Pat Example", [person("cust_1", DANA)], DANA, hint_at_facility=False)
+    assert named.state == "ambiguous" and "not a customer at this facility" in named.note
+    assert decide("cust_9", "Pat Example", None, DANA, hint_at_facility=False).state == "ambiguous"      # even for a key that cannot read numbers
+    # Cubby names someone, but nobody here has the sender's whole number: a person decides
+    assert decide("cust_1", "Pat Example", [], DANA).state == "ambiguous"
+
+
+def test_a_tenant_of_another_facility_is_not_taken_as_the_sender_here(sim, adapter, session, desk):
+    arrive(session, adapter, texts_in(sim, "+15185550164", "hello"))        # Teo Varga rents at Albany and texts Orlando's number
+    assert match_pending(session, adapter, desk) == 1
+    [m] = session.scalars(select(InboundMessage)).all()
+    assert m.match_state == "ambiguous" and m.customer_provider_id is None and "not a customer at this facility" in m.match_note
+
+
+def test_a_stop_that_is_stored_while_the_intent_is_written_stops_the_send(fms_url, sim, adapter, session, desk):
+    asked = matched(session, adapter, desk, sim, DANA, "Is anyone there?")
+    engine, fired = session.get_bind(), []
+
+    def stop_arrives(_):
+        if not fired:
+            fired.append(True)
+            with Session(engine) as other:                        # the webhook, in its own session, a moment after the check
+                other.add(InboundMessage(facility_id=desk.id, provider_message_id="SM-stop-race", phone=DANA, phone_key=DANA,
+                                         to_number="+14075550100", body="STOP", received_at=utcnow(), match_state="matched"))
+                other.commit()
+
+    sa.event.listen(session, "after_commit", stop_arrives)
+    row = send_text(session, adapter, desk, "cust_DanaWhit01", "Yes, until 6.", "front desk", reply_to=asked)
+    sa.event.remove(session, "after_commit", stop_arrives)
+    assert fired and row.state == "blocked" and "STOP" in row.reason
+    assert went_out(fms_url) == []

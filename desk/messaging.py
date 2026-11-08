@@ -122,11 +122,15 @@ class Match:
     note: str | None = None
 
 
-def decide(hint_id: str | None, hint_name: str | None, found: list[ProviderCustomer] | None, sender: str) -> Match:
-    """Who sent a text. Cubby's webhook names a tenant only when the number belongs to a customer with a lease, and a
-    search of the facility by phone is the check on that. `found` is None when the search was refused; customers that come
-    back without a phone number mean the key cannot read them. The phone filter is a partial match, so only a customer whose
-    whole number is the sender's counts."""
+def decide(hint_id: str | None, hint_name: str | None, found: list[ProviderCustomer] | None, sender: str,
+           hint_at_facility: bool = True) -> Match:
+    """Who sent a text. Cubby's webhook names a tenant only when the number belongs to a customer with a lease, not
+    necessarily at this facility, so the tenant must be a customer here (`hint_at_facility`), and a search of the facility by
+    phone is the check on the number. `found` is None when the search was refused; customers that come back without a phone
+    number mean the key cannot read them. The phone filter is a partial match, so only a customer whose whole number is the
+    sender's counts."""
+    if hint_id and not hint_at_facility:
+        return Match("ambiguous", note="Cubby's webhook names a tenant who is not a customer at this facility. A person decides who it is.")
     if found is None or (found and all(c.phone is None for c in found)):
         if hint_id:
             return Match("matched", hint_id, hint_name, "Named by Cubby's webhook; this API key cannot search by phone to check it.")
@@ -140,7 +144,8 @@ def decide(hint_id: str | None, hint_name: str | None, found: list[ProviderCusto
             return Match("ambiguous", note="Cubby's webhook names one tenant and a phone search finds another. A person decides who it is.")
         return Match("matched", found_id, full_name(person), None if hint_id else "Found by phone search; Cubby's webhook named nobody.")
     if hint_id:
-        return Match("matched", hint_id, hint_name, "Named by Cubby's webhook; no number on file matched the sender's whole number.")
+        return Match("ambiguous", note="Cubby's webhook names a tenant, but no number on file at this facility is the sender's whole number. "
+                                      "A person decides who it is.")
     return Match("unmatched", note="No tenant at this facility has this number on file.")
 
 
@@ -149,6 +154,7 @@ def match_pending(session: Session, adapter: FMSAdapter, facility: Facility) -> 
     pending = session.scalars(select(InboundMessage).where(InboundMessage.facility_id == facility.id,
                                                            InboundMessage.match_state == "pending").order_by(InboundMessage.id)).all()
     searched: dict[str, list[ProviderCustomer] | None] = {}
+    here: dict[str, bool] = {}
     done = 0
     try:
         for m in pending:
@@ -157,7 +163,10 @@ def match_pending(session: Session, adapter: FMSAdapter, facility: Facility) -> 
                     searched[m.phone_key] = adapter.customers_by_phone(facility.provider_id, m.phone)
                 except PermissionDenied:
                     searched[m.phone_key] = None
-            found = decide(m.customer_provider_id, m.customer_name, searched[m.phone_key], m.phone)
+            if m.customer_provider_id and m.customer_provider_id not in here:
+                here[m.customer_provider_id] = adapter.has_customer(facility.provider_id, m.customer_provider_id)
+            found = decide(m.customer_provider_id, m.customer_name, searched[m.phone_key], m.phone,
+                           here.get(m.customer_provider_id, True) if m.customer_provider_id else True)
             m.match_state, m.match_note = found.state, found.note
             m.customer_provider_id, m.customer_name = found.customer_id, found.customer_name
             done += 1
@@ -270,6 +279,13 @@ def send_text(session: Session, adapter: FMSAdapter, facility: Facility, custome
         return _same_request(session.scalars(select(OutboundMessage).where(OutboundMessage.request_id == request_id)).one(),
                              facility, reply_to, customer_provider_id, body)
     if not verdict.ok or customer is None:
+        return row
+    # a STOP can be stored while the intent is being written: look again, right before the call. The carrier refuses a
+    # number that texted STOP in any case; this narrows the window on the desk's side to the moment before the call.
+    again = can_text(session, facility, customer, now or utcnow(), reply_to=reply_to)
+    if not again.ok:
+        row.state, row.reason = "blocked", again.reason
+        session.commit()
         return row
     outcome = adapter.send_sms(facility.provider_id, customer.provider_id, body)
     if outcome.kind == "sent":
