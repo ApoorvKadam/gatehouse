@@ -11,6 +11,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from decimal import Decimal
 
@@ -25,7 +26,9 @@ from .models import (
     PaymentCommand, WorkItem,
 )
 from .sales import KIND_NAMES, LISTED_KINDS, LISTED_PAID, OUTSIDE, SALE_KINDS
-from .usage import cost_usd
+from .spend import WORST_RUN_USD, Refused
+from .usage import PRICES, cost_usd
+from .wording import plain, words
 
 log = logging.getLogger("desk.investigator")
 
@@ -37,16 +40,26 @@ NOT_ACCEPTED = ("The packet was not accepted. Every record_id you list must be o
                 "the tenant's message; a lookup that found nothing returned a record that says so. Every amount and date you write in the "
                 "summary and the reason must appear in a record you list, so do not add, subtract or estimate. You list at most eight records. "
                 "Fix that and submit the packet again.")
-# A model call is cut off after CALL_TIMEOUT seconds and the SDK tries it again at most twice (the app's client once), so a live run
-# writes its heartbeat (AgentRun.beat_at) at least every three and a half minutes. A run silent for STRANDED_AFTER was cut off, not slow.
+# A model call is cut off after CALL_TIMEOUT seconds and the desk tries it once more (the SDK's own retries are off for these calls, see
+# Investigation._ask), so a live run writes its heartbeat (AgentRun.beat_at) at least every two and a half minutes. A run silent for
+# STRANDED_AFTER was cut off, not slow.
 CALL_TIMEOUT = 60.0
+# a failed attempt is tried again only when the failure may pass: the model was busy or slow, or no answer came back at all
+RETRY_STATUS = (408, 409, 429)
 STRANDED_AFTER = timedelta(minutes=5)
 # a sale item the worker has not read in this long was missing from its latest passes (a search that no longer returns a sale leaves
 # the item open and unchanged), so it cannot confirm that the sale is listed now
 SALE_FRESH_FOR = timedelta(minutes=10)
 # what the desk says about a packet it could not check against its own records
-UNCHECKED = ("Claude's reading. The desk checked only that the records it lists exist and that the dollar amounts and dates it can read in "
+UNCHECKED = ("Case notes. The desk checked only that the records they list exist and that the dollar amounts and dates it can read in "
              "the summary and the reason appear in them or in the tenant's message.")
+def _as_data(block):
+    """A response block as plain data, for measuring a request."""
+    if hasattr(block, "model_dump"):
+        return block.model_dump(mode="json")
+    return vars(block) if hasattr(block, "__dict__") else str(block)
+
+
 INTENTS = ("sale_after_payment", "payment_status", "balance_question", "access_problem", "stop_request", "other")
 # the prompt asks for a summary of 400 characters; one that runs past MAX_SUMMARY is cut at a sentence when it is kept, never refused
 MAX_SUMMARY, MAX_RECORDS = 600, 8
@@ -179,6 +192,8 @@ class Lookups:
     def _record(self, fact_id: str, text: str, **more) -> dict:
         """A record as this run first read it. A run is one reading of the desk's records: if the same record is looked up again
         and has changed since, the run still sees the first version, so what the packet was checked against is what staff are shown."""
+        if not fact_id.startswith("text:"):
+            text = plain(text)              # a record is written for people; a text keeps the words it was sent with
         if fact_id not in self._seen:
             self.facts[fact_id] = text
             self._seen[fact_id] = {"record_id": fact_id, "text": text, **more}
@@ -213,7 +228,7 @@ class Lookups:
         for lease in self.scope.leases:
             case = self._case(lease)
             snap = self.session.get(LedgerSnapshot, case.last_snapshot_id) if case is not None and case.last_snapshot_id else None
-            text = f"Unit {lease.unit_name}, lease {lease.provider_id}."
+            text = f"Unit {lease.unit_name}."
             text += (f" The FMS ledger, read on {when(snap.observed_at)}, showed {money(snap.total_due)} owed and {money(snap.prepaid)} prepaid."
                      if snap is not None else " No ledger reading is recorded.")
             if case is not None:
@@ -226,25 +241,25 @@ class Lookups:
     def get_payments(self, lease: Lease) -> dict:
         records = []
         for c in self.session.scalars(select(PaymentCommand).where(PaymentCommand.lease_id == lease.id).order_by(PaymentCommand.id)):
-            text = f"The desk recorded a {money(c.amount)} card payment attempt on {when(c.created_at)}. Its state is {c.state}."
+            text = f"The desk recorded a {money(c.amount)} card payment attempt on {when(c.created_at)}. Its state is {words(c.state)}."
             if c.provider_status:
-                text += f" The FMS reports it as {c.provider_status}."
+                text += f" The FMS reports it as {words(c.provider_status)}."
             if c.suggested_payment_id:
-                text += f" The FMS payment {c.suggested_payment_id} may be this attempt; staff have not confirmed that."
+                text += " A payment at the FMS may be this attempt; staff have not confirmed that."
             if c.confirmed_at:
                 text += f" The desk confirmed it on {when(c.confirmed_at)}."
-            records.append(self._record(f"payment:{c.id}", text, state=c.state, amount_cents=c.amount))
+            records.append(self._record(f"payment:{c.id}", text, amount_cents=c.amount))
         # the table has no lease column to filter on, so this reads every observed payment; one operator's volume is small, and an
         # index of payment to lease is the change to make if that grows
         for op in self.session.scalars(select(ObservedPayment).order_by(ObservedPayment.id)):
             if lease.provider_id in (op.lease_provider_ids or []):
-                text = (f"The FMS reports a {money(op.amount)} payment ({op.provider_payment_id}) with status {op.status}. "
+                text = (f"The FMS reports a {money(op.amount)} payment with status {words(op.status)}. "
                         f"The desk first saw it on {when(op.first_seen_at)}.")
                 if op.status_changed_at:
                     text += f" Its status last changed on {when(op.status_changed_at)}."
-                records.append(self._record(f"observed:{op.id}", text, status=op.status, amount_cents=op.amount))
+                records.append(self._record(f"observed:{op.id}", text, amount_cents=op.amount))
         return {"lease_id": lease.provider_id, "payments": records or [self._record(
-            f"payment:none:{lease.id}", f"The desk has no payment recorded on lease {lease.provider_id}. That does not show that none was made.")]}
+            f"payment:none:{lease.id}", f"The desk has no payment recorded on unit {lease.unit_name}. That does not show that none was made.")]}
 
     def get_sale_status(self, lease: Lease) -> dict:
         records = []
@@ -255,21 +270,20 @@ class Lookups:
             seen = item.observed or {}
             text = f"{KIND_NAMES.get(item.kind, item.kind)} ({item.state}). {item.problem}"
             if item.task_state == "created":
-                text += f" An FMS task asks a person to act; its status is {item.task_status or 'unknown'}."
+                text += f" An FMS task asks a person to act; its status is {words(item.task_status) if item.task_status else 'unknown'}."
             if item.state == "open":
                 text += f" It closes when: {item.closing_evidence}"
-            records.append(self._record(f"workitem:{item.id}", text, kind=item.kind, state=item.state, sale=seen.get("sale_local"),
-                                        fms_auction_status=seen.get("status")))
+            records.append(self._record(f"workitem:{item.id}", text, sale=seen.get("sale_local")))
         return {"lease_id": lease.provider_id, "sale_items": records or [self._record(
-            f"workitem:none:{lease.id}", f"The desk has no sale item for lease {lease.provider_id}.")]}
+            f"workitem:none:{lease.id}", f"The desk has no sale item for unit {lease.unit_name}.")]}
 
     def get_lien_file(self, lease: Lease) -> dict:
         case = self._case(lease)
         evaluation = self.session.scalar(select(LienEvaluation).where(LienEvaluation.case_id == case.id).order_by(LienEvaluation.id.desc())) if case else None
         if evaluation is None:
-            return {"lease_id": lease.provider_id, "evaluation": self._record(f"lien:none:{lease.id}", f"No lien evaluation is recorded for lease {lease.provider_id}.")}
-        text = f"The lien file was evaluated on {when(evaluation.evaluated_at)}: {evaluation.state}. {evaluation.summary}".strip()
-        return {"lease_id": lease.provider_id, "evaluation": self._record(f"lien:{evaluation.id}", text, state=evaluation.state)}
+            return {"lease_id": lease.provider_id, "evaluation": self._record(f"lien:none:{lease.id}", f"No lien evaluation is recorded for unit {lease.unit_name}.")}
+        text = f"The lien file was evaluated on {when(evaluation.evaluated_at)}: {words(evaluation.state)}. {evaluation.summary}".strip()
+        return {"lease_id": lease.provider_id, "evaluation": self._record(f"lien:{evaluation.id}", text)}
 
     def get_recent_texts(self) -> dict:
         facility, customer = self.scope.facility.id, self.scope.customer_id
@@ -458,8 +472,11 @@ class Investigation:
                           timeout=CALL_TIMEOUT)
             if forced:
                 kwargs["tool_choice"] = {"type": "tool", "name": "submit_case_packet"}
-            response = self.client.messages.create(**kwargs)
-            self._count(response)
+            worst = self._worst_call(system, messages)
+            response = self._ask(kwargs, worst)
+            if response is None:
+                return self._end("needs_person", None, "the run reached its cost limit before it could submit a packet")
+            self._count(response, worst)
             self.session.commit()           # the call is paid for whatever happens next, so its cost is kept
             entry = {"turn": turn + 1, "stop_reason": response.stop_reason, "forced": forced, "calls": []}
             self.trace.append(entry)
@@ -504,6 +521,32 @@ class Investigation:
             self.session.commit()
         return self._end("needs_person", None, "no packet after the allowed turns")
 
+    def _worst_call(self, system: str, messages: list) -> float:
+        """The most the next call can cost. A token is at least a byte, so the bytes of the request bound its input tokens, and the
+        answer is at most MAX_TOKENS."""
+        size = len(system.encode()) + len(json.dumps(TOOLS).encode()) + len(json.dumps(messages, default=_as_data).encode()) + 1024
+        price_in, price_out = PRICES[MODEL]
+        return (size * price_in + MAX_TOKENS * price_out) / 1_000_000
+
+    def _ask(self, kwargs: dict, worst: float):
+        """One model call, tried at most twice, and never one that could take the run past WORST_RUN_USD; None when the run has
+        reached that limit. The SDK's own retries are off, so every attempt is counted here: an attempt that ended with no answer
+        (a timeout, a dropped connection) may still have been billed, so it is counted at the most it could have cost. An error the
+        provider answered with was not billed, and one that cannot pass (a refused key, a bad request) is not tried again."""
+        client = getattr(self.client, "with_options", lambda **_: self.client)(max_retries=0)
+        for attempt in (1, 2):
+            if self.row.cost_usd + worst > WORST_RUN_USD:
+                return None
+            try:
+                return client.messages.create(**kwargs)
+            except Exception as exc:
+                status = getattr(exc, "status_code", None)
+                if status is None:
+                    self.row.cost_usd += worst
+                    self.session.commit()           # the attempt is paid for whatever happens next
+                if attempt == 2 or (status is not None and status not in RETRY_STATUS and status < 500):
+                    raise
+
     def _beat(self) -> bool:
         """Write the heartbeat, but only for a run that is still running, in one statement. False once the desk has given the run
         up as cut off, and then no more model calls are paid for it. What this run has written so far is saved first, and no
@@ -515,15 +558,19 @@ class Investigation:
             return False
         return True
 
-    def _count(self, response) -> None:
-        usage = response.usage
-        cost = cost_usd(MODEL, usage)
+    def _count(self, response, worst: float) -> None:
+        """Count an answer from its usage. An answer whose usage cannot be read was billed all the same, so it is counted at its worst."""
+        try:
+            usage = response.usage
+            tokens_in, tokens_out, cost = usage.input_tokens, usage.output_tokens, cost_usd(MODEL, usage)
+        except Exception:
+            log.warning("agent run %s: a model answer had no readable usage, so it is counted at its worst", self.row.id)
+            tokens_in, tokens_out, cost = 0, 0, worst
         self.row.turns += 1
-        self.row.input_tokens += usage.input_tokens
-        self.row.output_tokens += usage.output_tokens
+        self.row.input_tokens += tokens_in
+        self.row.output_tokens += tokens_out
         self.row.cost_usd += cost
-        log.info("agent run %s model=%s in=%d out=%d cost=$%.5f total=$%.5f", self.row.id, MODEL, usage.input_tokens, usage.output_tokens,
-                 cost, self.row.cost_usd)
+        log.info("agent run %s model=%s in=%d out=%d cost=$%.5f total=$%.5f", self.row.id, MODEL, tokens_in, tokens_out, cost, self.row.cost_usd)
 
     def _end(self, status: str, stop_reason: str | None, error: str | None, **more) -> None:
         settle(self.session, self.row.id, status=status, stop_reason=stop_reason, error=error, **more)
@@ -618,11 +665,16 @@ def _reply(session: Session, request_id: str | None, run: AgentRun) -> AgentRun:
 
 
 def investigate(session: Session, client, inbound: InboundMessage, request_id: str | None, again: bool = False,
-                fresh_for: timedelta = SALE_FRESH_FOR) -> tuple[AgentRun, bool]:
+                fresh_for: timedelta = SALE_FRESH_FOR, visitor: str | None = None,
+                allow: Callable[[Session, int | None], str | None] | None = None) -> tuple[AgentRun, bool]:
     """Run Claude over a matched text, once. Returns the run and whether this call started it. A request id is answered once: a
     retry gets the same run, whatever `again` says. A run already going, or a finished run, is returned as it is, so a double click
     costs one model run; `again` asks for a new run on a text that has one. A text's runs are numbered and the database takes each
-    number once, so two requests that both find no run cannot both start the first."""
+    number once, so two requests that both find no run cannot both start the first. `allow` is asked just before a new run
+    would start, which is the one place a run is paid for, and again once the run is written, with that run's id so it can be left
+    out: the database serializes writers, so of two requests that both passed the first look, the second sees the first's run.
+    It returns why not, or None, and a refusal raises Refused. A request that only gets an existing run back costs nothing, so it
+    is never refused."""
     if inbound.match_state != "matched" or not inbound.customer_provider_id or inbound.facility_id is None:
         raise ValueError("this text is not matched to one tenant at a facility")
     request = _claim(session, inbound, request_id)
@@ -635,10 +687,17 @@ def investigate(session: Session, client, inbound: InboundMessage, request_id: s
     found = going or (None if again else last)
     if found is not None:
         return _reply(session, request_id, found), False
-    row = AgentRun(inbound_id=inbound.id, generation=last.generation + 1 if last else 1, model=MODEL, effort=EFFORT)
+    reason = allow(session, None) if allow is not None else None
+    if reason:
+        raise Refused(reason)
+    row = AgentRun(inbound_id=inbound.id, generation=last.generation + 1 if last else 1, visitor=visitor, model=MODEL, effort=EFFORT)
     session.add(row)
     try:
         session.flush()             # the unique constraints decide a race between two requests here
+        reason = allow(session, row.id) if allow is not None else None
+        if reason:
+            session.rollback()      # the run is not kept, and nothing was paid for
+            raise Refused(reason)
         if request_id and not _take(session, request_id, row.id):
             session.rollback()      # an earlier copy of this request was answered while this one was working out its run: no run is started
             return _answered(session, request_id), False

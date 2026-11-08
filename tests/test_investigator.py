@@ -18,7 +18,7 @@ from desk.adapter.cubby import CubbyAdapter
 from desk.api import create_app
 from desk.config import Settings
 from desk.db import make_session_factory, utcnow
-from desk.investigator import (CALL_TIMEOUT, MAX_SUMMARY, MAX_TURNS, NOT_ACCEPTED, TOOLS, UNCHECKED, fail_stranded_runs, investigate, packet_problem, run_view, shorten)
+from desk.investigator import (CALL_TIMEOUT, MAX_SUMMARY, MAX_TOKENS, MAX_TURNS, NOT_ACCEPTED, TOOLS, UNCHECKED, fail_stranded_runs, investigate, packet_problem, run_view, shorten)
 from desk.lien_files import ensure_append_only
 from desk.messaging import STOP_WORDS, inbox
 from desk.models import AgentRequest, AgentRun, Facility, InboundMessage, Lease, PaymentCommand, WorkItem
@@ -102,8 +102,8 @@ def test_dana_is_investigated_and_the_desk_checks_the_packet_itself(factory):
         assert "nothing owed on unit B-1042" in run.verified["says"] and "reports a payment" in run.verified["says"]
         assert "card payment attempt" in run.facts[dana_facts(s)["payment"]] and " took " not in run.facts[dana_facts(s)["payment"]]
         view = run_view(run, trace=True)
-        assert view["claude"]["intent"] == "sale_after_payment" and view["claude"]["needs_person"] is True
-        assert view["claude"]["label"] == "Claude's reading" and view["claude"]["summary"] and view["claude"]["reason"]    # Claude's words carry their label
+        assert view["notes"]["intent"] == "sale_after_payment" and view["notes"]["needs_person"] is True
+        assert view["notes"]["label"] == "Case notes" and view["notes"]["summary"] and view["notes"]["reason"]            # the notes carry their label
         assert view["records"][1]["text"].startswith("Sale still listed, nothing owed (open).")                       # the record, word for word
         assert [c["tool"] for c in view["trace"][0]["calls"]] == ["get_account", "get_sale_status", "get_payments"]
         assert '"tenant": "Dana Whitfield"' in model.calls[1]["messages"][-1]["content"][0]["content"]       # the name arrives as data in a result
@@ -112,7 +112,7 @@ def test_dana_is_investigated_and_the_desk_checks_the_packet_itself(factory):
         # the inbox shows the run beside the text
         shown = next(m for m in inbox(s, s.scalar(select(Facility).where(Facility.provider_id == ORLANDO))) if m["id"] == dana.id)
         assert shown["investigation"]["status"] == "done" and shown["investigation"]["verified"]["sale_listed_nothing_owed"] is True
-        assert shown["investigation"]["claude"]["label"] == "Claude's reading"                                           # the inbox carries the label too,
+        assert shown["investigation"]["notes"]["label"] == "Case notes"                                                  # the inbox carries the label too,
         assert [r["id"] for r in shown["investigation"]["records"]] == [r["id"] for r in view["records"]]                # and the records beside it
         assert shown["investigation"]["records"][1]["text"].startswith("Sale still listed, nothing owed (open).")
 
@@ -836,3 +836,94 @@ def test_the_route_refuses_without_a_key_and_for_a_text_that_is_not_matched(fms_
 def test_the_preview_opens_with_no_run_because_nothing_is_canned(fms_url, sim):
     with TestClient(preview(fms_url, None)) as client:
         assert all(m["investigation"] is None for m in client.get(f"/api/facilities/{ORLANDO}/inbox").json()["messages"])
+
+
+# ---------------------------------------------------------------- what a run may cost
+
+
+class Answer(Exception):
+    """What the SDK raises when the provider answers with an error: it carries the status."""
+
+    def __init__(self, status):
+        super().__init__(f"HTTP {status}")
+        self.status_code = status
+
+
+class Fails(Scripted):
+    """Its first calls end as given, by raising, before it plays the script. A timeout carries no status; an error answer does."""
+
+    def __init__(self, errors, *turns):
+        super().__init__(*turns)
+        self.errors, self.attempts = list(errors), 0
+
+    def create(self, **kwargs):
+        self.attempts += 1
+        if self.errors:
+            raise self.errors.pop(0)
+        return super().create(**kwargs)
+
+
+PRICE_IN, PRICE_OUT = PRICES["claude-haiku-5-5"]
+FULL_ANSWER_USD = MAX_TOKENS * PRICE_OUT / 1_000_000          # what an attempt that was lost can cost at least, once its request is counted too
+
+
+def scripted_cost(calls: int) -> float:
+    return calls * (900 * PRICE_IN + 60 * PRICE_OUT) / 1_000_000
+
+
+def test_a_run_never_makes_a_call_that_could_take_it_past_its_cost_cap(factory):
+    with factory() as s:
+        dana = text_of(s, "Dana Whitfield")
+        dana.body = "x" * 400_000                       # a request this big could cost more than the cap by itself
+        s.commit()
+        model = Scripted()                              # no turns: any call would fail the test
+        run, started = investigate(s, model, dana, "request-cap-0001")
+        assert started and run.status == "needs_person" and "cost limit" in run.error
+        assert model.calls == [] and run.turns == 0 and run.cost_usd == 0
+
+
+def test_a_call_that_ends_with_no_answer_is_counted_at_its_worst_and_tried_once_more(factory):
+    with factory() as s:
+        model = Fails([TimeoutError("no answer")], *lookups_then_packet(s).turns)
+        run, _ = investigate(s, model, text_of(s, "Dana Whitfield"), "request-lost-0001")
+        assert run.status == "done" and model.attempts == 3 and run.turns == 2
+        assert run.cost_usd > scripted_cost(2) + FULL_ANSWER_USD        # the lost attempt is in it, at the most it could have cost
+
+
+def test_two_lost_calls_end_the_run_and_both_are_counted(factory):
+    with factory() as s:
+        model = Fails([TimeoutError("one"), TimeoutError("two")], *lookups_then_packet(s).turns)
+        run, _ = investigate(s, model, text_of(s, "Dana Whitfield"), "request-lost-0002")
+        assert run.status == "failed" and model.attempts == 2 and run.turns == 0
+        assert run.cost_usd > 2 * FULL_ANSWER_USD
+
+
+def test_an_error_the_provider_answered_with_is_tried_once_more_and_costs_nothing(factory):
+    with factory() as s:
+        model = Fails([Answer(529)], *lookups_then_packet(s).turns)
+        run, _ = investigate(s, model, text_of(s, "Dana Whitfield"), "request-busy-0001")
+        assert run.status == "done" and model.attempts == 3
+        assert run.cost_usd == pytest.approx(scripted_cost(2))
+
+
+class NoUsage(Scripted):
+    """Its answers come back without usage, as a malformed response would."""
+
+    def create(self, **kwargs):
+        response = super().create(**kwargs)
+        response.usage = None
+        return response
+
+
+def test_an_answer_with_no_readable_usage_is_counted_at_its_worst(factory):
+    with factory() as s:
+        model = NoUsage(*lookups_then_packet(s).turns)
+        run, _ = investigate(s, model, text_of(s, "Dana Whitfield"), "request-usage-0001")
+        assert run.status == "done" and run.turns == 2 and run.cost_usd > 2 * FULL_ANSWER_USD
+
+
+def test_an_error_that_cannot_pass_is_not_tried_again(factory):
+    with factory() as s:
+        model = Fails([Answer(401), Answer(401)], *lookups_then_packet(s).turns)
+        run, _ = investigate(s, model, text_of(s, "Dana Whitfield"), "request-key-0001")
+        assert run.status == "failed" and model.attempts == 1 and run.cost_usd == 0
