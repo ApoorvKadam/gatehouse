@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base, utcnow
@@ -72,6 +72,7 @@ HOLDING_STATES = ("SUBMITTING", "AWAITING_APPLICATION", "PENDING_AT_FMS", "OUTCO
 # what the FMS can later report about a payment that had succeeded
 FMS_REVERSAL_STATUSES = ("DIRECT_DEBIT_RETURN", "REFUNDED", "REFUND_INITIATED", "DISPUTED")
 _HOLDING_SQL = text("state IN (" + ", ".join(f"'{s}'" for s in HOLDING_STATES) + ")")
+_RUNNING_SQL = text("status = 'running'")
 
 
 class PaymentCommand(Base):
@@ -360,6 +361,61 @@ class OutboundMessage(Base):
     reason: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class AgentRun(Base):
+    """One investigation of one inbound text: what Claude was shown, which records it looked at, the packet it submitted, what
+    the desk checked itself, and what the model calls cost. The packet is Claude's work; `verified` is the desk's own check of
+    it against its records, and the two are kept apart on purpose."""
+
+    __tablename__ = "agent_runs"
+    # the database, not a read before the insert, keeps two requests from running the model twice on the same text: one run
+    # at a time, and a text's runs are numbered, so a second run without `again` finds the first one's number taken
+    __table_args__ = (Index("one_running_run_per_text", "inbound_id", unique=True, sqlite_where=_RUNNING_SQL, postgresql_where=_RUNNING_SQL),
+                      UniqueConstraint("inbound_id", "generation"))
+    id: Mapped[int] = mapped_column(primary_key=True)
+    inbound_id: Mapped[int] = mapped_column(ForeignKey("inbound_messages.id"))
+    generation: Mapped[int] = mapped_column(Integer, default=1)
+    model: Mapped[str] = mapped_column(String)
+    effort: Mapped[str] = mapped_column(String)
+    # running, done (a packet the desk accepted), needs_person (no accepted packet, or one the records do not support) or failed
+    status: Mapped[str] = mapped_column(String, default="running")
+    stop_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    turns: Mapped[int] = mapped_column(Integer, default=0)
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    # written at the start of every model turn: a run that has not beaten for a while was cut off, however long ago it started
+    beat_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # every model turn and every lookup it made, with the record ids the lookup returned
+    trace: Mapped[list] = mapped_column(JSON, default=list)
+    # record id -> the sentence the records say, for every record a lookup returned in this run
+    facts: Mapped[dict] = mapped_column(JSON, default=dict)
+    packet: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    verified: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    def reading(self) -> dict:
+        """What staff are shown of a run, in every place it appears: Claude's own words under their label, the records it relied on
+        word for word, and the desk's own check apart from both."""
+        packet = self.packet or {}
+        return {"claude": {"label": "Claude's reading", "intent": packet.get("intent"), "summary": packet.get("summary"),
+                           "reason": packet.get("reason"), "needs_person": packet.get("needs_person")},
+                "records": [{"id": i, "text": (self.facts or {}).get(i)} for i in packet.get("records", [])],
+                "verified": self.verified}
+
+
+class AgentRequest(Base):
+    """A request id, the text it was first used for, and the run it was answered with. The screen picks a request id for each
+    request and keeps it for the retries, so a retry gets the same run, and an id that turns up for another text is a mistake
+    and is refused. The run is the one the request started, or the one that already existed when the request was answered."""
+
+    __tablename__ = "agent_requests"
+    request_id: Mapped[str] = mapped_column(String, primary_key=True)
+    inbound_id: Mapped[int] = mapped_column(ForeignKey("inbound_messages.id"))
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("agent_runs.id"), nullable=True)
 
 
 class AccessView(Base):

@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from .adapter import FMSAdapter, InboundText, NotFound, PermissionDenied, ProviderCustomer
 from .cases import current_case
 from .db import utcnow
-from .models import Facility, InboundMessage, Lease, OutboundMessage
+from .models import AgentRun, Facility, InboundMessage, Lease, OutboundMessage
 
 # the words a carrier acts on; a number that sent one of these is not texted until it sends a START word
 STOP_WORDS = ("STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT")
@@ -336,7 +336,10 @@ def inbox(session: Session, facility: Facility, limit: int = 50, offset: int = 0
                 leases.append({"lease_id": lease.provider_id, "unit": lease.unit_name,
                                "case_id": case.id if case else None, "case_state": case.state if case else None})
         replies = session.scalars(select(OutboundMessage).where(OutboundMessage.inbound_id == m.id).order_by(OutboundMessage.id)).all()
+        run = session.scalar(select(AgentRun).where(AgentRun.inbound_id == m.id).order_by(AgentRun.id.desc()))
         out.append({"id": m.id, "from": m.phone, "body": m.body, "received_at": m.received_at,
+                    "investigation": ({"id": run.id, "status": run.status, **run.reading(), "cost_usd": round(run.cost_usd, 6)}
+                                      if run is not None else None),
                     "match": {"state": m.match_state, "note": m.match_note, "customer_id": m.customer_provider_id,
                               "customer_name": m.customer_name, "leases": leases},
                     "stopped": stop_text(session, m.phone) is not None,

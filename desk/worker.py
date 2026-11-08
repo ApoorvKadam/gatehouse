@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from .access import bound_facilities, reconcile_access
 from .adapter import FMSAdapter, FMSError
 from .db import refresh_binding
+from .investigator import fail_stranded_runs
 from .messaging import file_unrouted, hold_stranded, match_pending
 from .payments import PaymentService
 from .sales import reconcile_sales
@@ -60,6 +61,8 @@ def run_once(factory: sessionmaker[Session], adapter: FMSAdapter, run_id: str = 
         stranded = hold_stranded(session)
         if stranded:
             log.warning("%d text(s) were cut off before their outcome was recorded and are held for a person", stranded)
+        if fail_stranded_runs(session):
+            log.warning("a model run was cut off before it finished and is marked failed")
         return checked, failures
 
 

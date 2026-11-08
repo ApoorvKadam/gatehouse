@@ -7,9 +7,10 @@ import logging
 import os
 import tempfile
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from urllib.parse import urlsplit
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm.exc import StaleDataError
 from pydantic import BaseModel, Field
@@ -21,12 +22,13 @@ from .adapter.cubby import CubbyAdapter
 from .cases import queue, sync_facility
 from .config import Settings
 from .conversation import Conversation
+from .investigator import CALL_TIMEOUT, SALE_FRESH_FOR, investigate, run_view
 from .lien_files import ensure_append_only, evaluate_case, record_evidence, replay
 from .liens import FL_R1, ValidationError
 from .db import bind_to_fms, make_session_factory, refresh_binding
 from .messaging import inbox, match_pending, outbound_view, receive_text, send_text, unrouted
 from .models import (
-    CaseEvent, DelinquencyCase, DeskBinding, Facility, InboundMessage, Lease, LedgerSnapshot, LienEvaluation, PaymentCommand,
+    AgentRun, CaseEvent, DelinquencyCase, DeskBinding, Facility, InboundMessage, Lease, LedgerSnapshot, LienEvaluation, PaymentCommand,
 )
 from .payments import (
     IdentityClaim, PaymentRefused, PaymentService, check_identity, collected, confirm, propose, tenant_message,
@@ -76,6 +78,12 @@ class ReplyIn(BaseModel):
                             description="chosen by the screen for each reply and kept for its retries; sending it twice sends one text")
 
 
+class InvestigateIn(BaseModel):
+    request_id: str = Field(min_length=8, max_length=64,
+                            description="chosen by the screen for each request and kept for its retries; sending it twice is one run")
+    again: bool = Field(default=False, description="run Claude again on a text that already has a run")
+
+
 class StaffResolutionIn(BaseModel):
     staff: str = Field(min_length=2, description="who checked")
     charged: bool = Field(description="what the FMS or the processor showed when staff checked")
@@ -101,7 +109,8 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
                                        marketplace_url=settings.marketplace_url or settings.fms_base_url)
     if chat_client is None and os.environ.get("ANTHROPIC_API_KEY"):
         import anthropic
-        chat_client = anthropic.Anthropic()
+        # a call that hangs is cut off after a minute and tried once more, so no run sits on a dead connection for ten
+        chat_client = anthropic.Anthropic(timeout=CALL_TIMEOUT, max_retries=1)
     # Conversations live in this process: a restart ends them (their proposals and payments are in the database).
     # Running more than one API process needs them stored, and the channel in front must route each tenant to one.
     conversations: dict[str, Conversation] = {}
@@ -312,6 +321,40 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         if row.state in ("blocked", "rejected"):
             raise HTTPException(409, f"not sent: {row.reason}")
         return outbound_view(row)
+
+    @app.post("/api/inbox/{message_id}/investigate")
+    def investigate_text(message_id: int, body: InvestigateIn, response: Response, session: Session = Depends(db), _: str = Depends(operator)):
+        """Claude reads a matched text, looks up the desk's records and prepares the case. The desk checks the packet against
+        its own records. Needs a model key. A text has one run unless `again` is set, and a double click is one run."""
+        if chat_client is None:
+            raise HTTPException(503, "the desk has no model key configured")
+        message = session.get(InboundMessage, message_id)
+        facility = session.get(Facility, message.facility_id) if message is not None and message.facility_id is not None else None
+        if message is None or facility is None:
+            raise HTTPException(404, "text not found")
+        check_facility(session, facility.provider_id)
+        if message.match_state != "matched" or not message.customer_provider_id:
+            raise HTTPException(409, "this text is not matched to one tenant yet, so there is nothing to look up")
+        try:
+            # a sale item counts as read lately if the worker has passed over it a few times since, however slowly it is set to run
+            run, _started = investigate(session, chat_client, message, body.request_id, body.again,
+                                        max(SALE_FRESH_FOR, timedelta(seconds=6 * settings.reconcile_every_seconds)))
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if run.status == "running":
+            response.status_code = 202          # a retry gets the run that is going, so the screen can poll it by its id
+        return run_view(run)
+
+    @app.get("/api/agent-runs/{run_id}")
+    def agent_run(run_id: int, session: Session = Depends(db), _: str = Depends(viewer)):
+        """One run with its trace: every model turn and lookup, and the records each lookup returned."""
+        run = session.get(AgentRun, run_id)
+        message = session.get(InboundMessage, run.inbound_id) if run is not None else None
+        facility = session.get(Facility, message.facility_id) if message is not None and message.facility_id is not None else None
+        if run is None or facility is None:
+            raise HTTPException(404, "run not found")
+        check_facility(session, facility.provider_id)
+        return run_view(run, trace=True)
 
     @app.get("/api/cases/{case_id}")
     def case_detail(case_id: int, session: Session = Depends(db), _: str = Depends(viewer)):
