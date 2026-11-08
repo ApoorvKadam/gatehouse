@@ -515,3 +515,57 @@ html { scrollbar-color: var(--frame) var(--paper); }
 .panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); gap: var(--s5); margin-top: var(--s5); align-items: start; }
 .bar-cell { display: flex; align-items: center; justify-content: flex-end; gap: var(--s3); }
 .bar-cell .bar-track { width: 5rem; }
+
+/* Evaluation: results drawn as marks and flows, with the table view kept under them */
+.head-result { display: flex; align-items: center; gap: var(--s3); }
+.glance { display: grid; gap: var(--s5); }
+.meter-row { display: grid; grid-template-columns: minmax(11rem, 15rem) minmax(0, 1fr); gap: var(--s5); align-items: center; }
+.meter-name { display: grid; gap: 2px; }
+.meter-name b { font-weight: 600; }
+.meter-name span { font-size: var(--t-sm); color: var(--ink-2); }
+.segbar { display: flex; gap: var(--s3); }
+.seggroup { display: flex; gap: 2px; min-width: 0; }
+.seg { position: relative; flex: 1 1 0; min-width: 4px; height: 18px; border-radius: 4px; background: var(--teal); }
+.seg.fail { background: var(--brick); }
+.seg:hover, .seg:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.seg[data-tip]:hover::after, .seg[data-tip]:focus-visible::after {
+  content: attr(data-tip); position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); z-index: 4;
+  width: max-content; max-width: 22rem; white-space: normal; background: var(--ink); color: var(--paper);
+  font-size: var(--t-xs); font-weight: 500; line-height: 1.4; padding: 5px 9px; border-radius: 6px; pointer-events: none;
+}
+.segkey { display: flex; gap: var(--s3); margin-top: 6px; font-size: var(--t-xs); color: var(--ink-3); }
+.segkey span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.segkey b { color: var(--ink-2); font-weight: 600; margin-left: 4px; }
+.segkey:has(span:only-child) { display: none; }
+.flows { margin-top: var(--s5); }
+.flows h2, .panel h2 .muted { font-weight: 600; }
+.flows h2 .muted, .panel h2 .muted { font-weight: 400; margin-left: var(--s3); }
+.flow { display: grid; grid-template-columns: minmax(9rem, 12rem) minmax(0, 1fr) 1.5rem minmax(0, 1.2fr) 1.5rem minmax(0, 1.5fr) 5.5rem; gap: 0 var(--s2); align-items: center; padding: var(--s3) 0; border-top: 1px solid var(--rule); }
+.flow.control { grid-template-columns: minmax(16rem, 1fr) minmax(0, 2fr) 1.5rem 6.5rem; }
+.flow-head { border-top: 0; padding: 0 0 var(--s2); font-size: var(--t-xs); font-weight: 600; color: var(--ink-3); }
+.flow-head .lane-dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
+.flow-name { font-weight: 600; font-size: var(--t-sm); }
+.node { margin: 0; padding: 7px 11px; border: 1px solid var(--frame); border-radius: 8px; background: var(--paper); font-size: var(--t-sm); line-height: 1.45; }
+.node.told { color: var(--ink-2); background: var(--hover); }
+.arrow { display: grid; place-items: center; color: var(--ink-3); }
+.arrow .icon { width: 16px; height: 16px; }
+.flow-result { justify-self: end; }
+.flow-result.left { justify-self: start; }
+.board { display: grid; grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr)); gap: var(--s5) var(--s7); }
+.board-col h3 { font-size: var(--t-sm); font-weight: 600; margin-bottom: var(--s2); }
+.board-col ul { list-style: none; margin: 0; padding: 0; }
+.board-col li { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; gap: var(--s3); align-items: baseline; padding: var(--s2) 0; border-top: 1px solid var(--rule); font-size: var(--t-sm); }
+.board-col .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--teal); align-self: center; }
+.board-col li.bad .dot { background: var(--brick); }
+.board-col li b { font-weight: 600; color: var(--teal); }
+.board-col li.bad b { color: var(--brick); }
+.table-view { margin-top: var(--s5); border: 1px solid var(--frame); border-radius: 10px; padding: var(--s3) var(--s5) var(--s5); }
+.table-view summary { cursor: pointer; font-size: var(--t-sm); font-weight: 600; color: var(--ink-2); padding: var(--s2) 0; }
+.table-view table { margin-top: var(--s4); }
+@media (max-width: 1100px) {
+  .meter-row { grid-template-columns: 1fr; gap: var(--s2); }
+  .flow, .flow.control { grid-template-columns: 1fr; gap: var(--s2); }
+  .flow-head { display: none; }
+  .arrow { display: none; }
+  .flow-result, .flow-result.left { justify-self: start; }
+}

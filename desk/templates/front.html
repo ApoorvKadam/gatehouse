@@ -78,8 +78,8 @@
           <dt>Tenant agreed to</dt><dd>{{ money(held.amount) }}, with a fresh identity check</dd>
           <dt>Sent to the FMS</dt><dd>Once, after the intent was written down</dd>
           <dt>Answer</dt><dd>None usable{% if held_answer %}: {{ held_answer }}{% endif %}</dd>
-          <dt>FMS shows</dt><dd>{{ held.suggested_payment_id or 'No matching payment yet' }}{% if held.suggested_payment_id %}, a possible match{% endif %}</dd>
-          {% if truth %}<dt>Simulator's own record</dt><dd>{{ truth.payments|length }} charge on the lease, {{ truth.payments[0].status if truth.payments else '' }}</dd>{% endif %}
+          <dt>FMS shows</dt><dd>{{ 'A payment that may be this attempt' if held.suggested_payment_id else 'No matching payment yet' }}</dd>
+          {% if truth %}<dt>Simulator's own record</dt><dd>{{ truth.payments|length }} charge on the lease, {{ (truth.payments[0].status if truth.payments else '')|readable }}</dd>{% endif %}
         </dl>
       </div>
     </div>
@@ -126,7 +126,7 @@
         <dl class="kv">
           <dt>Amount</dt><dd>{{ money(returned.amount) }}</dd>
           <dt>Confirmed on the ledger</dt><dd>{{ local(returned.confirmed_at) if returned.confirmed_at else 'Never' }}</dd>
-          <dt>FMS now reports</dt><dd>{{ returned.provider_status }}</dd>
+          <dt>FMS now reports</dt><dd>{{ returned.provider_status|readable }}</dd>
           <dt>Account</dt><dd>Open again, back on Today</dd>
         </dl>
       </div>
