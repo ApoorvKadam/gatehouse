@@ -439,20 +439,25 @@ class Investigation:
                 return self._end("needs_person", response.stop_reason, f"the model stopped: {response.stop_reason}")
             messages.append({"role": "assistant", "content": response.content})
             calls = [b for b in response.content if b.type == "tool_use"]
-            entry["said"] = " ".join(b.text for b in response.content if b.type == "text").strip()[:200]
+            entry["wrote_text"] = any(b.type == "text" and b.text.strip() for b in response.content)       # the text itself is not kept
             reads = [c for c in calls if c.name != "submit_case_packet"]
             # a packet may list only what earlier turns returned: the model had not seen this turn's results when it wrote it
             seen_before = dict(self.lookups.facts)
             results = []
             for c in reads:
                 answer = self.lookups.call(c.name, dict(c.input or {}))
-                entry["calls"].append({"tool": c.name, "input": dict(c.input or {}), "records": record_ids(answer), "error": answer.get("error")})
+                entry["calls"].append({"tool": c.name, "input": {k: str(v)[:80] for k, v in dict(c.input or {}).items()}, "records": record_ids(answer),
+                                       "error": answer.get("error")})
                 results.append({"type": "tool_result", "tool_use_id": c.id, "content": json.dumps(answer)})
             submitted = [c for c in calls if c.name == "submit_case_packet"]
             if submitted:
                 packet = dict(submitted[-1].input or {})
                 problem = packet_problem(packet, seen_before, f"text:in:{self.inbound.id}")
-                entry["calls"].append({"tool": "submit_case_packet", "input": packet, "records": [], "error": problem})
+                # the trace keeps what was asked and what was refused, not Claude's prose: a packet that was accepted is shown as the reading
+                listed = packet.get("records") if isinstance(packet.get("records"), list) else []
+                entry["calls"].append({"tool": "submit_case_packet", "input": {"intent": packet.get("intent") if packet.get("intent") in INTENTS else None,
+                                                                                "records": [str(i)[:40] for i in listed[:MAX_RECORDS + 1]]},
+                                       "records": [], "error": problem})
                 self.row.trace, self.row.facts = list(self.trace), dict(self.lookups.facts)
                 # a packet that fails the check is sent back once; the second is final, and so is one on the forced last turn
                 if problem is None or sent_back or forced:
@@ -624,7 +629,8 @@ def investigate(session: Session, client, inbound: InboundMessage, request_id: s
 
 def run_view(row: AgentRun, trace: bool = False) -> dict:
     """A run as a screen or the API shows it: the reading (Claude's words, the records word for word, the desk's check), then how
-    the run went and what it cost."""
+    the run went and what it cost. The trace holds the lookups and their record ids, and no prose of Claude's: its words appear
+    only in the reading."""
     view = {"id": row.id, "inbound_id": row.inbound_id, "status": row.status, **row.reading(), "error": row.error,
             "model": row.model, "effort": row.effort, "turns": row.turns, "input_tokens": row.input_tokens, "output_tokens": row.output_tokens,
             "cost_usd": round(row.cost_usd, 6), "started_at": row.started_at, "finished_at": row.finished_at}

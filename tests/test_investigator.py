@@ -3,6 +3,7 @@ whatever the model asks for: which records it can see, which packets it accepts,
 click costs one run. The world is the preview's own, built through the real flows against the simulator."""
 from __future__ import annotations
 
+import json
 import logging
 from datetime import timedelta
 from types import SimpleNamespace
@@ -192,7 +193,7 @@ def test_text_written_instead_of_a_packet_is_never_used_and_the_model_is_asked_a
     with factory() as s:
         model = Scripted([text("Dana says she paid and wants the sale stopped.")], [tool("submit_case_packet", packet("other", [], True, "x"))])
         run, _ = investigate(s, model, text_of(s, "Dana Whitfield"), "request-0008")
-        assert run.status == "done" and run.trace[0]["said"].startswith("Dana says she paid")
+        assert run.status == "done" and run.trace[0]["wrote_text"] is True and "Dana says she paid" not in json.dumps(run.trace)
         assert model.calls[1]["messages"][-1] == {"role": "user", "content": "Call submit_case_packet with what you found."}
         assert run.packet["summary"] == "Dana asks about her unit."                  # the model's loose text is not the packet
 
@@ -322,6 +323,7 @@ def test_a_figure_or_a_date_that_no_record_shows_sends_the_packet_back_and_the_c
         assert run.status == "done" and run.turns == 3
         assert run.trace[1]["calls"][0]["error"] == "the packet names an amount or date that no record it lists shows: $300.00, Dec 25"
         assert "$300" not in model.calls[2]["messages"][-1]["content"][0]["content"]       # the invented figure is not repeated to the model
+        assert "Dana paid" not in json.dumps(run.trace) and run.trace[1]["calls"][0]["input"]["intent"] == "sale_after_payment"    # the refused prose is not kept
         # the tenant's own figures are fair to report: her text is a record
         says_so = dana_packet(s)
         says_so["summary"] = "She says she paid $500."
