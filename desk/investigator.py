@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from .db import utcnow
 from .messaging import STOP_WORDS, stop_text
 from .models import (
-    AgentRun, DelinquencyCase, Facility, InboundMessage, Lease, LedgerSnapshot, LienEvaluation, ObservedPayment, OutboundMessage,
+    AgentRequest, AgentRun, DelinquencyCase, Facility, InboundMessage, Lease, LedgerSnapshot, LienEvaluation, ObservedPayment, OutboundMessage,
     PaymentCommand, WorkItem,
 )
 from .sales import KIND_NAMES, LISTED_KINDS, LISTED_PAID, OUTSIDE, SALE_KINDS
@@ -34,7 +34,7 @@ MAX_TURNS = 8
 # what the model is told when its packet is not accepted; it never repeats what the packet said
 NOT_ACCEPTED = ("The packet was not accepted. Every record_id you list must be one that an earlier lookup returned in this conversation or the one on "
                 "the tenant's message; a lookup that found nothing returned a record that says so. Every amount and date you write in the "
-                "summary and the reason must appear in a record, so do not add, subtract or estimate. The summary is at most 400 characters "
+                "summary and the reason must appear in a record you list, so do not add, subtract or estimate. The summary is at most 400 characters "
                 "and you list at most eight records. Fix that and submit the packet again.")
 # A model call is cut off after CALL_TIMEOUT seconds and the SDK tries it again at most twice (the app's client once), so a live run
 # writes its heartbeat (AgentRun.beat_at) at least every three and a half minutes. A run silent for STRANDED_AFTER was cut off, not slow.
@@ -71,7 +71,7 @@ Example 4. The tenant writes: "STOP". That asks to stop all texts, so the intent
 </examples>
 
 <output_contract>
-Submit with submit_case_packet. The intent is one of the listed values. The summary is plain words, at most 400 characters. List the record_id of each record you relied on, most important first, at most eight. Set needs_person to true when the tenant asks for something only a person can do, when the records disagree, or when you could not look something up. The reason says why, or is an empty string. Staff do not see the lookups: do not mention tools, errors or record ids in the summary or the reason.
+Submit with submit_case_packet. The intent is one of the listed values. The summary is plain words, at most 400 characters. List the record_id of each record you relied on, most important first, at most eight, and every record whose amount or date you write. Set needs_person to true when the tenant asks for something only a person can do, when the records disagree, or when you could not look something up. The reason says why, or is an empty string. Staff do not see the lookups: do not mention tools, errors or record ids in the summary or the reason.
 </output_contract>"""
 
 _NO_ARGS = {"type": "object", "properties": {}, "additionalProperties": False}
@@ -252,8 +252,9 @@ class Lookups:
         rows = [(m.received_at, self.text_in(m)) for m in heard]
         rows += [(m.created_at, self._record(f"text:out:{m.id}", f"The desk's reply of {when(m.created_at)} ({m.state}): \"{m.body}\"")) for m in sent]
         records = [record for _, record in sorted(rows, key=lambda r: r[0])]
+        # the desk's stop rule covers every facility it serves, so the answer is the state only: the message behind it is not shown
         stopped = stop_text(self.session, self.inbound.phone)
-        texting = self._record("texting:now", (f"Texting this number is stopped. It wrote \"{stopped.body}\" on {when(stopped.received_at)} and no START has followed."
+        texting = self._record("texting:now", ("Texting this number is stopped. It asked to stop texts, and no START has followed."
                                                if stopped is not None else "No STOP from this number is in effect."))
         return {"texting": texting, "texts": records}
 
@@ -302,11 +303,12 @@ def days(text: str) -> set[tuple[str, int, int | None]]:
     return found
 
 
-def ungrounded(packet: dict, facts: dict[str, str]) -> list[str]:
-    """The amounts and dates in the packet's own words (the summary and the reason) that no record of the run shows, the tenant's own message included.
+def ungrounded(packet: dict, facts: dict[str, str], tenant_text: str = "") -> list[str]:
+    """The amounts and dates in the packet's own words (the summary and the reason) that none of the records it lists shows. The
+    message under investigation counts too, since staff see it beside the packet.
     A date with a year must match a record's year when the record gives one. Claude may pick and order what the records say;
     it may not bring a figure or a date of its own. Amounts spelled out in words are not read."""
-    shown = " ".join(facts.values())
+    shown = " ".join([facts[i] for i in packet["records"]] + [facts.get(tenant_text, "")])
     words = " ".join([packet["summary"], packet["reason"]])
     known = days(shown)
     money = sorted(amounts(words) - amounts(shown))
@@ -314,10 +316,10 @@ def ungrounded(packet: dict, facts: dict[str, str]) -> list[str]:
     return [f"${c / 100:,.2f}" for c in money] + [f"{m.title()} {d}" + (f", {y}" if y else "") for m, d, y in loose]
 
 
-def packet_problem(packet, facts: dict[str, str]) -> str | None:
+def packet_problem(packet, facts: dict[str, str], tenant_text: str = "") -> str | None:
     """Why a submitted packet cannot be accepted, or None. Every id it lists must be one of the records the model had been shown, and every amount
-    and date in its summary and reason must be in one of them. The records are shown to staff word for word; the summary and the
-    reason are Claude's own words and are kept apart from them."""
+    and date in its summary and reason must be in one of the records it lists. The records are shown to staff word for word;
+    the summary and the reason are Claude's own words and are kept apart from them."""
     if not isinstance(packet, dict):
         return "the packet is not an object"
     if packet.get("intent") not in INTENTS:
@@ -336,9 +338,9 @@ def packet_problem(packet, facts: dict[str, str]) -> str | None:
     unknown = [i for i in ids if i not in facts]
     if unknown:
         return "the packet lists records that no earlier lookup of this run returned: " + ", ".join(i[:40] for i in unknown[:5])
-    loose = ungrounded(packet, facts)
+    loose = ungrounded(packet, facts, tenant_text)
     if loose:
-        return "the packet names an amount or date that no record or text shows: " + ", ".join(loose[:5])
+        return "the packet names an amount or date that no record it lists shows: " + ", ".join(loose[:5])
     return None
 
 
@@ -355,7 +357,7 @@ def verify(session: Session, scope: Scope, packet: dict) -> dict:
                                                                WorkItem.kind.in_(LISTED_KINDS), WorkItem.state == "open").order_by(WorkItem.id))
              if lease_of_item(i, scope.leases) is not None and not (i.note or "").startswith("Not freshly verified")] if cited else []
     if not items:
-        return {"checked": True, "sale_listed_nothing_owed": False, "payment_found": False, "work_item_id": None, "lease_id": None, "as_of": None,
+        return {"checked": True, "sale_listed_nothing_owed": False, "payment_found": None, "work_item_id": None, "lease_id": None, "as_of": None,
                 "says": "The packet cites no open sale item of this tenant's that the desk has read again lately, so the desk cannot confirm a sale."}
     item = next((i for i in items if i.kind == LISTED_PAID), items[0])
     seen = item.observed or {}
@@ -427,7 +429,7 @@ class Investigation:
             submitted = [c for c in calls if c.name == "submit_case_packet"]
             if submitted:
                 packet = dict(submitted[-1].input or {})
-                problem = packet_problem(packet, seen_before)
+                problem = packet_problem(packet, seen_before, f"text:in:{self.inbound.id}")
                 entry["calls"].append({"tool": "submit_case_packet", "input": packet, "records": [], "error": problem})
                 self.row.trace, self.row.facts = list(self.trace), dict(self.lookups.facts)
                 # a packet that fails the check is sent back once; the second is final, and so is one on the forced last turn
@@ -500,6 +502,23 @@ def fail_stranded_runs(session: Session, now: datetime | None = None) -> int:
     return done.rowcount
 
 
+def _claim(session: Session, inbound: InboundMessage, request_id: str | None) -> None:
+    """Remember that this request id belongs to this text, and refuse it if it was first used for another. Every accepted request
+    is remembered, including one that is answered with a run that already exists."""
+    if not request_id:
+        return
+    owner = session.get(AgentRequest, request_id)
+    if owner is None:
+        session.add(AgentRequest(request_id=request_id, inbound_id=inbound.id))
+        try:
+            session.commit()
+        except IntegrityError:
+            session.rollback()          # another request claimed it a moment ago
+            owner = session.get(AgentRequest, request_id)
+    if owner is not None and owner.inbound_id != inbound.id:
+        raise ValueError("this request id was already used for another text")
+
+
 def _existing(session: Session, inbound: InboundMessage, request_id: str | None) -> AgentRun | None:
     """The run this request already has, or the run going on this text. A request id belongs to one text."""
     if request_id:
@@ -523,6 +542,7 @@ def investigate(session: Session, client, inbound: InboundMessage, request_id: s
     both find no run cannot both start the first one."""
     if inbound.match_state != "matched" or not inbound.customer_provider_id or inbound.facility_id is None:
         raise ValueError("this text is not matched to one tenant at a facility")
+    _claim(session, inbound, request_id)
     fail_stranded_runs(session)
     found = _existing(session, inbound, request_id)
     if found is not None:

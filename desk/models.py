@@ -400,6 +400,15 @@ class AgentRun(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class AgentRequest(Base):
+    """The text a request id was first used for. The screen picks a request id for each request and keeps it for the retries,
+    so an id that turns up for another text is a mistake, and it is refused, whether or not the first request started a run."""
+
+    __tablename__ = "agent_requests"
+    request_id: Mapped[str] = mapped_column(String, primary_key=True)
+    inbound_id: Mapped[int] = mapped_column(ForeignKey("inbound_messages.id"))
+
+
 class AccessView(Base):
     """The latest complete access reading for one lease, as the worker took it. Pages read this, never the FMS."""
 

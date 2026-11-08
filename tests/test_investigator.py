@@ -288,11 +288,23 @@ def test_the_text_under_investigation_is_a_record_from_the_first_turn(factory):
 
 def test_the_stop_state_is_a_record_the_model_reads_not_a_claim_in_the_prompt(factory):
     with factory() as s:
-        for name, expected in (("Marcus Bell", "Texting this number is stopped. It wrote \"STOP\""), ("Dana Whitfield", "No STOP from this number is in effect.")):
+        for name, expected in (("Marcus Bell", "Texting this number is stopped. It asked to stop texts"), ("Dana Whitfield", "No STOP from this number is in effect.")):
             model = Scripted([tool("get_recent_texts", id_="a1")], [tool("submit_case_packet", packet("other", [], True, "x"), id_="a2")])
             run, _ = investigate(s, model, text_of(s, name), f"request-stop-{name[:4]}")
             assert run.facts["texting:now"].startswith(expected), run.facts["texting:now"]
         assert "will not text it again" not in model.calls[0]["system"]
+
+
+def test_the_stop_state_does_not_show_the_message_behind_it(factory):
+    with factory() as s:
+        dana = text_of(s, "Dana Whitfield")
+        s.add(InboundMessage(facility_id=None, provider_message_id="stop-elsewhere-1", phone=dana.phone, phone_key=dana.phone_key, body="Stop.",
+                             received_at=utcnow(), match_state="unrouted"))              # a stop that reached another number of the operator
+        s.commit()
+        model = Scripted([tool("get_recent_texts", id_="a1")], [tool("submit_case_packet", packet("other", [], True, "x"), id_="a2")])
+        run, _ = investigate(s, model, dana, "request-0043")
+        assert run.facts["texting:now"] == "Texting this number is stopped. It asked to stop texts, and no START has followed."
+        assert not any("Stop." in text for key, text in run.facts.items() if key != "texting:now")
 
 
 def test_a_figure_or_a_date_that_no_record_shows_sends_the_packet_back_and_the_corrected_one_is_used(factory):
@@ -304,7 +316,7 @@ def test_a_figure_or_a_date_that_no_record_shows_sends_the_packet_back_and_the_c
         model = Scripted(reads, [tool("submit_case_packet", invented, id_="a4")], [tool("submit_case_packet", dana_packet(s), id_="a5")])
         run, _ = investigate(s, model, dana, "request-0023")
         assert run.status == "done" and run.turns == 3
-        assert run.trace[1]["calls"][0]["error"] == "the packet names an amount or date that no record or text shows: $300.00, Dec 25"
+        assert run.trace[1]["calls"][0]["error"] == "the packet names an amount or date that no record it lists shows: $300.00, Dec 25"
         assert "$300" not in model.calls[2]["messages"][-1]["content"][0]["content"]       # the invented figure is not repeated to the model
         # the tenant's own figures are fair to report: her text is a record
         says_so = dana_packet(s)
@@ -328,6 +340,7 @@ def test_a_sale_claim_is_confirmed_only_by_the_open_sale_item_the_packet_cites(f
         lease_only = packet("sale_after_payment", [dana_facts(s)["lease"]], True, "x")
         run = ask("request-0025", lease_only)
         assert run.status == "needs_person" and run.verified["sale_listed_nothing_owed"] is False and "cites no open sale item" in run.verified["says"]
+        assert run.verified["payment_found"] is None                                               # nothing was looked at, so no payment is not an answer
         item.note = "Not freshly verified: the FMS could not be read on the last pass."          # a stale item confirms nothing
         s.commit()
         run = ask("request-0026", cited)
@@ -512,6 +525,16 @@ def test_a_request_id_belongs_to_one_text(factory):
             investigate(s, Scripted(), text_of(s, "Priya Raman"), "request-0013")
 
 
+def test_a_request_id_answered_with_an_existing_run_still_belongs_to_that_text(factory):
+    with factory() as s:
+        dana, priya = text_of(s, "Dana Whitfield"), text_of(s, "Priya Raman")
+        first, _ = investigate(s, lookups_then_packet(s), dana, "request-0044")
+        retry, started = investigate(s, Scripted(), dana, "request-0045")             # a retry with a new id is answered with the finished run
+        assert not started and retry.id == first.id
+        with pytest.raises(ValueError, match="another text"):
+            investigate(s, Scripted(), priya, "request-0045")                         # the id was spent on Dana's text
+
+
 def test_a_run_that_is_going_is_returned_not_started_twice_and_a_cut_off_one_is_replaced(factory):
     with factory() as s:
         dana = text_of(s, "Dana Whitfield")
@@ -569,6 +592,10 @@ def test_what_makes_a_packet_acceptable():
     # figures and dates only as a record shows them
     assert packet_problem({**good, "summary": "She owes $240 since Nov 8 (November 8th is the ledger date)."}, facts) is None
     assert packet_problem({**good, "summary": "On 2026-11-08, 11/8/26 and 11/8 she owed 240.00 dollars."}, facts) is None      # the same figures in other forms
+    assert "$240.00" in packet_problem({**good, "records": [], "summary": "She owes $240."}, facts)               # a record the packet does not list does not count
+    heard = {**facts, "text:in:9": "The tenant wrote on Nov 8, 2026, 01:00 UTC: \"I paid $500\""}
+    assert packet_problem({**good, "summary": "She says she paid $500."}, heard, "text:in:9") is None             # the tenant's own message does
+    assert "$500.00" in packet_problem({**good, "summary": "She says she paid $500."}, heard)
     assert "$300.00" in packet_problem({**good, "summary": "She owes $300."}, facts)
     assert "$900.00" in packet_problem({**good, "summary": "She paid 900 dollars."}, facts)
     assert "Dec 25" in packet_problem({**good, "reason": "The sale is on December 25."}, facts)
