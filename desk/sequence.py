@@ -16,8 +16,10 @@ AHEAD = (("read", "list-checks", "Our agent reads the case", "It reads the tenan
          ("check", "shield-check", "The desk checks the notes", "It checks what it can against its own records."),
          ("review", "users", "Staff review, if a sale is still listed", "The agent may ask for an FMS task. The desk makes it and reads it back."),
          ("reply", "send", "A short reply to the tenant", "The desk writes it from the records it confirmed and sends it once."))
+# a text a visitor typed never makes the desk ask the FMS for a task, so the waiting review step must not promise one
+OWN_REVIEW = "The agent may point to a task that is already in the FMS. A text typed here never makes a new one."
 # a number that sent STOP is never texted, so its text shows that instead of a reply
-NO_REPLY = ("reply", "hand", "No reply will be sent", "This number asked to stop all texts, so the desk sends nothing to it.")
+NO_REPLY =("reply", "hand", "No reply will be sent", "This number asked to stop all texts, so the desk sends nothing to it.")
 # what the page says about a sale that is still open in the FMS, by the kind of item the desk holds for it
 FMS_OPEN = {
     LISTED_PAID: "The FMS still lists the sale and shows nothing owed. This step is done when it shows the auction and lease cancelled. A completed task does not count.",
@@ -142,7 +144,7 @@ def sequence(t: dict, explorable: bool = True) -> list[dict]:
     if run is None:
         if t["match"]["state"] == "matched" and not replies and explorable:
             ahead = AHEAD[:3] + (NO_REPLY,) if t.get("stopped") else AHEAD
-            steps += [_step(key, icon, title, line, state="pending") for key, icon, title, line in ahead]
+            steps += [_step(key, icon, title, OWN_REVIEW if key == "review" and t.get("own") else line, state="pending") for key, icon, title, line in ahead]
     elif run["status"] == "failed" or (run["status"] != "running" and not run["notes"].get("summary")):
         steps.append(_step("read", "list-checks", "Our agent could not finish", "No case notes were written, so a person has to read this message.",
                            "act", "No case notes", run.get("finished_at")))
