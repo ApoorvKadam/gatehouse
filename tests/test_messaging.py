@@ -842,3 +842,10 @@ def test_a_junk_customer_search_answer_keeps_the_text_pending_instead_of_unmatch
     with pytest.raises(FMSError):
         match_pending(session, junk, desk)
     assert session.scalar(select(InboundMessage.match_state)) == "pending"                   # not called unmatched for good
+
+
+def test_a_bad_number_setting_stops_the_desk_with_a_message_that_names_it(monkeypatch):
+    for bad, words in (("{not json", "not valid JSON"), ('["+14075550100"]', "JSON object"), ('{"+14075550100": 7}', "JSON object")):
+        monkeypatch.setenv("DESK_TEXT_NUMBERS", bad)
+        with pytest.raises(ValueError, match=words):
+            Settings.from_env()

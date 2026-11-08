@@ -5,6 +5,18 @@ import os
 from dataclasses import dataclass, field
 
 
+def _text_numbers(raw: str | None) -> dict[str, str]:
+    """DESK_TEXT_NUMBERS: a JSON object from a receiving number to a facility id. A bad value stops the desk at startup, naming
+    the setting, instead of failing later inside a webhook or a worker pass."""
+    try:
+        value = json.loads(raw or "{}")
+    except ValueError as exc:
+        raise ValueError("DESK_TEXT_NUMBERS is not valid JSON") from exc
+    if not isinstance(value, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in value.items()):
+        raise ValueError("DESK_TEXT_NUMBERS must be a JSON object that maps a number to a facility id")
+    return value
+
+
 @dataclass(frozen=True)
 class Settings:
     database_url: str
@@ -48,5 +60,5 @@ class Settings:
             run_id=os.environ.get("DESK_RUN_ID", "local"),
             marketplace_url=os.environ.get("DESK_MARKETPLACE_URL") or None,
             webhook_token=os.environ.get("DESK_WEBHOOK_TOKEN") or None,
-            text_numbers=json.loads(os.environ.get("DESK_TEXT_NUMBERS") or "{}"),
+            text_numbers=_text_numbers(os.environ.get("DESK_TEXT_NUMBERS")),
         )
