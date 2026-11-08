@@ -113,10 +113,61 @@ def test_a_copy_where_the_agent_is_off_shows_no_waiting_steps():
 def test_a_reply_an_earlier_exploration_sent_is_not_hidden_by_a_later_one_that_sent_nothing():
     """A message is answered once. Exploring it again proposes nothing, and the page must still say the tenant got the first text."""
     sent = {"author": "agent", "state": "sent", "body": REPLY["body"], "reason": None, "created_at": datetime(2026, 11, 8, 15, 21, 10),
-            "sent_at": datetime(2026, 11, 8, 15, 21, 11)}
+            "sent_at": datetime(2026, 11, 8, 15, 21, 11), "parts": REPLY["parts"], "dropped": []}
     later = run(actions=[NOT_SENT], started_at=datetime(2026, 11, 8, 15, 40), finished_at=datetime(2026, 11, 8, 15, 40, 7))
     steps = sequence(message(investigation=later, replies=[sent]))
     assert keys(steps) == ["received", "reply", "read", "check", "reply"]
     first, last = steps[1], steps[-1]
     assert first["chip"] == "Sent" and first["bubble"] == {"side": "out", "text": REPLY["body"]} and first["at"] == sent["sent_at"]
+    assert first["parts"] == REPLY["parts"]                                      # the run that wrote it keeps its sentences on the page
     assert last["chip"] == "No reply sent" and last["bubble"] is None
+
+
+SALE = {"id": 4, "kind": "sale_listed_nothing_owed", "state": "open", "verification": "Not verified", "note": None, "status": "LISTED", "marketplace": None,
+        "opened_at": datetime(2026, 11, 8, 15, 0), "updated_at": datetime(2026, 11, 8, 16, 56), "closed_at": None}
+OUTSIDE = {"id": 5, "kind": "sale_outside_listing", "state": "open", "verification": "Not verified", "note": None, "status": "LISTED",
+           "marketplace": "Online auction site (synthetic)", "opened_at": datetime(2026, 11, 8, 15, 0), "updated_at": datetime(2026, 11, 8, 16, 56), "closed_at": None}
+CANCELLED = {**SALE, "state": "closed", "verification": "FMS lien cancellation verified", "closed_at": datetime(2026, 11, 8, 17, 10)}
+WITHDRAWN = {**OUTSIDE, "state": "closed", "verification": "Confirmed by the outside site's feed", "closed_at": datetime(2026, 11, 8, 17, 30)}
+
+
+def outcome_steps(sale: dict, outside: dict | None) -> list[dict]:
+    steps = sequence(message(investigation=run(actions=[NOT_SENT]), outcome={"sale": sale, "outside": outside}))
+    return [s for s in steps if s["key"] in ("fms", "outside")]
+
+
+def test_the_sale_and_the_outside_listing_are_two_steps_each_waiting_on_its_own_evidence():
+    fms, outside = outcome_steps(SALE, OUTSIDE)
+    assert (fms["state"], fms["tone"], fms["chip"]) == ("waiting", "wait", "Still listed in the FMS") and fms["at"] == SALE["updated_at"] and fms["at_label"] == "Last read"
+    assert (outside["state"], outside["chip"]) == ("waiting", "Still listed on Online auction site (synthetic)")
+    assert "does not take down a listing" in outside["line"] and "feed reports the listing withdrawn" in outside["line"]
+    assert fms["link"] == {"href": "/sales/4", "label": "Open the sale"} and outside["link"] == {"href": "/sales/5", "label": "Open the listing"}
+    assert keys(sequence(message(investigation=run(actions=[NOT_SENT]), outcome={"sale": SALE, "outside": OUTSIDE})))[-2:] == ["fms", "outside"]   # always last
+
+
+def test_the_fms_cancelling_the_sale_does_not_close_the_outside_listing():
+    fms, outside = outcome_steps(CANCELLED, OUTSIDE)
+    assert (fms["state"], fms["tone"], fms["chip"], fms["at"]) == ("done", "done", "Cancelled in the FMS", CANCELLED["closed_at"])
+    assert fms["line"] == "The FMS shows the auction and lease cancelled."
+    assert (outside["state"], outside["chip"]) == ("waiting", "Still listed on Online auction site (synthetic)")       # its own evidence has not arrived
+    done = outcome_steps(CANCELLED, WITHDRAWN)[1]
+    assert (done["state"], done["chip"], done["at"]) == ("done", "Withdrawn on the outside site", WITHDRAWN["closed_at"])
+
+
+def test_an_outside_listing_that_dropped_out_of_the_feed_stays_open_and_says_why():
+    note = "Not verified: the outside site's feed did not list this sale at Nov 8, 21:40 UTC. A listing missing from the feed is not proof it was withdrawn."
+    outside = outcome_steps(SALE, {**OUTSIDE, "note": note})[1]
+    assert outside["state"] == "waiting" and "is not proof it was withdrawn" in outside["line"]
+
+
+def test_a_sale_with_no_outside_listing_has_one_outcome_step_and_a_text_with_no_sale_has_none():
+    assert [s["key"] for s in outcome_steps(SALE, None)] == ["fms"]
+    assert [s["key"] for s in sequence(message(investigation=run(actions=[NOT_SENT]), outcome=None))] == ["received", "read", "check", "reply"]
+
+
+def test_a_sale_the_desk_asks_a_person_about_says_so_and_no_outcome_step_carries_a_code():
+    changed = outcome_steps({**SALE, "kind": "sale_balance_changed"}, OUTSIDE)[0]
+    assert "a person reassesses the sale" in changed["line"]
+    text = str(outcome_steps({**SALE, "status": "SOLD"}, OUTSIDE)) + str(outcome_steps(CANCELLED, WITHDRAWN))
+    for code in ("LISTED", "CANCELLED", "WITHDRAWN", "listing_", "auction_", "sale_"):
+        assert code not in text, code

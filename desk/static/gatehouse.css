@@ -483,11 +483,13 @@ html { scrollbar-color: var(--frame) var(--paper); }
 .node.wait { background: var(--chip-wait); border-color: transparent; color: var(--chip-wait-ink); }
 .step.pending .node { background: transparent; border-style: dashed; color: var(--ink-3); }
 .step.pending h3, .step.pending .step-line { color: var(--ink-3); }
+.step.waiting .node { border: 1px dashed currentColor; }
 .step-body { min-width: 0; }
 .step-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s3); min-height: 2.25rem; }
 .step-head h3 { margin: 0; font-size: var(--t-body); font-weight: 600; }
 .step-head time { margin-left: auto; font-size: var(--t-xs); color: var(--ink-3); white-space: nowrap; }
 .step-line { margin: 2px 0 0; font-size: var(--t-body); line-height: 1.5; color: var(--ink-2); }
+.step-more { margin: var(--s2) 0 0; font-size: var(--t-sm); }
 .step-body .parts { margin: var(--s3) 0 0; }
 .step-body .bubble { width: fit-content; max-width: min(62ch, 100%); margin-top: var(--s3); }
 .seq.running .after { display: none; }

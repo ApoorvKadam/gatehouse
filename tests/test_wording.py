@@ -26,3 +26,9 @@ def test_ordinary_words_and_amounts_are_left_alone():
 
 def test_the_brackets_a_removed_id_leaves_behind_go_with_it():
     assert plain("a $240.00 payment succeeded on Nov 8, 2026 (payment_ofK0Ux1ENYC), but the attempt (payment:1) is unconfirmed") == "a $240.00 payment succeeded on Nov 8, 2026, but the attempt is unconfirmed"
+
+
+def test_the_status_of_a_sale_or_a_listing_is_written_as_words():
+    text = "It closes when: auctions/search shows this auction and lease CANCELLED. The site's feed shows LISTED, then WITHDRAWN."
+    assert plain(text) == "It closes when: auctions/search shows this auction and lease cancelled. The site's feed shows listed, then withdrawn."
+    assert plain("Cancelled and Listed are left alone") == "Cancelled and Listed are left alone"       # only the code is a code
