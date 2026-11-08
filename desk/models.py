@@ -336,6 +336,9 @@ class InboundMessage(Base):
     # who Cubby named in the webhook, until a check says otherwise; the FMS stays the owner of both
     customer_provider_id: Mapped[str | None] = mapped_column(String, nullable=True)
     customer_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    # a text a visitor typed to play the tenant belongs to that visitor and is seen, counted and answered only inside their own
+    # space. A text that came from the webhook has none, and nothing a visitor does can reach it.
+    visitor: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
 
 
 class OutboundMessage(Base):
@@ -362,6 +365,8 @@ class OutboundMessage(Base):
     reason: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # the visitor whose text this answers, copied from it, so a reply is never read outside the space its text lives in
+    visitor: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
 
 
 def record_kind(record_id: str, text: str | None) -> str:

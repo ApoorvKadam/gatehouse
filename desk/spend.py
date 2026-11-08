@@ -6,6 +6,7 @@ private. The guard in front of a public link belongs in a service that a restart
 from __future__ import annotations
 
 import hmac
+import re
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -15,12 +16,17 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .db import utcnow
-from .models import AgentRun
+from .models import AgentRun, InboundMessage
 
 DAY_ZONE = ZoneInfo("America/New_York")
 # The key of the visitor hash, made when the process starts. Without it anyone holding the database could hash every address and
 # read the visitors back. A restart gives every visitor a fresh value, which is what a restart does to the counts anyway.
 _VISITOR_KEY = secrets.token_bytes(16)
+# The name of the cookie that tells one browser from another, and how many texts a visitor may type as a tenant in a day.
+COOKIE = "gh_visitor"
+TEXTS_PER_DAY = 10
+# A visitor can drop the cookie and start over, so the texts typed by all visitors together are capped as well.
+TEXTS_PER_DAY_ALL = 200
 # No run is let to cost more than this. The investigator stops before any call that could take it past, and counts a call that
 # ended with no answer as if it had been billed in full. A run still going is therefore reserved at this amount.
 WORST_RUN_USD = 0.03
@@ -81,12 +87,41 @@ def allowance(session: Session, budget_usd: float, cases_per_day: int, visitor: 
 
 
 def visitor_of(request) -> str:
-    """A short keyed hash of where a request came from. Render's front door puts the visitor's address in a header; the hash keeps the
-    address itself out of the database. A header can be forged by someone who reaches the app without the front door, so the count
-    per visitor is a courtesy; what bounds the spend is the day's budget and the cap on runs going at once."""
-    ip = request.headers.get("cf-connecting-ip") or (request.headers.get("x-forwarded-for", "").split(",")[0].strip()) \
-        or (request.client.host if request.client else "unknown")
-    return hmac.new(_VISITOR_KEY, ip.encode(), "sha256").hexdigest()[:16]
+    """A short keyed hash of who a request came from. A browser that holds the desk's cookie is told apart by it, so two people behind
+    one address have their own count and their own texts; a request without one is told apart by its address, as before. Render's front
+    door puts the visitor's address in a header; the hash keeps the cookie and the address out of the database. Either can be forged by
+    someone who is set on it (they can drop the cookie, or reach the app without the front door), so the count per visitor is a courtesy;
+    what bounds the spend is the day's budget and the cap on runs going at once."""
+    token = request.cookies.get(COOKIE, "")
+    if re.fullmatch(r"[0-9a-f]{32}", token):
+        source = "cookie:" + token
+    else:
+        ip = request.headers.get("cf-connecting-ip") or (request.headers.get("x-forwarded-for", "").split(",")[0].strip()) \
+            or (request.client.host if request.client else "unknown")
+        source = "ip:" + ip
+    return hmac.new(_VISITOR_KEY, source.encode(), "sha256").hexdigest()[:16]
+
+
+def new_cookie() -> str:
+    """The value of a visitor's cookie: random, so nobody can guess another visitor's."""
+    return secrets.token_hex(16)
+
+
+def texts_today(session: Session, visitor: str, now: datetime | None = None) -> int:
+    """The texts this visitor has typed as a tenant today."""
+    return session.scalar(select(func.count()).select_from(InboundMessage).where(InboundMessage.visitor == visitor,
+                                                                                  InboundMessage.received_at >= day_start(now))) or 0
+
+
+def text_refusal(session: Session, visitor: str, now: datetime | None = None) -> str | None:
+    """Why one more text may not be typed now, in plain words, or None."""
+    if texts_today(session, visitor, now) >= TEXTS_PER_DAY:
+        return f"You have sent your {TEXTS_PER_DAY} texts for today. They come back at midnight, New York time."
+    everyone = session.scalar(select(func.count()).select_from(InboundMessage).where(InboundMessage.visitor.is_not(None),
+                                                                                      InboundMessage.received_at >= day_start(now))) or 0
+    if everyone >= TEXTS_PER_DAY_ALL:
+        return "The texts typed today have reached the day's total. Try again after midnight, New York time."
+    return None
 
 
 def refusal(session: Session, budget_usd: float, cases_per_day: int, visitor: str | None, exclude: int | None = None) -> str | None:
