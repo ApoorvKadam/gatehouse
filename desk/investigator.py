@@ -12,6 +12,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from decimal import Decimal
 
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
@@ -270,8 +271,8 @@ def record_ids(answer: dict) -> list[str]:
 
 
 MONTHS = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
-# $240, $1,200.50, 240 dollars, 240.00 USD
-MONEY = re.compile(r"\$\s?(\d[\d,]*)(?:\.(\d{2}))?|\b(\d[\d,]*)(?:\.(\d{2}))?\s*(?:dollars?|USD)\b", re.I)
+# $240, $1,200.50, $240.5, 240 dollars, 240.00 USD
+MONEY = re.compile(r"\$\s?(\d[\d,]*)(?:\.(\d+))?|\b(\d[\d,]*)(?:\.(\d+))?\s*(?:dollars?|USD)\b", re.I)
 # Nov 8, Nov. 8th, November 8, 2026
 NAMED = re.compile(r"\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|Sept?(?:ember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
                    r"\.? (\d{1,2})(?:st|nd|rd|th)?\b(?:,? (\d{4})\b)?", re.I)
@@ -283,12 +284,13 @@ NUMERIC = re.compile(r"\b(\d{1,2})/(\d{1,2})(?:/(\d{4}|\d{2}))?\b")
 ISO = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
 
 
-def amounts(text: str) -> set[int]:
-    """The dollar amounts a text names, in cents."""
+def amounts(text: str) -> set[Decimal]:
+    """The dollar amounts a text names, in cents. The whole written number is read, so $240.5 is 24050 cents and $240.567 is a
+    fraction of a cent that matches no record."""
     found = set()
     for m in MONEY.finditer(text):
-        whole, cents = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
-        found.add(int(whole.replace(",", "")) * 100 + int(cents or 0))
+        whole, fraction = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
+        found.add(Decimal(whole.replace(",", "") + ("." + fraction if fraction else "")) * 100)
     return found
 
 
@@ -318,7 +320,7 @@ def ungrounded(packet: dict, facts: dict[str, str], tenant_text: str = "") -> li
     known = days(shown)
     money = sorted(amounts(words) - amounts(shown))
     loose = sorted((d for d in days(words) if not any(d[:2] == k[:2] and (d[2] is None or d[2] == k[2]) for k in known)), key=lambda d: (d[0], d[1], d[2] or 0))
-    return [f"${c / 100:,.2f}" for c in money] + [f"{m.title()} {d}" + (f", {y}" if y else "") for m, d, y in loose]
+    return [f"${c / 100:,.2f}" if c % 1 == 0 else f"${(c / 100).normalize():,f}" for c in money] + [f"{m.title()} {d}" + (f", {y}" if y else "") for m, d, y in loose]
 
 
 def packet_problem(packet, facts: dict[str, str], tenant_text: str = "") -> str | None:
@@ -527,6 +529,11 @@ def _claim(session: Session, inbound: InboundMessage, request_id: str | None) ->
     if request.inbound_id != inbound.id:
         raise ValueError("this request id was already used for another text")
     return request
+
+
+def _latest(session: Session, inbound: InboundMessage) -> AgentRun | None:
+    """The newest run this text has had."""
+    return session.scalar(select(AgentRun).where(AgentRun.inbound_id == inbound.id).order_by(AgentRun.generation.desc()))
 
 
 def _going(session: Session, inbound: InboundMessage) -> AgentRun | None:

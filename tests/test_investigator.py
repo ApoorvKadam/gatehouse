@@ -618,6 +618,10 @@ def test_what_makes_a_packet_acceptable():
     assert "$500.00" in packet_problem({**good, "summary": "She says she paid $500."}, heard)
     assert "$300.00" in packet_problem({**good, "summary": "She owes $300."}, facts)
     assert "$900.00" in packet_problem({**good, "summary": "She paid 900 dollars."}, facts)
+    assert "$240.50" in packet_problem({**good, "summary": "She owes $240.5."}, facts)                  # the whole number is read, not its first digits
+    assert "$240.50" in packet_problem({**good, "summary": "She owes 240.5 dollars."}, facts)
+    assert "$240.567" in packet_problem({**good, "summary": "She owes $240.567."}, facts)              # a fraction of a cent matches no record
+    assert packet_problem({**good, "summary": "She owes $240.0 and $240.00 and 240 dollars."}, facts) is None
     assert "Dec 25" in packet_problem({**good, "reason": "The sale is on December 25."}, facts)
     assert "Dec 25, 2030" in packet_problem({**good, "reason": "The sale is on 12/25/2030."}, facts)
     assert "Dec 25, 2030" in packet_problem({**good, "reason": "The sale is on 25 December 2030."}, facts)            # day first, as in much of the world
