@@ -271,8 +271,9 @@ def record_ids(answer: dict) -> list[str]:
 
 
 MONTHS = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
-# $240, $1,200.50, $240.5, 240 dollars, 240.00 USD
-MONEY = re.compile(r"\$\s?(\d[\d,]*)(?:\.(\d+))?|\b(\d[\d,]*)(?:\.(\d+))?\s*(?:dollars?|USD)\b", re.I)
+# $240, $1,200.50, $240.5, -$240, $-240, 240 dollars, 240.00 USD. A minus sign counts when it stands apart: in $240-$300 the dash is a range.
+MONEY = re.compile(r"(?:(?<![\w$])(?P<s1>[-\u2212])\s?)?\$\s?(?P<s2>[-\u2212])?(?P<w1>\d[\d,]*)(?:\.(?P<f1>\d+))?"
+                   r"|(?:(?<![\w$])(?P<s3>[-\u2212])\s?)?\b(?P<w2>\d[\d,]*)(?:\.(?P<f2>\d+))?\s*(?:dollars?|USD)\b", re.I)
 # Nov 8, Nov. 8th, November 8, 2026
 NAMED = re.compile(r"\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|Sept?(?:ember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
                    r"\.? (\d{1,2})(?:st|nd|rd|th)?\b(?:,? (\d{4})\b)?", re.I)
@@ -286,11 +287,13 @@ ISO = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
 
 def amounts(text: str) -> set[Decimal]:
     """The dollar amounts a text names, as exact decimals in dollars. The whole written number is read with every decimal place
-    it has, and nothing is rounded, so $240.5 is 240.50 and $240.567, or a fraction of a cent however small, matches no record."""
+    it has, and nothing is rounded, so $240.5 is 240.50 and $240.567, or a fraction of a cent however small, matches no record.
+    The sign is part of the amount: -$240.00 is not $240.00."""
     found = set()
     for m in MONEY.finditer(text):
-        whole, fraction = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
-        found.add(Decimal(whole.replace(",", "") + ("." + fraction if fraction else "")))
+        sign, whole, fraction = (m["s1"] or m["s2"], m["w1"], m["f1"]) if m["w1"] else (m["s3"], m["w2"], m["f2"])
+        value = Decimal(whole.replace(",", "") + ("." + fraction if fraction else ""))
+        found.add(-value if sign else value)
     return found
 
 

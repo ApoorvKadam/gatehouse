@@ -621,6 +621,12 @@ def test_what_makes_a_packet_acceptable():
     assert "$240.50" in packet_problem({**good, "summary": "She owes $240.5."}, facts)                  # the whole number is read, not its first digits
     assert "$240.50" in packet_problem({**good, "summary": "She owes 240.5 dollars."}, facts)
     assert "$240.567" in packet_problem({**good, "summary": "She owes $240.567."}, facts)              # a fraction of a cent matches no record
+    assert "$-240.00" in packet_problem({**good, "summary": "The balance is -$240.00."}, facts)                   # the sign is part of the amount
+    assert "$-240.00" in packet_problem({**good, "summary": "The balance is $-240.00."}, facts)
+    assert "$300.00" in packet_problem({**good, "summary": "She owes $240.00-$300.00."}, facts)                    # a dash between two amounts is a range, not a sign
+    credit = {"lease:1": "Unit B-1042. The FMS ledger showed $-5.00 prepaid."}
+    assert packet_problem({**good, "summary": "She has -$5.00 prepaid."}, credit) is None
+    assert "$5.00" in packet_problem({**good, "summary": "She has $5.00 prepaid."}, credit)
     assert "$240.000000000000000000000000001" in packet_problem({**good, "summary": "She owes $240.000000000000000000000000001."}, facts)       # nothing is rounded
     assert packet_problem({**good, "summary": "She owes $240.0 and $240.00 and 240 dollars."}, facts) is None
     assert "Dec 25" in packet_problem({**good, "reason": "The sale is on December 25."}, facts)
