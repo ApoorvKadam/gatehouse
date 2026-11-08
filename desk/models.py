@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base, utcnow
@@ -72,6 +72,7 @@ HOLDING_STATES = ("SUBMITTING", "AWAITING_APPLICATION", "PENDING_AT_FMS", "OUTCO
 # what the FMS can later report about a payment that had succeeded
 FMS_REVERSAL_STATUSES = ("DIRECT_DEBIT_RETURN", "REFUNDED", "REFUND_INITIATED", "DISPUTED")
 _HOLDING_SQL = text("state IN (" + ", ".join(f"'{s}'" for s in HOLDING_STATES) + ")")
+_RUNNING_SQL = text("status = 'running'")
 
 
 class PaymentCommand(Base):
@@ -360,6 +361,39 @@ class OutboundMessage(Base):
     reason: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class AgentRun(Base):
+    """One investigation of one inbound text: what Claude was shown, which records it looked at, the packet it submitted, what
+    the desk checked itself, and what the model calls cost. The packet is Claude's work; `verified` is the desk's own check of
+    it against its records, and the two are kept apart on purpose."""
+
+    __tablename__ = "agent_runs"
+    # the database, not a read before the insert, keeps two requests from running the model twice on the same text
+    __table_args__ = (Index("one_running_run_per_text", "inbound_id", unique=True,
+                            sqlite_where=_RUNNING_SQL, postgresql_where=_RUNNING_SQL),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    inbound_id: Mapped[int] = mapped_column(ForeignKey("inbound_messages.id"))
+    # the screen's own id for this request, so a double click or a retry is one run
+    request_id: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
+    model: Mapped[str] = mapped_column(String)
+    effort: Mapped[str] = mapped_column(String)
+    # running, done (a packet the desk accepted), needs_person (no accepted packet, or one the records do not support) or failed
+    status: Mapped[str] = mapped_column(String, default="running")
+    stop_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    turns: Mapped[int] = mapped_column(Integer, default=0)
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # every model turn and every lookup it made, with the record ids the lookup returned
+    trace: Mapped[list] = mapped_column(JSON, default=list)
+    # record id -> the sentence the records say, for every record a lookup returned in this run
+    facts: Mapped[dict] = mapped_column(JSON, default=dict)
+    packet: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    verified: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class AccessView(Base):
