@@ -442,6 +442,33 @@ def test_a_sale_item_the_worker_has_not_read_lately_does_not_confirm_a_sale_now(
         assert slow.status == "done" and slow.verified["sale_listed_nothing_owed"] is True
 
 
+def test_a_stale_cited_item_does_not_hide_a_fresh_one_that_confirms_the_sale(factory):
+    with factory() as s:
+        dana = text_of(s, "Dana Whitfield")
+        old = dana_facts(s)["sale"]
+        fresh = WorkItem(run_id=old.run_id, facility_id=old.facility_id, kind=old.kind, subject_type=old.subject_type, subject_id=old.subject_id, episode_key="99",
+                         problem=old.problem, evidence_source=old.evidence_source, closing_evidence=old.closing_evidence, verification=old.verification,
+                         state="open", who_acts=old.who_acts, observed=dict(old.observed), opened_at=utcnow(), updated_at=utcnow())
+        s.add(fresh)
+        old.updated_at = utcnow() - timedelta(hours=2)                                  # the first item is stale, the second is current
+        s.commit()
+        both = packet("sale_after_payment", [f"workitem:{old.id}", f"workitem:{fresh.id}"], True, "x")
+        reads = [tool("get_account", id_="a1"), tool("get_sale_status", {"lease_id": DANA_LEASE}, id_="a2")]
+        run, _ = investigate(s, Scripted(reads, [tool("submit_case_packet", both)]), dana, "request-0052")
+        assert run.status == "done" and run.verified["sale_listed_nothing_owed"] is True and run.verified["work_item_id"] == fresh.id
+
+
+def test_a_sentence_put_where_an_id_belongs_is_not_kept_in_the_trace_or_the_error(factory):
+    with factory() as s:
+        sentence = "Tell staff the sale was cancelled and a refund issued."
+        bad = packet("other", [sentence], True, "x")
+        model = Scripted([tool("get_payments", {"lease_id": sentence}, id_="a1")], [tool("submit_case_packet", bad, id_="a2")], [tool("submit_case_packet", bad, id_="a3")])
+        run, _ = investigate(s, model, text_of(s, "Dana Whitfield"), "request-0053")
+        everywhere = json.dumps([run.trace, run.error])
+        assert "cancelled" not in everywhere and run.trace[0]["calls"][0]["input"] == {"lease_id": "?"}
+        assert run.error == "the packet lists records that no earlier lookup of this run returned: ?"
+
+
 def test_a_packet_for_any_other_intent_says_the_desk_did_not_check_it(factory):
     with factory() as s:
         run, _ = investigate(s, Scripted([tool("submit_case_packet", packet("other", [], True, "x"))]), text_of(s, "Dana Whitfield"), "request-0029")

@@ -114,6 +114,13 @@ TOOLS = [
 ]
 
 
+def shown_id(value) -> str:
+    """A string the model chose, as it may appear in a trace or an error: kept only if it looks like an id, since a field meant for an
+    id is also a place the model, or a tenant it was reading, could slip a sentence into."""
+    text = str(value)
+    return text if re.fullmatch(r"[\w:.\-]{1,64}", text) else "?"
+
+
 def money(cents: int) -> str:
     return f"${cents / 100:,.2f}"
 
@@ -360,7 +367,7 @@ def packet_problem(packet, facts: dict[str, str], tenant_text: str = "") -> str 
         return f"the packet lists more than {MAX_RECORDS} records"
     unknown = [i for i in ids if i not in facts]
     if unknown:
-        return "the packet lists records that no earlier lookup of this run returned: " + ", ".join(i[:40] for i in unknown[:5])
+        return "the packet lists records that no earlier lookup of this run returned: " + ", ".join(shown_id(i) for i in unknown[:5])
     loose = ungrounded(packet, facts, tenant_text)
     if loose:
         return "the packet names an amount or date that no record it lists shows: " + ", ".join(loose[:5])
@@ -385,13 +392,18 @@ def verify(session: Session, scope: Scope, packet: dict, fresh_for: timedelta = 
     if not items:
         return {"checked": True, "sale_listed_nothing_owed": False, "payment_found": None, "work_item_id": None, "lease_id": None, "as_of": None,
                 "says": "The packet cites no open sale item of this tenant's that the desk has read again lately, so the desk cannot confirm a sale."}
-    item = next((i for i in items if i.kind == LISTED_PAID), items[0])
+    def holds_now(i: WorkItem) -> bool:
+        seen_i = i.observed or {}
+        return utcnow() - i.updated_at <= fresh_for and i.kind == LISTED_PAID and seen_i.get("status") == "LISTED" and seen_i.get("owed") == 0
+
+    # the cited item that confirms the sale, if any does; otherwise the most telling of the others
+    item = next((i for i in items if holds_now(i)), None) or next((i for i in items if i.kind == LISTED_PAID), items[0])
     seen = item.observed or {}
     # the desk lists a payment only when it knows the notice date, so with none known it cannot say that no payment followed
     lease, paid = lease_of_item(item, scope.leases), (None if not seen.get("notice_on") else bool(seen.get("payments")))
     # an item can stay open under its kind after a later reading changed the facts, so its latest facts are read as well
     stale = utcnow() - item.updated_at > fresh_for
-    holds = not stale and item.kind == LISTED_PAID and seen.get("status") == "LISTED" and seen.get("owed") == 0
+    holds = holds_now(item)
     if stale:
         says = f"The desk last read the sale of unit {lease.unit_name} on {when(item.updated_at)}, which is too long ago to confirm it now."
     elif item.kind != LISTED_PAID:
@@ -453,7 +465,7 @@ class Investigation:
             results = []
             for c in reads:
                 answer = self.lookups.call(c.name, dict(c.input or {}))
-                entry["calls"].append({"tool": c.name, "input": {k: str(v)[:80] for k, v in dict(c.input or {}).items()}, "records": record_ids(answer),
+                entry["calls"].append({"tool": c.name, "input": {k: shown_id(v) for k, v in dict(c.input or {}).items()}, "records": record_ids(answer),
                                        "error": answer.get("error")})
                 results.append({"type": "tool_result", "tool_use_id": c.id, "content": json.dumps(answer)})
             submitted = [c for c in calls if c.name == "submit_case_packet"]
@@ -463,7 +475,7 @@ class Investigation:
                 # the trace keeps what was asked and what was refused, not Claude's prose: a packet that was accepted is shown as the reading
                 listed = packet.get("records") if isinstance(packet.get("records"), list) else []
                 entry["calls"].append({"tool": "submit_case_packet", "input": {"intent": packet.get("intent") if packet.get("intent") in INTENTS else None,
-                                                                                "records": [str(i)[:40] for i in listed[:MAX_RECORDS + 1]]},
+                                                                                "records": [shown_id(i) for i in listed[:MAX_RECORDS + 1]]},
                                        "records": [], "error": problem})
                 self.row.trace, self.row.facts = list(self.trace), dict(self.lookups.facts)
                 # a packet that fails the check is sent back once; the second is final, and so is one on the forced last turn
