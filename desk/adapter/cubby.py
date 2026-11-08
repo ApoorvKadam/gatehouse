@@ -94,7 +94,11 @@ class CubbyAdapter:
                              overlock_needed=raw.get("overlockNeeded") if isinstance(raw.get("overlockNeeded"), bool) else None)
 
     def facilities(self) -> list[dict]:
-        return self._read("/v1/facilities/search", {}).get("facilities", [])
+        rows = self._read("/v1/facilities/search", {}).get("facilities")
+        if not isinstance(rows, list):
+            # an empty list is an answer; a missing one (a gateway page, a changed shape) is not
+            raise FMSError("/v1/facilities/search: the answer has no facilities list")
+        return rows
 
     def delinquent_leases(self, facility_provider_id: str) -> list[ProviderLease]:
         data = self._read("/v1/leases/search", {"facilityId": facility_provider_id, "delinquent": True})

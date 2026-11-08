@@ -655,8 +655,8 @@ def test_a_start_that_is_waiting_unrouted_cannot_lift_a_stop(session, desk):
 
 
 def test_the_unrouted_list_can_be_paged(sim, adapter, session):
-    for n in range(3):
-        arrive(session, adapter, {**texts_in(sim, DANA, f"text {n}"), "facilityId": None})
+    for n in range(3):          # sent ten, nine and eight minutes ago, so the order does not depend on the clock between calls
+        arrive(session, adapter, {**texts_in(sim, DANA, f"text {n}", minutes_ago=10 - n), "facilityId": None})
     assert [m["body"] for m in unrouted(session, SERVED, 2, 0)] == ["text 2", "text 1"]          # newest first
     assert [m["body"] for m in unrouted(session, SERVED, 2, 2)] == ["text 0"]
 
@@ -692,7 +692,7 @@ def test_an_unrouted_text_of_a_facility_the_desk_no_longer_serves_is_not_listed(
 
 def test_the_inbox_can_be_paged(sim, adapter, session, desk):
     for n in range(3):
-        arrive(session, adapter, texts_in(sim, DANA, f"text {n}"))
+        arrive(session, adapter, texts_in(sim, DANA, f"text {n}", minutes_ago=10 - n))
     assert [m["body"] for m in inbox(session, desk, 2, 0)] == ["text 2", "text 1"]
     assert [m["body"] for m in inbox(session, desk, 2, 2)] == ["text 0"]
 
@@ -745,8 +745,8 @@ def test_the_desk_restarts_while_the_key_sees_nothing_and_recovers_when_it_sees_
         assert sorted(s.get(DeskBinding, 1).facility_ids) == sorted(SERVED)
 
 
-def test_a_database_kept_from_before_the_inbox_gets_its_new_columns(tmp_path, fms_url, adapter):
-    from fmssim.store import make_session_factory as sim_session_factory
+def test_a_database_kept_from_before_the_inbox_is_upgraded(tmp_path, fms_url, adapter):
+    from fmssim.app import create_app as sim_create_app
 
     old = sa.create_engine(f"sqlite:///{tmp_path / 'old-desk.db'}")
     with old.begin() as c:
@@ -754,15 +754,48 @@ def test_a_database_kept_from_before_the_inbox_gets_its_new_columns(tmp_path, fm
                           "fms_fingerprint VARCHAR, bound_at DATETIME)"))
         c.execute(sa.text("INSERT INTO desk_binding (id, fms_base_url, facility_ids, fms_fingerprint) VALUES (1, :u, :f, '')"),
                   {"u": fms_url, "f": json.dumps(sorted(SERVED))})
-    factory = make_session_factory(f"sqlite:///{tmp_path / 'old-desk.db'}")
-    bind_to_fms(factory, adapter, fms_url)                                  # reads the old row and fills the new column
+    factory = make_session_factory(f"sqlite:///{tmp_path / 'old-desk.db'}")      # adds the missing column, empty
+    bind_to_fms(factory, adapter, fms_url)                                       # reads the old row and fills it
     with factory() as s:
         assert s.get(DeskBinding, 1).org_ids == ["org_Northstar01"]
 
     older = sa.create_engine(f"sqlite:///{tmp_path / 'old-sim.db'}")
     with older.begin() as c:
+        c.execute(sa.text("CREATE TABLE facilities (facility_id VARCHAR PRIMARY KEY, org_id VARCHAR, name VARCHAR, state VARCHAR, "
+                          "time_zone VARCHAR, billing_cycle VARCHAR)"))
+        c.execute(sa.text("INSERT INTO facilities VALUES ('fac_NSorlando01', 'org_Northstar01', 'Old name', 'FL', 'America/New_York', 'MONTHLY')"))
         c.execute(sa.text("CREATE TABLE customers (customer_id VARCHAR PRIMARY KEY, org_id VARCHAR, first_name VARCHAR, "
                           "last_name VARCHAR, phone VARCHAR, email VARCHAR)"))
-    sim_session_factory(f"sqlite:///{tmp_path / 'old-sim.db'}")
-    columns = {c["name"] for c in sa.inspect(older).get_columns("customers")}
-    assert {"sms_marketing", "sms_suppressed", "sms_suppression_reason", "sms_carrier_stop"} <= columns
+        c.execute(sa.text("INSERT INTO customers VALUES ('cust_DanaWhit01', 'org_Northstar01', 'Dana', 'Whitfield', '+14075550142', 'd@example.com')"))
+    with TestClient(sim_create_app(f"sqlite:///{tmp_path / 'old-sim.db'}")) as sim_client:      # starting it rebuilds and reseeds
+        ask = {"where": {"customerId": "cust_DanaWhit01"}}
+        found = sim_client.post("/v1/customers/search", json=ask, headers={"Authorization": f"Bearer {FULL_KEY}"})
+        dana = found.json()["data"]["customers"][0]
+        assert dana["communicationPreferences"]["sms"] == {"marketing": True, "suppressed": False, "suppressionReason": None}
+        texted = sim_client.post("/sim/messages/inbound", json={"facilityId": ORLANDO, "from": DANA, "body": "hello"})
+        assert texted.json()["data"]["webhook"]["to"] == "+14075550100"
+
+
+def test_a_desk_bound_while_the_key_saw_nothing_adopts_the_first_real_answer(fms_url, adapter):
+    first = make_session_factory("sqlite:///:memory:")
+    bind_to_fms(first, SeesNothing(), fms_url)
+    with first() as s:
+        assert s.get(DeskBinding, 1).facility_ids == [] and s.get(DeskBinding, 1).org_ids == []
+        refresh_binding(s, adapter)                                              # the facilities arrive
+        assert sorted(s.get(DeskBinding, 1).facility_ids) == sorted(SERVED) and s.get(DeskBinding, 1).org_ids == ["org_Northstar01"]
+    second = make_session_factory("sqlite:///:memory:")
+    bind_to_fms(second, SeesNothing(), fms_url)
+    bind_to_fms(second, adapter, fms_url)                                        # a restart with the facilities back
+    with second() as s:
+        assert sorted(s.get(DeskBinding, 1).facility_ids) == sorted(SERVED)
+
+
+def test_an_answer_that_is_not_a_facility_list_is_not_an_empty_portfolio():
+    def asking(response: httpx.Response) -> CubbyAdapter:
+        return CubbyAdapter("http://fms", FULL_KEY, 1.0, transport=httpx.MockTransport(lambda request: response))
+
+    for odd in (httpx.Response(200, text="<html>gateway</html>"), httpx.Response(200, json={"status": 200, "data": {}}),
+                httpx.Response(200, json={"status": 200, "data": {"facilities": "none"}})):
+        with pytest.raises(FMSError):
+            asking(odd).facilities()
+    assert asking(httpx.Response(200, json={"status": 200, "data": {"facilities": []}})).facilities() == []

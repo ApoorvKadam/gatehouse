@@ -353,21 +353,18 @@ def oldest_open_due(session: Session, lease_id: str) -> date | None:
     return None
 
 
-def add_missing_columns(engine) -> None:
-    """create_all never adds a column to a table that exists, so a database kept from an earlier version would fail on its
-    first query. Each missing column is added, empty; /sim/reset fills a world with values."""
-    from sqlalchemy import inspect, text
+def rebuild_if_outdated(engine) -> None:
+    """The simulator holds only synthetic state. A database kept from an earlier version, with a table that lacks a column
+    this version has, is dropped and made again, and the startup seeds it. Adding the columns empty would leave old rows
+    with texting fields nobody can use."""
+    from sqlalchemy import inspect
 
     live = inspect(engine)
-    with engine.begin() as connection:
-        for table in Base.metadata.sorted_tables:
-            if not live.has_table(table.name):
-                continue
-            have = {c["name"] for c in live.get_columns(table.name)}
-            for column in table.columns:
-                if column.name not in have:
-                    kind = column.type.compile(dialect=engine.dialect)
-                    connection.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {kind}'))
+    for table in Base.metadata.sorted_tables:
+        if live.has_table(table.name) and {c.name for c in table.columns} - {c["name"] for c in live.get_columns(table.name)}:
+            Base.metadata.drop_all(engine)
+            Base.metadata.create_all(engine)
+            return
 
 
 def make_session_factory(url: str | None = None) -> sessionmaker[Session]:
@@ -378,8 +375,8 @@ def make_session_factory(url: str | None = None) -> sessionmaker[Session]:
     if url == "sqlite:///:memory:":
         kwargs["poolclass"] = StaticPool   # one shared connection, or every thread sees an empty database
     engine = create_engine(url, **kwargs)
+    rebuild_if_outdated(engine)
     Base.metadata.create_all(engine)
-    add_missing_columns(engine)
     return sessionmaker(engine, expire_on_commit=False)
 
 

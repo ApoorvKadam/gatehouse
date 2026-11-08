@@ -56,6 +56,8 @@ def same_account(before_facilities, now_facilities, before_orgs=(), now_orgs=())
     must share a facility, so a key that sees some old and some new facilities is left to a person to rebind."""
     if before_orgs and now_orgs:
         return set(before_orgs) == set(now_orgs)
+    if not before_facilities and not before_orgs:
+        return True                     # nothing was stored to protect, so the first real answer is the account
     if not now_facilities:
         return bool(before_orgs)
     before, now = set(before_facilities), set(now_facilities)
