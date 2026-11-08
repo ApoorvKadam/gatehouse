@@ -746,7 +746,16 @@ def investigate(session: Session, client, inbound: InboundMessage, request_id: s
 def act(session: Session, adapter, inv: Investigation) -> None:
     """Do what the model asked for, once its packet is accepted and checked: a staff review of the sale item it named, read back from the
     FMS. A run whose packet was not accepted gets no action, and the request is dropped. The model only asks; the desk decides, acts and
-    reads the result back, and a new FMS task is asked for only when the desk's own check confirmed the sale."""
+    reads the result back, and a new FMS task is asked for only when the desk's own check confirmed the sale. The run's packet is already
+    accepted, so nothing in here can fail the run: a failure is logged, and the sale item itself still says what its task is."""
+    try:
+        _act(session, adapter, inv)
+    except Exception:
+        log.exception("agent run %s: the desk's action did not finish", inv.row.id)
+        session.rollback()
+
+
+def _act(session: Session, adapter, inv: Investigation) -> None:
     row = inv.row
     if row.status != "done" or not inv.lookups.requests:
         return
@@ -756,9 +765,13 @@ def act(session: Session, adapter, inv: Investigation) -> None:
         item = session.get(WorkItem, item_id, populate_existing=True)
         if item is None:
             continue
+        # what the tool checked when the request was made is checked again now: the worker may have closed the item since
+        askable = (item.state == "open" and item.facility_id == inv.scope.facility.id and item.kind in SALE_KINDS
+                   and lease_of_item(item, inv.scope.leases) is not None)
         confirmed = bool(verified.get("sale_listed_nothing_owed")) and verified.get("work_item_id") == item.id
         try:
-            result = staff_review(session, adapter, inv.scope.facility, item, confirmed)
+            result = (staff_review(session, adapter, inv.scope.facility, item, confirmed) if askable
+                      else {"outcome": "not_requested", "task_status": None, "read_at": None})
         except Exception:
             log.exception("agent run %s: the staff review did not finish", row.id)
             session.rollback()

@@ -3,9 +3,11 @@ packet, and reads the FMS task back before anything is shown as done. The model 
 page are the real ones."""
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from fastapi.testclient import TestClient
 
-from desk.investigator import Lookups, investigate, run_view, scope_of
+from desk.investigator import Lookups, act, investigate, run_view, scope_of
 
 from .conftest import ORLANDO
 from .test_investigator import (DANA_LEASE, Scripted, dana_facts, dana_packet, factory, message_ids, packet, text_of, tool)  # noqa: F401
@@ -136,3 +138,26 @@ def test_the_page_shows_the_staff_review_under_the_desks_check(fms_url, sim):
         assert "Existing FMS task linked" in html and "read it back from the FMS" in html
         for code in ("task_", "workitem:", "OPEN"):
             assert code not in html, code
+
+
+def test_an_item_the_worker_closed_before_the_desk_acted_gets_no_task(factory, adapter):
+    with factory() as s:
+        item = dana_facts(s)["sale"]
+        dana = text_of(s, "Dana Whitfield")
+        run, _ = investigate(s, asking(s), dana, "request-review-08", adapter=adapter)     # a finished run whose request named the item
+        run.actions = []
+        without_a_task(item)
+        item.state = "closed"                                                              # the worker closed it after the request was made
+        s.commit()
+        before = tasks(adapter)
+        asked = SimpleNamespace(row=run, lookups=SimpleNamespace(requests=[item.id]), scope=scope_of(s, dana))
+        act(s, adapter, asked)
+        assert run.actions[0]["outcome"] == "not_requested" and tasks(adapter) == before
+
+
+def test_nothing_the_desk_does_after_an_accepted_packet_can_fail_the_run(factory, adapter):
+    with factory() as s:
+        run, _ = investigate(s, asking(s), text_of(s, "Dana Whitfield"), "request-review-09", adapter=adapter)
+        assert run.status == "done"
+        act(s, adapter, SimpleNamespace(row=run, lookups=None, scope=None))              # an unexpected error in the action is logged, not raised
+        assert run.status == "done"
