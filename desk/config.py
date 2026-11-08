@@ -9,7 +9,7 @@ from .usage import PRICES
 
 def _chat_model(raw: str | None) -> str:
     """DESK_CHAT_MODEL: only a model that has a price in desk/usage.py, so every call's cost is logged. That is Claude Haiku 5.5
-    alone, by the owner's order. A bad value stops the desk at startup, naming the setting."""
+    alone. A bad value stops the desk at startup, naming the setting."""
     model = raw or "claude-haiku-5-5"
     if model not in PRICES:
         raise ValueError(f"DESK_CHAT_MODEL must be one of: {', '.join(PRICES)}")
@@ -53,7 +53,7 @@ class Settings:
     webhook_token: str | None = None
     # which facility a receiving number belongs to, for the numbers Cubby sends without a facility (a number shared by several)
     text_numbers: dict[str, str] = field(default_factory=dict)
-    # in the preview, any visitor may start a live Claude run on a seeded text, within these limits (the owner's: $1 a day in all,
+    # in the preview, any visitor may start a live run on a seeded text, within these limits ($1 a day in all,
     # ten full cases per visitor a day). Without a model key there is no run, whatever this says.
     public_investigate: bool = False
     daily_budget_usd: float = 1.0

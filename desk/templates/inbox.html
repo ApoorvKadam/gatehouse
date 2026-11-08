@@ -6,9 +6,9 @@
     <h1>Texts at {{ facility.name }}</h1>
     <p>{{ texts|length }} {{ 'text' if texts|length == 1 else 'texts' }}, newest first</p>
   </div>
-  <p class="lede">Every text a tenant sent to this facility's number. Gatehouse matches each one to a tenant through the FMS, never by a number someone typed, and it does not text anyone who said STOP. Preparing the case reads that tenant's records and writes case notes. The notes keep their own label, with the records they rest on beside them.</p>
+  <p class="lede">Every text a tenant sent to this facility's number. Gatehouse matches each one to a tenant through the FMS, never by a number someone typed, and it does not text anyone who said STOP.</p>
   {% if live %}
-  <p class="note live-note">Prepare the case reads this tenant's records and writes the case notes. It changes nothing in the FMS. You have {{ left.cases_left }} of {{ cases_per_day }} cases left today.</p>
+  <p class="note live-note">Prepare the case reads this tenant's records and writes case notes, with the records they rest on listed under them. It changes nothing in the FMS. You have {{ left.cases_left }} of {{ cases_per_day }} cases left today.</p>
   {% else %}
   <p class="note live-note">Case preparation is off here, so no text has notes yet.</p>
   {% endif %}
@@ -42,7 +42,7 @@
     <section class="reading" aria-label="Case notes for this text">
     {% if run and run.status == 'running' %}
       <p><span class="chip wait">The case is being prepared</span></p>
-    {% elif run and run.claude.summary %}
+    {% elif run and run.notes.summary %}
       <div class="reading-head">
         <span class="reading-label">{{ run.notes.label }}</span>
         {% if run.notes.needs_person %}<span class="chip act">A person has to act</span>{% else %}<span class="chip done">No person needed</span>{% endif %}

@@ -13,6 +13,7 @@ from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Index, 
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base, utcnow
+from .wording import plain
 
 
 class Facility(Base):
@@ -413,9 +414,9 @@ class AgentRun(Base):
         the desk holds them, each with its kind, and the desk's own check apart from both."""
         packet = self.packet or {}
         facts = self.facts or {}
-        return {"notes": {"label": "Case notes", "intent": packet.get("intent"), "summary": packet.get("summary"),
-                          "reason": packet.get("reason"), "needs_person": packet.get("needs_person")},
-                "records": [{"id": i, "kind": record_kind(i, facts.get(i)), "text": facts.get(i)} for i in packet.get("records", [])],
+        return {"notes": {"label": "Case notes", "intent": packet.get("intent"), "summary": plain(packet.get("summary")),
+                          "reason": plain(packet.get("reason")), "needs_person": packet.get("needs_person")},
+                "records": [{"id": i, "kind": record_kind(i, facts.get(i)), "text": facts.get(i) if i.startswith("text:") else plain(facts.get(i))} for i in packet.get("records", [])],
                 "verified": self.verified}
 
 

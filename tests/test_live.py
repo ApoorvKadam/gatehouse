@@ -1,4 +1,4 @@
-"""A visitor can start a live Claude run on the preview, inside the owner's limits, and the Texts page shows the result.
+"""A visitor can prepare a case live on the preview, inside the limits, and the Texts page shows the result.
 The model is scripted here; the limits, the refusals and the page are the real ones."""
 from __future__ import annotations
 
@@ -18,6 +18,11 @@ from .test_investigator import TOKEN, Scripted, factory, lookups_then_packet, me
 
 CALL = "/api/inbox/{}/investigate"
 A = {"cf-connecting-ip": "203.0.113.7"}
+
+
+def no_vendor_name(page: str) -> bool:
+    """No page names the model or its maker; the one disclosure on the Limits page says a language model."""
+    return not any(word in page.lower() for word in ("claude", "anthropic", "haiku"))
 
 
 def live_app(fms_url, model, **limits):
@@ -117,29 +122,36 @@ def test_the_texts_page_shows_each_text_who_it_matches_and_the_switch(fms_url, s
         assert all(name in html for name in ("Dana Whitfield", "Priya Raman", "Marcus Bell", "Unknown number"))
         assert "Texting stopped" in html and "Reply blocked" in html and "Reply sent" in html
         assert "You have 10 of 10 cases left today." in html
-        assert html.count("Prepare the case") == 3                                 # the three matched texts, not the stranger
-        assert "Claude" not in html                                                # the page never names the model
+        assert html.count('data-investigate="') == 3                                  # a button for each of the three matched texts, none for the stranger
+        assert no_vendor_name(html)                                                 # the page never names the model
 
 
 def test_the_texts_page_says_so_when_live_runs_are_off(fms_url, sim):
     with TestClient(preview(fms_url, None)) as client:
         html = client.get("/inbox").text
         assert "Case preparation is off here" in html and "Prepare the case" not in html
-        assert "No case notes for this text." in html and "Claude" not in html
+        assert "No case notes for this text." in html and no_vendor_name(html)
 
 
-def test_after_a_run_the_page_shows_claudes_words_under_their_label_the_records_and_the_desks_check(fms_url, sim):
+def test_the_limits_page_says_a_language_model_writes_the_notes_and_names_no_vendor(fms_url, sim):
+    with TestClient(preview(fms_url, None)) as client:
+        html = client.get("/limits").text
+        assert "written by a language model from the records" in html and no_vendor_name(html)
+
+
+def test_after_a_run_the_page_shows_the_case_notes_under_their_label_the_records_and_the_desks_check(fms_url, sim):
     model = Scripted()
     with TestClient(live_app(fms_url, model)) as client:
         fill(client, model, 1)
         assert click(client, message_ids(client)["Dana Whitfield"], "visitor-click-040", A).status_code == 200
         html = client.get("/inbox").text
-        assert "Case notes" in html and "Claude" not in html
+        assert "Case notes" in html and no_vendor_name(html)
         assert "Dana says she paid $240.00, and her unit is still on the sale list." in html
         assert "a person has to ask for the sale to be cancelled" in html
         assert "these notes rest on" in html and "Sale still listed, nothing owed (open)." in html
-        assert 'class="rec-kind">Sale<' in html and 'class="rec-kind">Account<' in html and 'class="rec-kind">Payment attempt<' in html
-        assert "workitem:" not in html and "payment:" not in html and "NEEDS_STAFF" not in html and "payment_of" not in html    # no raw ids or codes on the page
+        assert 'class="rec-kind">Sale<' in html and 'class="rec-kind">Payment attempt<' in html      # the two records the packet cites, by kind
+        for code in ("workitem:", "payment:", "observed:", "lease:", "lease_", "payment_", "NEEDS_STAFF", "sale_listed"):          # no raw id or code on the page
+            assert code not in html, code
         assert "The desk confirms the sale" in html and "Prepare again" in html
 
 

@@ -28,6 +28,7 @@ from .models import (
 from .sales import KIND_NAMES, LISTED_KINDS, LISTED_PAID, OUTSIDE, SALE_KINDS
 from .spend import Refused
 from .usage import cost_usd
+from .wording import plain, words
 
 log = logging.getLogger("desk.investigator")
 
@@ -49,17 +50,6 @@ SALE_FRESH_FOR = timedelta(minutes=10)
 # what the desk says about a packet it could not check against its own records
 UNCHECKED = ("Case notes. The desk checked only that the records they list exist and that the dollar amounts and dates it can read in "
              "the summary and the reason appear in them or in the tenant's message.")
-# the codes the FMS and the desk use for a payment, as words a person reads; the model reads the same words
-STATE_WORDS = {"NEEDS_STAFF": "needs staff", "CONFIRMED": "confirmed", "AWAITING_APPLICATION": "accepted but not yet on the ledger",
-               "PENDING_AT_FMS": "pending at the FMS", "OUTCOME_UNKNOWN": "outcome unknown", "DECLINED": "declined", "REJECTED": "rejected",
-               "NOT_SUBMITTED": "not sent", "SUBMITTING": "being sent", "NEEDS_REAUTHORIZATION": "needs a new authorization",
-               "RETURNED": "returned by the bank", "REFUNDED": "refunded", "REFUND_PENDING": "refund pending", "DISPUTED": "disputed",
-               "CLEARED_BY_STAFF": "cleared by staff", "SUCCEEDED": "succeeded", "PENDING": "pending", "FAILED": "failed",
-               "DIRECT_DEBIT_RETURN": "returned by the bank", "REFUND_INITIATED": "refund started"}
-
-
-def words(code: str | None) -> str:
-    return STATE_WORDS.get(code or "", (code or "").replace("_", " ").lower())
 INTENTS = ("sale_after_payment", "payment_status", "balance_question", "access_problem", "stop_request", "other")
 # the prompt asks for a summary of 400 characters; one that runs past MAX_SUMMARY is cut at a sentence when it is kept, never refused
 MAX_SUMMARY, MAX_RECORDS = 600, 8
@@ -192,6 +182,8 @@ class Lookups:
     def _record(self, fact_id: str, text: str, **more) -> dict:
         """A record as this run first read it. A run is one reading of the desk's records: if the same record is looked up again
         and has changed since, the run still sees the first version, so what the packet was checked against is what staff are shown."""
+        if not fact_id.startswith("text:"):
+            text = plain(text)              # a record is written for people; a text keeps the words it was sent with
         if fact_id not in self._seen:
             self.facts[fact_id] = text
             self._seen[fact_id] = {"record_id": fact_id, "text": text, **more}
@@ -226,7 +218,7 @@ class Lookups:
         for lease in self.scope.leases:
             case = self._case(lease)
             snap = self.session.get(LedgerSnapshot, case.last_snapshot_id) if case is not None and case.last_snapshot_id else None
-            text = f"Unit {lease.unit_name}, lease {lease.provider_id}."
+            text = f"Unit {lease.unit_name}."
             text += (f" The FMS ledger, read on {when(snap.observed_at)}, showed {money(snap.total_due)} owed and {money(snap.prepaid)} prepaid."
                      if snap is not None else " No ledger reading is recorded.")
             if case is not None:
@@ -246,7 +238,7 @@ class Lookups:
                 text += " A payment at the FMS may be this attempt; staff have not confirmed that."
             if c.confirmed_at:
                 text += f" The desk confirmed it on {when(c.confirmed_at)}."
-            records.append(self._record(f"payment:{c.id}", text, state=c.state, amount_cents=c.amount))
+            records.append(self._record(f"payment:{c.id}", text, amount_cents=c.amount))
         # the table has no lease column to filter on, so this reads every observed payment; one operator's volume is small, and an
         # index of payment to lease is the change to make if that grows
         for op in self.session.scalars(select(ObservedPayment).order_by(ObservedPayment.id)):
@@ -255,9 +247,9 @@ class Lookups:
                         f"The desk first saw it on {when(op.first_seen_at)}.")
                 if op.status_changed_at:
                     text += f" Its status last changed on {when(op.status_changed_at)}."
-                records.append(self._record(f"observed:{op.id}", text, status=op.status, amount_cents=op.amount))
+                records.append(self._record(f"observed:{op.id}", text, amount_cents=op.amount))
         return {"lease_id": lease.provider_id, "payments": records or [self._record(
-            f"payment:none:{lease.id}", f"The desk has no payment recorded on lease {lease.provider_id}. That does not show that none was made.")]}
+            f"payment:none:{lease.id}", f"The desk has no payment recorded on unit {lease.unit_name}. That does not show that none was made.")]}
 
     def get_sale_status(self, lease: Lease) -> dict:
         records = []
@@ -268,21 +260,20 @@ class Lookups:
             seen = item.observed or {}
             text = f"{KIND_NAMES.get(item.kind, item.kind)} ({item.state}). {item.problem}"
             if item.task_state == "created":
-                text += f" An FMS task asks a person to act; its status is {item.task_status or 'unknown'}."
+                text += f" An FMS task asks a person to act; its status is {words(item.task_status) if item.task_status else 'unknown'}."
             if item.state == "open":
                 text += f" It closes when: {item.closing_evidence}"
-            records.append(self._record(f"workitem:{item.id}", text, kind=item.kind, state=item.state, sale=seen.get("sale_local"),
-                                        fms_auction_status=seen.get("status")))
+            records.append(self._record(f"workitem:{item.id}", text, sale=seen.get("sale_local")))
         return {"lease_id": lease.provider_id, "sale_items": records or [self._record(
-            f"workitem:none:{lease.id}", f"The desk has no sale item for lease {lease.provider_id}.")]}
+            f"workitem:none:{lease.id}", f"The desk has no sale item for unit {lease.unit_name}.")]}
 
     def get_lien_file(self, lease: Lease) -> dict:
         case = self._case(lease)
         evaluation = self.session.scalar(select(LienEvaluation).where(LienEvaluation.case_id == case.id).order_by(LienEvaluation.id.desc())) if case else None
         if evaluation is None:
-            return {"lease_id": lease.provider_id, "evaluation": self._record(f"lien:none:{lease.id}", f"No lien evaluation is recorded for lease {lease.provider_id}.")}
-        text = f"The lien file was evaluated on {when(evaluation.evaluated_at)}: {evaluation.state}. {evaluation.summary}".strip()
-        return {"lease_id": lease.provider_id, "evaluation": self._record(f"lien:{evaluation.id}", text, state=evaluation.state)}
+            return {"lease_id": lease.provider_id, "evaluation": self._record(f"lien:none:{lease.id}", f"No lien evaluation is recorded for unit {lease.unit_name}.")}
+        text = f"The lien file was evaluated on {when(evaluation.evaluated_at)}: {words(evaluation.state)}. {evaluation.summary}".strip()
+        return {"lease_id": lease.provider_id, "evaluation": self._record(f"lien:{evaluation.id}", text)}
 
     def get_recent_texts(self) -> dict:
         facility, customer = self.scope.facility.id, self.scope.customer_id

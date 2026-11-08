@@ -82,7 +82,7 @@ class ReplyIn(BaseModel):
 class InvestigateIn(BaseModel):
     request_id: str = Field(min_length=8, max_length=64,
                             description="chosen by the screen for each request and kept for its retries; sending it twice is one run")
-    again: bool = Field(default=False, description="run Claude again on a text that already has a run")
+    again: bool = Field(default=False, description="prepare the case again on a text that already has notes")
 
 
 class StaffResolutionIn(BaseModel):
@@ -177,7 +177,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         return "operator"
 
     def actor(x_desk_token: str | None = Header(default=None)) -> str:
-        """Who is starting a Claude run: the operator, or, in the preview with live runs switched on, any visitor, within the limits.
+        """Who is starting a run: the operator, or, in the preview with live runs switched on, any visitor, within the limits.
         A token that is sent is always checked."""
         if x_desk_token is None and settings.public_view and settings.public_investigate:
             return "visitor"
@@ -335,7 +335,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
     @app.post("/api/inbox/{message_id}/investigate")
     def investigate_text(message_id: int, body: InvestigateIn, request: Request, response: Response, session: Session = Depends(db),
                          who: str = Depends(actor)):
-        """Claude reads a matched text, looks up the desk's records and prepares the case. The desk checks the packet against
+        """Reads a matched text, looks up the desk's records and prepares the case. The desk checks the packet against
         its own records. Needs a model key. A text has one run unless `again` is set, and a double click is one run."""
         if chat_client is None:
             raise HTTPException(503, "the desk has no model key configured")
