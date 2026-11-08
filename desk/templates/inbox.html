@@ -55,84 +55,57 @@
       </header>
 
       <div class="case-body">
-        <section class="convo" aria-label="Conversation">
-          <p class="pane-title">Conversation</p>
-          <div class="bubble in">{{ t.body }}</div>
-          <p class="bubble-meta">{{ local(t.received_at) }}</p>
-          {% for r in t.replies %}
-          <div class="bubble out">{{ r.body }}</div>
-          <p class="bubble-meta out">
-            <span class="chip {{ 'done' if r.state == 'sent' else ('act' if r.state in ('blocked', 'rejected') else 'wait') }}">{% include "icons/send.svg" %}{{ {'sent': 'Sent', 'blocked': 'Blocked', 'rejected': 'Refused', 'outcome_unknown': 'Not confirmed', 'intent': 'Sending'}.get(r.state, r.state) }}</span>
-            {% if r.reason %}<span>{{ r.reason }}</span>{% endif %}
-          </p>
-          {% endfor %}
-        </section>
-
-        <section class="work" aria-label="What our agent did" aria-live="polite">
-          <p class="pane-title">Our agent</p>
-          <div id="progress" hidden>
-            <div class="work-title"><h3>Exploring this message</h3></div>
-            <ol class="live-steps" id="steps"></ol>
-            <div class="skeleton" aria-hidden="true"><i></i><i></i><i></i></div>
-          </div>
-          <div id="work-main">
-          {% if run and run.status == 'running' %}
-            <div class="work-title"><h3>Exploring this message</h3><span class="chip wait">Running</span></div>
-            <div class="skeleton" aria-hidden="true"><i></i><i></i><i></i></div>
-          {% elif run and run.notes.summary %}
-            <div class="work-title">
-              <h3>{{ run.notes.label }}</h3>
-              {% if run.notes.needs_person %}<span class="chip act">A person has to act</span>{% else %}<span class="chip done">No person needed</span>{% endif %}
-              <span class="muted small">{{ run.notes.intent|replace('_', ' ') }}</span>
-            </div>
-            <p class="reading-summary">{{ run.notes.summary }}</p>
-            {% if run.notes.reason %}<p class="reading-reason"><b>Why:</b> {{ run.notes.reason }}</p>{% endif %}
-            <div class="checks">
-              <p class="deskcheck">
-                {% if run.verified and run.verified.checked %}
-                  <span class="chip {{ 'done' if run.verified.sale_listed_nothing_owed else 'wait' }}">{% include "icons/shield-check.svg" %}{{ 'The desk confirms the sale' if run.verified.sale_listed_nothing_owed else 'The desk does not confirm the sale' }}</span>
-                {% else %}<span class="chip plain">Not checked by the desk</span>{% endif %}
-                <span class="small">{{ run.verified.says if run.verified else '' }}</span>
-              </p>
-              {% for a in run.actions %}
-              <p class="deskcheck"><span class="chip {{ a.tone }}">{% include ("icons/send.svg" if a.kind == 'reply' else "icons/list-checks.svg") %}{{ a.label }}</span> <span class="small">{{ a.text }}</span></p>
-              {% if a.kind == 'reply' %}
-                {% if a.parts %}<ul class="parts">{% for p in a.parts %}<li><span class="rec-kind">{{ p.label }}</span><span>{{ p.text }}</span><span class="part-source">from {{ p.source }}</span></li>{% endfor %}</ul>{% endif %}
-                {% if a.dropped %}<ul class="parts">{% for d in a.dropped %}<li><span class="rec-kind">Left out</span><span>{{ d.label }}: {{ d.why }}.</span><span></span></li>{% endfor %}</ul>{% endif %}
-              {% endif %}
-              {% endfor %}
-            </div>
-            <details class="records" open>
-              <summary>{{ run.records|length }} {{ 'record' if run.records|length == 1 else 'records' }} these notes rest on</summary>
-              <ul>{% for rec in run.records %}<li><span class="rec-kind">{{ rec.kind }}</span><span>{{ rec.text }}</span></li>{% endfor %}</ul>
-            </details>
-          {% elif run %}
-            <div class="work-title"><h3>Our agent could not finish</h3><span class="chip act">No case notes</span></div>
-            <p class="reading-reason">{{ run.error or 'No notes were written.' }}</p>
-          {% elif t.match.state != 'matched' %}
-            <div class="empty-work">
-              <h3>There is no tenant to look up</h3>
-              <p class="muted">The FMS did not match this number to one tenant, so there are no records for our agent to read. A person has to answer it.</p>
-            </div>
-          {% else %}
-            <div class="empty-work">
-              <h3>Our agent has not looked at this message yet</h3>
-              <ul>
-                <li>It reads this tenant's account, payments and sale status.</li>
-                <li>It may ask staff to review a sale that is still listed.</li>
-                <li>It writes the case notes. It changes nothing in the FMS.</li>
-              </ul>
-            </div>
-          {% endif %}
-          </div>
+        <section class="work" aria-label="What happened to this message" aria-live="polite">
+          <ol class="seq" id="seq">
+            {% for s in sequence(t) %}
+            <li class="step {{ s.state }}{{ '' if loop.first else ' after' }}" data-step="{{ s.key }}">
+              <span class="node {{ s.tone }}" aria-hidden="true">{% include ("icons/" ~ s.icon ~ ".svg") %}</span>
+              <div class="step-body">
+                <div class="step-head">
+                  <h3>{{ s.title }}</h3>
+                  {% if s.chip %}<span class="chip {{ s.tone }}">{{ s.chip }}</span>{% endif %}
+                  {% if s.at %}<time>{{ local(s.at) }}</time>{% endif %}
+                </div>
+                {% if s.line %}<p class="step-line">{{ s.line }}</p>{% endif %}
+                {% if s.parts %}<ul class="parts">{% for p in s.parts %}<li><span class="rec-kind">{{ p.label }}</span><span>{{ p.text }}</span><span class="part-source">from {{ p.source }}</span></li>{% endfor %}</ul>{% endif %}
+                {% if s.dropped %}<ul class="parts">{% for d in s.dropped %}<li><span class="rec-kind">Left out</span><span>{{ d.label }}: {{ d.why }}.</span><span></span></li>{% endfor %}</ul>{% endif %}
+                {% if s.bubble %}<div class="bubble {{ s.bubble.side }}">{{ s.bubble.text }}</div>{% endif %}
+              </div>
+            </li>
+            {% if loop.first and t.match.state == 'matched' %}
+            <li class="step now" id="progress" {% if not (run and run.status == 'running') %}hidden{% endif %}>
+              <span class="node wait" aria-hidden="true"><span class="now-dot"></span></span>
+              <div class="step-body">
+                <div class="step-head"><h3>Our agent is reading the case</h3><span class="chip wait">Running</span></div>
+                <ol class="live-steps" id="steps"></ol>
+              </div>
+            </li>
+            {% endif %}
+            {% endfor %}
+          </ol>
           <p class="small" id="run-error" role="alert" hidden></p>
           {% if t.match.state == 'matched' %}
           <p class="work-foot">
             {% if live %}
             <button class="button primary" type="button" id="explore" data-explore="{{ t.id }}" data-run="{{ run.id if run else 0 }}" {% if run and run.status == 'running' %}data-running="1"{% endif %}>{{ 'Explore again' if run and run.status != 'running' else 'Explore with our agent' }}</button>
-            {% if run and run.notes.summary %}<span class="small muted">Written by our agent from the desk's records. The desk checks what it can.</span>{% endif %}
             {% elif not run %}<span class="small muted">Our agent is switched off on this copy, so there are no case notes yet.</span>{% endif %}
           </p>
+          {% endif %}
+
+          {% if run and run.status != 'running' and run.notes.summary %}
+          <section class="notes" id="notes">
+            <div class="notes-head">
+              <h3>{{ run.notes.label }}</h3>
+              <span class="muted small">{{ run.notes.intent|replace('_', ' ') }}</span>
+            </div>
+            <p class="reading-summary">{{ run.notes.summary }}</p>
+            {% if run.notes.reason %}<p class="reading-reason"><b>Why:</b> {{ run.notes.reason }}</p>{% endif %}
+            <p class="small muted">Written by our agent from the desk's records. The desk checks what it can.</p>
+            <details class="records">
+              <summary>{{ run.records|length }} {{ 'record' if run.records|length == 1 else 'records' }} these notes rest on</summary>
+              <ul>{% for rec in run.records %}<li><span class="rec-kind">{{ rec.kind }}</span><span>{{ rec.text }}</span></li>{% endfor %}</ul>
+            </details>
+          </section>
           {% endif %}
         </section>
       </div>
@@ -147,10 +120,10 @@
   var button = document.getElementById("explore");
   if (!button) return;
   var id = button.getAttribute("data-explore"), before = Number(button.getAttribute("data-run")) || 0, label = button.textContent;
-  var box = document.getElementById("progress"), main = document.getElementById("work-main"), list = document.getElementById("steps");
-  var error = document.getElementById("run-error"), foot = button.parentNode;
+  var seq = document.getElementById("seq"), box = document.getElementById("progress"), list = document.getElementById("steps"), notes = document.getElementById("notes");
+  var error = document.getElementById("run-error");
   var TICK = '<svg class="icon" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>';
-  var shown = [], waiting = false, finished = false, tail = false;
+  var shown = [], waiting = false, finished = false;
 
   function paint() {
     shown.forEach(function (li, n) {
@@ -168,17 +141,19 @@
   function poll() {
     if (!waiting) return;
     fetch("/api/inbox/" + id + "/progress").then(function (r) { return r.ok ? r.json() : null; }).then(function (p) {
-      if (p && p.run > before) {
-        p.steps.forEach(function (text, n) { if (n + 1 >= shown.length) step(text); });
-        if (p.status !== "running" && !tail && p.steps[p.steps.length - 1] === "Writing the case notes") { tail = true; step("Checking the notes and the staff task"); }
-      }
+      if (p && p.run > before) p.steps.forEach(function (text, n) { if (n + 1 >= shown.length) step(text); });
     }).catch(function () {}).then(function () { if (waiting) setTimeout(poll, 800); });
   }
   function start() {
     waiting = true; error.hidden = true; button.disabled = true; button.textContent = "Exploring...";
-    main.hidden = true; box.hidden = false; list.innerHTML = ""; shown = []; finished = false; tail = false;
+    seq.classList.add("running"); box.hidden = false; if (notes) notes.hidden = true;
+    list.innerHTML = ""; shown = []; finished = false;
     step("Reading the message");
     setTimeout(poll, 600);
+  }
+  function reset() {
+    seq.classList.remove("running"); box.hidden = true; if (notes) notes.hidden = false;
+    button.disabled = false; button.textContent = label;
   }
   button.addEventListener("click", function () {
     start();
@@ -188,10 +163,10 @@
     }).then(function (r) { return r.json().then(function (body) { return { code: r.status, body: body }; }); }).then(function (res) {
       waiting = false;
       if (res.code === 200 || res.code === 202) { finished = true; paint(); location.reload(); return; }
-      box.hidden = true; main.hidden = false; button.disabled = false; button.textContent = label;
+      reset();
       error.textContent = (res.body && res.body.detail) || "Our agent could not run just now. Try again in a minute."; error.hidden = false;
     }).catch(function () {
-      waiting = false; box.hidden = true; main.hidden = false; button.disabled = false; button.textContent = label;
+      waiting = false; reset();
       error.textContent = "The request failed. Try again."; error.hidden = false;
     });
   });

@@ -26,7 +26,7 @@ from .models import (
     AgentRequest, AgentRun, DelinquencyCase, Facility, InboundMessage, Lease, LedgerSnapshot, LienEvaluation, ObservedPayment, OutboundMessage,
     PaymentCommand, WorkItem,
 )
-from .reply import NEEDS_RECORD, after_failure, answer, cited
+from .reply import NEEDS_RECORD, after_failure, answer, cited, mark_step
 from .sales import KIND_NAMES, LISTED_KINDS, LISTED_PAID, OUTSIDE, SALE_KINDS
 from .staff_review import staff_review
 from .spend import WORST_RUN_USD, Refused
@@ -826,6 +826,8 @@ def _review(session: Session, adapter, inv: Investigation) -> None:
         askable = (item.state == "open" and item.facility_id == inv.scope.facility.id and item.kind in SALE_KINDS
                    and lease_of_item(item, inv.scope.leases) is not None)
         confirmed = bool(verified.get("sale_listed_nothing_owed")) and verified.get("work_item_id") == item.id
+        if askable:
+            mark_step(session, row, "read_task_back")
         try:
             result = (staff_review(session, adapter, inv.scope.facility, item, confirmed) if askable
                       else {"outcome": "not_requested", "task_status": None, "read_at": None})
@@ -841,7 +843,8 @@ def _review(session: Session, adapter, inv: Investigation) -> None:
 # the words the page shows for each step of a run, taken from what the run really did
 STEP_WORDS = {"get_account": "Reading the tenant's account", "get_payments": "Checking payments",
               "get_sale_status": "Checking the sale and its outside listing", "get_lien_file": "Checking the lien file",
-              "get_recent_texts": "Reading the recent messages", "request_staff_review": "Asking staff to review the sale", "draft_reply": "Choosing what to tell the tenant",
+              "get_recent_texts": "Reading the recent messages", "request_staff_review": "Asking staff to review the sale", "read_task_back": "Reading the FMS task back",
+              "draft_reply": "Choosing what to tell the tenant",
               "check_reply": "Checking the reply against the records", "send_reply": "Sending the reply",
               "submit_case_packet": "Writing the case notes"}
 

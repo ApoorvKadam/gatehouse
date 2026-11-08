@@ -28,6 +28,7 @@ from .models import (
     LienEvaluation, LienEvidence, PaymentCommand, PaymentProposal, WorkItem,
 )
 from .payments import tenant_message
+from .sequence import sequence
 from .wording import TROUBLES, plain
 
 HERE = Path(__file__).parent
@@ -514,7 +515,8 @@ def router(pages: Pages) -> APIRouter:
 
     @r.get("/inbox", response_class=HTMLResponse)
     def inbox_page(request: Request, facility: str | None = None, text: int | None = None):
-        """The messages that reached a facility's number, newest first, and for the one chosen the conversation beside what our agent did."""
+        """The messages that reached a facility's number, newest first, and for the one chosen the steps it went through, with what our agent
+        wrote under them."""
         with session() as s:
             facilities = pages.facilities(s)
             if not facilities:
@@ -526,7 +528,7 @@ def router(pages: Pages) -> APIRouter:
             texts = inbox_of(s, current, limit=30)
             selected = next((t for t in texts if t["id"] == text), texts[0] if texts else None)
             return templates.TemplateResponse(request, "inbox.html", {
-                "facilities": facilities, "facility": current, "texts": texts, "selected": selected, "local": local, "nav": "inbox",
+                "facilities": facilities, "facility": current, "texts": texts, "selected": selected, "local": local, "sequence": sequence, "nav": "inbox",
                 "live": pages.live, "left": left, "cases_per_day": pages.cases_per_day})
 
     @r.get("/accounts/{case_id}", response_class=HTMLResponse)
