@@ -198,7 +198,7 @@ def test_text_written_instead_of_a_packet_is_never_used_and_the_model_is_asked_a
         assert run.packet["summary"] == "Dana asks about her unit."                  # the model's loose text is not the packet
 
 
-def test_the_prompt_follows_the_playbook_and_keeps_the_tenants_words_out_of_the_system_and_the_results(factory):
+def test_the_prompt_follows_the_playbook_and_keeps_the_tenants_words_and_name_out_of_the_system_prompt(factory):
     with factory() as s:
         dana = text_of(s, "Dana Whitfield")
         model = Scripted([tool("get_recent_texts", id_="a1")], [tool("submit_case_packet", packet("other", [], True, "x"), id_="a2")])
@@ -424,6 +424,22 @@ def test_the_sale_check_sees_a_note_the_worker_wrote_while_the_model_was_answeri
         reads = [tool("get_account", id_="a1"), tool("get_sale_status", {"lease_id": DANA_LEASE}, id_="a2"), tool("get_payments", {"lease_id": DANA_LEASE}, id_="a3")]
         run, _ = investigate(s, WorkerMarksItem(reads, [tool("submit_case_packet", cited, id_="a4")]), dana, "request-0049")
         assert run.status == "needs_person" and run.verified["sale_listed_nothing_owed"] is False and run.verified["work_item_id"] is None
+
+
+def test_a_sale_item_the_worker_has_not_read_lately_does_not_confirm_a_sale_now(factory):
+    with factory() as s:
+        dana = text_of(s, "Dana Whitfield")
+        item = dana_facts(s)["sale"]
+        cited = dana_packet(s)
+        reads = [tool("get_account", id_="a1"), tool("get_sale_status", {"lease_id": DANA_LEASE}, id_="a2"), tool("get_payments", {"lease_id": DANA_LEASE}, id_="a3")]
+        item.updated_at = utcnow() - timedelta(minutes=30)               # the item is open and unchanged, but the passes no longer return it
+        s.commit()
+        run, _ = investigate(s, Scripted(reads, [tool("submit_case_packet", cited)]), dana, "request-0050")
+        assert run.status == "needs_person" and run.verified["sale_listed_nothing_owed"] is False and run.verified["work_item_id"] == item.id
+        assert "too long ago to confirm it now" in run.verified["says"]
+        # the window is the caller's: a desk whose worker runs slowly says how long ago still counts
+        slow, _ = investigate(s, Scripted(reads, [tool("submit_case_packet", cited)]), dana, "request-0051", again=True, fresh_for=timedelta(hours=1))
+        assert slow.status == "done" and slow.verified["sale_listed_nothing_owed"] is True
 
 
 def test_a_packet_for_any_other_intent_says_the_desk_did_not_check_it(factory):

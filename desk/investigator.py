@@ -41,6 +41,9 @@ NOT_ACCEPTED = ("The packet was not accepted. Every record_id you list must be o
 # writes its heartbeat (AgentRun.beat_at) at least every three and a half minutes. A run silent for STRANDED_AFTER was cut off, not slow.
 CALL_TIMEOUT = 60.0
 STRANDED_AFTER = timedelta(minutes=5)
+# a sale item the worker has not read in this long was missing from its latest passes (a search that no longer returns a sale leaves
+# the item open and unchanged), so it cannot confirm that the sale is listed now
+SALE_FRESH_FOR = timedelta(minutes=10)
 # what the desk says about a packet it could not check against its own records
 UNCHECKED = ("Claude's reading. The desk checked only that the records it lists exist and that the dollar amounts and dates it can read in "
              "the summary and the reason appear in them or in the tenant's message.")
@@ -364,10 +367,11 @@ def packet_problem(packet, facts: dict[str, str], tenant_text: str = "") -> str 
     return None
 
 
-def verify(session: Session, scope: Scope, packet: dict) -> dict:
+def verify(session: Session, scope: Scope, packet: dict, fresh_for: timedelta = SALE_FRESH_FOR) -> dict:
     """The desk's own check of the packet against its records, whatever Claude said. Only a sale claim can be checked, and
     only against the open sale item the packet cites for one of this tenant's leases here. The item says the FMS ledger shows
-    nothing owed while the sale is still listed, and it must have been read again on the desk's last pass. It does not say who
+    nothing owed while the sale is still listed, and it must have been read again lately (fresh_for): an item that the worker's
+    passes no longer return stays open and unchanged, and says nothing about now. It does not say who
     paid: whether the FMS reported a payment since the notice is reported apart (true, false, or None when no notice date is
     known, because then the desk cannot tell)."""
     if packet["intent"] != "sale_after_payment":
@@ -386,8 +390,11 @@ def verify(session: Session, scope: Scope, packet: dict) -> dict:
     # the desk lists a payment only when it knows the notice date, so with none known it cannot say that no payment followed
     lease, paid = lease_of_item(item, scope.leases), (None if not seen.get("notice_on") else bool(seen.get("payments")))
     # an item can stay open under its kind after a later reading changed the facts, so its latest facts are read as well
-    holds = item.kind == LISTED_PAID and seen.get("status") == "LISTED" and seen.get("owed") == 0
-    if item.kind != LISTED_PAID:
+    stale = utcnow() - item.updated_at > fresh_for
+    holds = not stale and item.kind == LISTED_PAID and seen.get("status") == "LISTED" and seen.get("owed") == 0
+    if stale:
+        says = f"The desk last read the sale of unit {lease.unit_name} on {when(item.updated_at)}, which is too long ago to confirm it now."
+    elif item.kind != LISTED_PAID:
         says = f"The desk's sale item for unit {lease.unit_name} is: {KIND_NAMES.get(item.kind, item.kind)}. That is not a sale listed with nothing owed."
     elif not holds:
         owed = money(seen["owed"]) if isinstance(seen.get("owed"), int) else "an unknown amount"
@@ -405,8 +412,8 @@ def verify(session: Session, scope: Scope, packet: dict) -> dict:
 class Investigation:
     """One run of the model over one text."""
 
-    def __init__(self, session: Session, client, row: AgentRun, scope: Scope, inbound: InboundMessage):
-        self.session, self.client, self.row, self.scope, self.inbound = session, client, row, scope, inbound
+    def __init__(self, session: Session, client, row: AgentRun, scope: Scope, inbound: InboundMessage, fresh_for: timedelta = SALE_FRESH_FOR):
+        self.session, self.client, self.row, self.scope, self.inbound, self.fresh_for = session, client, row, scope, inbound, fresh_for
         self.lookups = Lookups(session, scope, inbound)
         self.trace: list[dict] = []
 
@@ -503,7 +510,7 @@ class Investigation:
             return self._end("needs_person", stop_reason, problem)
         kept = {"intent": packet["intent"], "summary": packet["summary"].strip(), "records": list(dict.fromkeys(packet["records"])),
                 "needs_person": packet["needs_person"], "reason": packet["reason"].strip()}
-        verified = verify(self.session, self.scope, kept)
+        verified = verify(self.session, self.scope, kept, self.fresh_for)
         if verified["checked"] and not verified["sale_listed_nothing_owed"]:
             return self._end("needs_person", stop_reason, "the packet says a sale is listed with nothing owed, and the desk's records do not confirm it",
                              packet=kept, verified=verified)
@@ -586,7 +593,8 @@ def _reply(session: Session, request_id: str | None, run: AgentRun) -> AgentRun:
     return run if took else (_answered(session, request_id) or run)
 
 
-def investigate(session: Session, client, inbound: InboundMessage, request_id: str | None, again: bool = False) -> tuple[AgentRun, bool]:
+def investigate(session: Session, client, inbound: InboundMessage, request_id: str | None, again: bool = False,
+                fresh_for: timedelta = SALE_FRESH_FOR) -> tuple[AgentRun, bool]:
     """Run Claude over a matched text, once. Returns the run and whether this call started it. A request id is answered once: a
     retry gets the same run, whatever `again` says. A run already going, or a finished run, is returned as it is, so a double click
     costs one model run; `again` asks for a new run on a text that has one. A text's runs are numbered and the database takes each
@@ -618,7 +626,7 @@ def investigate(session: Session, client, inbound: InboundMessage, request_id: s
             raise
         return _reply(session, request_id, winner), False
     try:
-        Investigation(session, client, row, scope_of(session, inbound), inbound).run()
+        Investigation(session, client, row, scope_of(session, inbound), inbound, fresh_for).run()
     except Exception as exc:
         log.exception("agent run %s failed", row.id)
         session.rollback()

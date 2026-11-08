@@ -7,6 +7,7 @@ import logging
 import os
 import tempfile
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Response
@@ -21,7 +22,7 @@ from .adapter.cubby import CubbyAdapter
 from .cases import queue, sync_facility
 from .config import Settings
 from .conversation import Conversation
-from .investigator import CALL_TIMEOUT, investigate, run_view
+from .investigator import CALL_TIMEOUT, SALE_FRESH_FOR, investigate, run_view
 from .lien_files import ensure_append_only, evaluate_case, record_evidence, replay
 from .liens import FL_R1, ValidationError
 from .db import bind_to_fms, make_session_factory, refresh_binding
@@ -335,7 +336,9 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         if message.match_state != "matched" or not message.customer_provider_id:
             raise HTTPException(409, "this text is not matched to one tenant yet, so there is nothing to look up")
         try:
-            run, _started = investigate(session, chat_client, message, body.request_id, body.again)
+            # a sale item counts as read lately if the worker has passed over it a few times since, however slowly it is set to run
+            run, _started = investigate(session, chat_client, message, body.request_id, body.again,
+                                        max(SALE_FRESH_FOR, timedelta(seconds=6 * settings.reconcile_every_seconds)))
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         if run.status == "running":
