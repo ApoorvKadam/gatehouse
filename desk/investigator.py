@@ -26,7 +26,7 @@ from .models import (
     AgentRequest, AgentRun, DelinquencyCase, Facility, InboundMessage, Lease, LedgerSnapshot, LienEvaluation, ObservedPayment, OutboundMessage,
     PaymentCommand, WorkItem,
 )
-from .reply import NEEDS_RECORD, answer
+from .reply import NEEDS_RECORD, after_failure, answer, cited
 from .sales import KIND_NAMES, LISTED_KINDS, LISTED_PAID, OUTSIDE, SALE_KINDS
 from .staff_review import staff_review
 from .spend import WORST_RUN_USD, Refused
@@ -332,7 +332,7 @@ class Lookups:
                 return {"error": "that is not a part the desk can write; use one of: " + ", ".join(REPLY_KINDS)}
             if kind in [k for k, _ in proposed]:
                 return {"error": f"{kind} appears twice; use each part once"}
-            if kind in NEEDS_RECORD and (record_id not in self.facts or not record_id.startswith(NEEDS_RECORD[kind][0])):
+            if kind in NEEDS_RECORD and cited(kind, record_id, self.facts) is None:
                 return {"error": f"{kind} needs the record_id of a {NEEDS_RECORD[kind][1]} record that a lookup returned in this conversation"}
             proposed.append((kind, record_id if kind in NEEDS_RECORD else ""))
         if not proposed:
@@ -807,7 +807,7 @@ def _act(session: Session, adapter, inv: Investigation) -> None:
         except Exception:
             log.exception("agent run %s: the reply did not finish", row.id)
             session.rollback()
-            reply = {"kind": "reply", "outcome": "not_sent", "reason": "the reply could not be prepared", "body": "", "parts": [], "dropped": []}
+            reply = after_failure(session, inv)
         if reply is not None:
             row.actions = list(row.actions or []) + [reply]
             session.commit()

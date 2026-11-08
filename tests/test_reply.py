@@ -194,3 +194,26 @@ def test_the_tool_schemas_use_only_what_strict_tool_use_accepts():
                 walk(value, f"{path}[{n}]")
     for tool_ in TOOLS:
         walk(tool_["input_schema"], tool_["name"])
+
+
+def test_a_failure_after_the_text_went_out_is_recorded_as_sent_and_a_failure_before_keeps_the_proposal(factory, adapter):
+    from types import SimpleNamespace
+    from desk.reply import after_failure
+    with factory() as s:
+        dana = text_of(s, "Dana Whitfield")
+        run, _ = investigate(s, for_dana(s, whole(s)), dana, "request-reply-12", adapter=adapter)
+        inv = SimpleNamespace(inbound=dana, lookups=SimpleNamespace(reply_parts=[("message_received", ""), ("staff_review", "")]))
+        late = after_failure(s, inv)                                                      # the text exists, so the record says so
+        assert late["outcome"] == "sent" and late["body"] == reply_of(run)["body"] and late["proposed"] == [["message_received", ""], ["staff_review", ""]]
+        early = after_failure(s, SimpleNamespace(inbound=text_of(s, "Priya Raman"), lookups=inv.lookups))
+        assert early["outcome"] == "not_sent" and early["proposed"] == [["message_received", ""], ["staff_review", ""]]
+
+
+def test_a_record_of_the_right_kind_but_the_wrong_shape_is_refused_at_the_tool(factory):
+    from desk.investigator import Lookups, scope_of
+    with factory() as s:
+        dana = text_of(s, "Dana Whitfield")
+        lookups = Lookups(s, scope_of(s, dana), dana)
+        lookups.facts["payment:none:3"] = "The desk has no payment recorded on unit B-1042."     # a record a lookup returned, but not a payment attempt
+        answer = lookups.draft_reply([part("message_received"), part("payment_applied", "payment:none:3")])
+        assert "needs the record_id" in answer["error"] and lookups.reply_parts == []

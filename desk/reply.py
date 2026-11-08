@@ -56,7 +56,7 @@ def _first_name(name: str | None) -> str:
     return first if re.fullmatch(r"[A-Za-z][A-Za-z'\-]{0,29}", first) else "there"
 
 
-def _cited(kind: str, record_id: str, facts: dict) -> int | None:
+def cited(kind: str, record_id: str, facts: dict) -> int | None:
     """The row number in a record id the agent cited, when it is the right kind of record and one this run's lookups returned."""
     prefix = NEEDS_RECORD[kind][0]
     if record_id not in facts or not re.fullmatch(re.escape(prefix) + r"\d+", record_id):
@@ -80,7 +80,7 @@ def resolve(session: Session, inv, kind: str, record_id: str) -> tuple[Part | No
         if done is None:
             return None, "the FMS has not confirmed an open task"
         return Part(kind, REPLY_PHRASES[kind], "the FMS task"), ""
-    number = _cited(kind, record_id, inv.lookups.facts)
+    number = cited(kind, record_id, inv.lookups.facts)
     if number is None:
         return None, "it did not cite a record this run read"
     if kind == "payment_applied":
@@ -119,15 +119,30 @@ def _mark(session: Session, run: AgentRun, name: str) -> None:
     session.commit()
 
 
-def _not_sent(reason: str, parts: list[Part] | None = None, dropped: list[dict] | None = None) -> dict:
+def _not_sent(reason: str, parts: list[Part] | None = None, dropped: list[dict] | None = None, proposed: list | None = None) -> dict:
     return {"kind": "reply", "outcome": "not_sent", "reason": reason, "body": "", "parts": [vars(p) | {"label": REPLY_PART_LABELS[p.kind]} for p in parts or []],
-            "dropped": dropped or []}
+            "dropped": dropped or [], "proposed": [list(p) for p in proposed or []]}
+
+
+def after_failure(session: Session, inv) -> dict:
+    """What to record when something failed while the reply was being prepared or sent. A text that did go out is found by its request id and
+    recorded as the send left it, so the page never says "no reply" about a text the tenant got; the proposal is kept for whoever looks."""
+    sent = session.scalar(select(OutboundMessage).where(OutboundMessage.request_id == f"agent-reply:{inv.inbound.id}"))
+    if sent is None:
+        return _not_sent("the reply could not be prepared", proposed=inv.lookups.reply_parts)
+    return {"kind": "reply", "outcome": _outcome(sent), "reason": sent.reason or "", "body": sent.body, "outbound_id": sent.id, "parts": [], "dropped": [],
+            "proposed": [list(p) for p in inv.lookups.reply_parts]}
+
+
+def _outcome(sent: OutboundMessage) -> str:
+    return {"sent": "sent", "blocked": "blocked", "rejected": "rejected"}.get(sent.state, "not_confirmed")
 
 
 def answer(session: Session, adapter, inv) -> dict | None:
     """Write, check and send the acknowledgement the agent proposed, once the packet is accepted and the staff review is done. Returns what
     happened, as it is stored on the run, or None when the agent proposed nothing. One reply per message: a second exploration never sends
-    another, whatever it proposes."""
+    another, whatever it proposes. The check for an earlier reply is made just before the send and cannot be atomic with a person typing a reply
+    in the same instant; two agent runs cannot both send, because the request id is unique per message."""
     proposal = inv.lookups.reply_parts
     if not proposal:
         return None
@@ -136,7 +151,7 @@ def answer(session: Session, adapter, inv) -> dict | None:
                                                            (OutboundMessage.author == "agent") | OutboundMessage.state.in_(("sent", "outcome_unknown"))))
     if earlier is not None:
         return _not_sent("this message was answered already" if earlier.state in ("sent", "outcome_unknown")
-                         else f"an earlier reply was blocked: {earlier.reason or 'the rule said no'}")
+                         else f"an earlier reply was blocked: {earlier.reason or 'the rule said no'}", proposed=proposal)
     _mark(session, inv.row, "check_reply")
     chosen, dropped = [], []
     for kind, record_id in [(OPENER, "")] + [p for p in proposal if p[0] != OPENER]:
@@ -147,17 +162,16 @@ def answer(session: Session, adapter, inv) -> dict | None:
             chosen.append(part)
     facts = [p for p in chosen if p.kind not in (OPENER, CLOSING)]
     if not facts:
-        return _not_sent("nothing the records confirm was worth telling the tenant", chosen, dropped)
+        return _not_sent("nothing the records confirm was worth telling the tenant", chosen, dropped, proposal)
     ordered = [p for p in chosen if p.kind == OPENER] + facts + [p for p in chosen if p.kind == CLOSING]
     body = " ".join(p.text for p in ordered)
     if len(body) > SMS_LIMIT:
-        return _not_sent(f"the text would be {len(body)} characters, and a text may be {SMS_LIMIT}", ordered, dropped)
+        return _not_sent(f"the text would be {len(body)} characters, and a text may be {SMS_LIMIT}", ordered, dropped, proposal)
     _mark(session, inv.row, "send_reply")
     try:
         sent = send_text(session, adapter, inv.scope.facility, inv.scope.customer_id, body, "agent", reply_to=inbound,
                          request_id=f"agent-reply:{inbound.id}")
     except (ValueError, FMSError) as exc:
-        return _not_sent(f"nothing was sent: {exc}", ordered, dropped)
-    outcome = {"sent": "sent", "blocked": "blocked", "rejected": "rejected"}.get(sent.state, "not_confirmed")
-    return {"kind": "reply", "outcome": outcome, "reason": sent.reason or "", "body": body, "outbound_id": sent.id,
-            "parts": [vars(p) | {"label": REPLY_PART_LABELS[p.kind]} for p in ordered], "dropped": dropped}
+        return _not_sent(f"nothing was sent: {exc}", ordered, dropped, proposal)
+    return {"kind": "reply", "outcome": _outcome(sent), "reason": sent.reason or "", "body": body, "outbound_id": sent.id,
+            "parts": [vars(p) | {"label": REPLY_PART_LABELS[p.kind]} for p in ordered], "dropped": dropped, "proposed": [list(p) for p in proposal]}
