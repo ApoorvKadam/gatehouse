@@ -834,3 +834,11 @@ def test_a_stop_that_is_stored_while_the_intent_is_written_stops_the_send(fms_ur
     sa.event.remove(session, "after_commit", stop_arrives)
     assert fired and row.state == "blocked" and "STOP" in row.reason
     assert went_out(fms_url) == []
+
+
+def test_a_junk_customer_search_answer_keeps_the_text_pending_instead_of_unmatched(sim, session, desk):
+    junk = CubbyAdapter("http://fms", FULL_KEY, 1.0, transport=httpx.MockTransport(lambda request: httpx.Response(200, text="")))
+    arrive(session, junk, texts_in(sim, STRANGER, "hello"))
+    with pytest.raises(FMSError):
+        match_pending(session, junk, desk)
+    assert session.scalar(select(InboundMessage.match_state)) == "pending"                   # not called unmatched for good
