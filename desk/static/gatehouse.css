@@ -53,6 +53,15 @@
   --truth-text: #d3d8e6;
   --shadow: 0 1px 2px rgba(17,19,18,.04), 0 8px 24px rgba(17,19,18,.06);
   --soft-lilac: #c9c5ee;
+  --on-teal: #ffffff; --on-brick: #ffffff;
+  /* the kinds of trouble on the Evaluation page: five hues checked together for colour-blind separation and contrast in both modes, and a
+     neutral for the one scenario where nothing goes wrong. Pass and fail keep teal and brick; the tick or cross inside a mark says which. */
+  --c-normal: #7d8480; --c-normal-ink: #ffffff;
+  --c-no: #2a78d6; --c-no-ink: #ffffff;
+  --c-late: #eda100; --c-late-ink: #0b0b0b;
+  --c-twice: #e87ba4; --c-twice-ink: #0b0b0b;
+  --c-money: #6250d6; --c-money-ink: #ffffff;
+  --c-disagree: #eb6834; --c-disagree-ink: #0b0b0b;
   /* closed-form springs (damping 0.82 and 0.7), sampled into linear() so motion has mass instead of a fixed ease */
   --spring: linear(0.0, 0.0272, 0.0949, 0.186, 0.288, 0.392, 0.492, 0.5843, 0.6668, 0.7385, 0.7994, 0.8501, 0.8914, 0.9243, 0.95, 0.9696, 0.9842, 0.9947, 1.0019, 1.0066, 1.0094, 1.0107, 1.0111, 1.0108, 1.01, 1.009, 1.0079, 1.0067, 1.0056, 1.0046, 1.0037, 1.0029, 1.0022, 1.0016, 1.0012, 1.0008, 1);
   --spring-snap: linear(0.0, 0.0278, 0.0983, 0.1954, 0.3059, 0.4203, 0.5313, 0.6341, 0.7257, 0.8047, 0.8706, 0.9238, 0.9653, 0.9964, 1.0185, 1.033, 1.0416, 1.0454, 1.0458, 1.0436, 1.0398, 1.035, 1.0298, 1.0246, 1.0196, 1.0151, 1.0111, 1.0077, 1.0049, 1.0027, 1.001, 0.9997, 0.9988, 0.9983, 0.998, 0.9979, 1);
@@ -88,6 +97,13 @@
     --truth-text: #cfd5e6;
     --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
     --soft-lilac: #4b4680;
+    --on-teal: #0b0b0b; --on-brick: #0b0b0b;
+    --c-normal: #8f9590; --c-normal-ink: #0b0b0b;
+    --c-no: #3987e5; --c-no-ink: #0b0b0b;
+    --c-late: #c98500; --c-late-ink: #0b0b0b;
+    --c-twice: #d55181; --c-twice-ink: #0b0b0b;
+    --c-money: #9085e9; --c-money-ink: #0b0b0b;
+    --c-disagree: #d95926; --c-disagree-ink: #0b0b0b;
     color-scheme: dark;
   }
 }
@@ -525,14 +541,53 @@ html { scrollbar-color: var(--frame) var(--paper); }
 .meter-name span { font-size: var(--t-sm); color: var(--ink-2); }
 .segbar { display: flex; gap: var(--s3); }
 .seggroup { display: flex; gap: 2px; min-width: 0; }
-.seg { position: relative; flex: 1 1 0; min-width: 4px; height: 18px; border-radius: 4px; background: var(--teal); }
-.seg.fail { background: var(--brick); }
-.seg:hover, .seg:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
-.seg[data-tip]:hover::after, .seg[data-tip]:focus-visible::after {
-  content: attr(data-tip); position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); z-index: 4;
-  width: max-content; max-width: 22rem; white-space: normal; background: var(--ink); color: var(--paper);
-  font-size: var(--t-xs); font-weight: 500; line-height: 1.4; padding: 5px 9px; border-radius: 6px; pointer-events: none;
+/* a mark is one result. Its fill is its kind of trouble (the --c-* tokens); a red line or a wrong build has no kind and takes the pass colour.
+   The tick or cross inside says pass or fail, so colour never carries that alone. A failing mark is brick with a ring. */
+.k-normal { --k: var(--c-normal); --k-ink: var(--c-normal-ink); }
+.k-no { --k: var(--c-no); --k-ink: var(--c-no-ink); }
+.k-late { --k: var(--c-late); --k-ink: var(--c-late-ink); }
+.k-twice { --k: var(--c-twice); --k-ink: var(--c-twice-ink); }
+.k-money { --k: var(--c-money); --k-ink: var(--c-money-ink); }
+.k-disagree { --k: var(--c-disagree); --k-ink: var(--c-disagree-ink); }
+.seg {
+  --glyph-check: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E");
+  --glyph-cross: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M18 6 6 18'/%3E%3Cpath d='m6 6 12 12'/%3E%3C/svg%3E");
+  display: flex; align-items: center; justify-content: center; gap: 6px; flex: 1 1 0; min-width: 4px; height: 26px; border-radius: 5px;
+  background: var(--k, var(--teal)); color: var(--k-ink, var(--on-teal)); font-size: var(--t-xs); font-weight: 600; text-decoration: none;
+  overflow: hidden; white-space: nowrap; transition: opacity .15s ease-out, transform .12s ease-out;
 }
+.seg::before { content: ""; width: 12px; height: 12px; flex: none; background: currentColor; -webkit-mask: var(--glyph-check) center / contain no-repeat; mask: var(--glyph-check) center / contain no-repeat; }
+.seg.count::before { display: none; }
+.seg.fail { --k: var(--brick); --k-ink: var(--on-brick); box-shadow: 0 0 0 2px var(--paper), 0 0 0 4px var(--brick); }
+.seg.fail::before { -webkit-mask-image: var(--glyph-cross); mask-image: var(--glyph-cross); }
+.seg span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.seg:hover, .seg:focus-visible { transform: translateY(-2px); outline: 2px solid var(--ink); outline-offset: 2px; }
+/* the legend: what each colour means, for all three rows. Pointing at one dims every other mark. */
+.kinds { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s5); list-style: none; margin: 0; padding: 0; font-size: var(--t-sm); color: var(--ink-2); }
+.kinds li { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; margin: 0 -8px; border-radius: 6px; cursor: default; }
+.kinds li:hover, .kinds li:focus-visible { background: var(--band); }
+.kinds li:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.key-note { margin: var(--s2) 0 0; font-size: var(--t-xs); color: var(--ink-3); }
+.kinds i, .flow-kind i, .tip-kind i { display: inline-block; flex: none; width: 10px; height: 10px; border-radius: 3px; background: var(--k); }
+.glance:has(.kinds .k-normal:is(:hover, :focus-visible)) .seg:not(.k-normal),
+.glance:has(.kinds .k-no:is(:hover, :focus-visible)) .seg:not(.k-no),
+.glance:has(.kinds .k-late:is(:hover, :focus-visible)) .seg:not(.k-late),
+.glance:has(.kinds .k-twice:is(:hover, :focus-visible)) .seg:not(.k-twice),
+.glance:has(.kinds .k-money:is(:hover, :focus-visible)) .seg:not(.k-money),
+.glance:has(.kinds .k-disagree:is(:hover, :focus-visible)) .seg:not(.k-disagree) { opacity: 0.18; }
+/* the card shown when a mark is hovered or focused; the page places it, so no panel can cut it off */
+.tip { position: fixed; left: 0; top: 0; z-index: 40; display: grid; gap: 6px; width: max-content; max-width: min(28rem, calc(100vw - 16px)); padding: var(--s3) var(--s4); border: 1px solid var(--frame); border-radius: 10px; background: var(--paper); box-shadow: var(--shadow); font-size: var(--t-sm); line-height: 1.45; pointer-events: none; }
+.tip[hidden] { display: none; }
+.tip p { margin: 0; }
+.tip-name { font-size: var(--t-body); font-weight: 600; }
+.tip-kind { display: inline-flex; align-items: center; gap: 6px; font-size: var(--t-xs); color: var(--ink-2); }
+.tip-line { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr); gap: var(--s3); padding-top: 6px; border-top: 1px solid var(--rule); color: var(--ink-2); }
+.tip-line span:first-child { font-size: var(--t-xs); font-weight: 600; color: var(--ink-3); }
+.tip-result { font-size: var(--t-xs); font-weight: 600; }
+.tip-result.ok { color: var(--teal); }
+.tip-result.bad { color: var(--brick); }
+@media (max-width: 700px) { .seg::before, .seg span { display: none; } }
+@media (prefers-reduced-motion: reduce) { .seg { transition: none; } .seg:hover, .seg:focus-visible { transform: none; } }
 .segkey { display: flex; gap: var(--s3); margin-top: 6px; font-size: var(--t-xs); color: var(--ink-3); }
 .segkey span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .segkey b { color: var(--ink-2); font-weight: 600; margin-left: 4px; }
@@ -545,6 +600,11 @@ html { scrollbar-color: var(--frame) var(--paper); }
 .flow-head { border-top: 0; padding: 0 0 var(--s2); font-size: var(--t-xs); font-weight: 600; color: var(--ink-3); }
 .flow-head .lane-dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
 .flow-name { font-weight: 600; font-size: var(--t-sm); }
+.flow-who { display: grid; gap: 3px; min-width: 0; }
+.flow-kind { display: inline-flex; align-items: center; gap: 6px; font-size: var(--t-xs); color: var(--ink-3); }
+/* a mark above links to its row; the row it lands on is washed, and stops below the sticky header */
+.flow, .board-col li { scroll-margin-top: calc(72px + var(--s5)); }
+.flow:target, .board-col li:target { background: var(--select); box-shadow: -12px 0 0 var(--select), 12px 0 0 var(--select); }
 .node { margin: 0; padding: 7px 11px; border: 1px solid var(--frame); border-radius: 8px; background: var(--paper); font-size: var(--t-sm); line-height: 1.45; }
 .node.told { color: var(--ink-2); background: var(--hover); }
 .arrow { display: grid; place-items: center; color: var(--ink-3); }
@@ -555,7 +615,7 @@ html { scrollbar-color: var(--frame) var(--paper); }
 .board-col h3 { font-size: var(--t-sm); font-weight: 600; margin-bottom: var(--s2); }
 .board-col ul { list-style: none; margin: 0; padding: 0; }
 .board-col li { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; gap: var(--s3); align-items: baseline; padding: var(--s2) 0; border-top: 1px solid var(--rule); font-size: var(--t-sm); }
-.board-col .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--teal); align-self: center; }
+.board-col .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--k, var(--teal)); align-self: center; }
 .board-col li.bad .dot { background: var(--brick); }
 .board-col li b { font-weight: 600; color: var(--teal); }
 .board-col li.bad b { color: var(--brick); }

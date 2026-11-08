@@ -40,6 +40,7 @@ ORLANDO = "fac_NSorlando01"
 class Row:
     module: str
     name: str
+    trouble: str
     fms: str
     gatehouse: str
     told: str
@@ -50,12 +51,15 @@ class Row:
 class RedLine:
     module: str
     line: str
+    trouble: str
     count: int
 
 
 @dataclass
 class Control:
     name: str
+    short: str
+    trouble: str
     broken: str
     caught: bool
 
@@ -236,7 +240,7 @@ def access_scenarios(url: str) -> tuple[list[Row], dict[str, int], int]:
     open_ = items(session)
     tasks = run.tasks("lease_WhitB1042")
     ok = [(w.kind, w.subject_id) for w in open_] == [(NOT_RESTORED, "lease_WhitB1042")] and len(tasks) == 1
-    rows.append(Row("Access", "Paid, still locked", "the ledger shows the money; the October overlock is still recorded",
+    rows.append(Row("Access", "Paid, still locked", "disagree", "the ledger shows the money; the October overlock is still recorded",
                     f"{len(open_)} item, {len(tasks)} FMS task after three passes", "Facility manager: check the lock", ok))
     # 2. staff mark the task done without taking the lock off; then they take it off
     if tasks:
@@ -249,7 +253,7 @@ def access_scenarios(url: str) -> tuple[list[Row], dict[str, int], int]:
     tally.reconcile(session, adapter, facility)
     closed = items(session, "closed")
     ok = still_open and len(closed) == 1 and closed[0].verification == CLOSED_BY
-    rows.append(Row("Access", "Task marked done, lock still on", "the task is COMPLETED; Locks Search still shows the lock, later not",
+    rows.append(Row("Access", "Task marked done, lock still on", "disagree", "the task is COMPLETED; Locks Search still shows the lock, later not",
                     "open while the lock was recorded; closed as FMS access reconciled once it was gone",
                     "Physical outcome not verified", ok))
     # 3. a returned payment leaves a unit past the rule with no lock
@@ -260,7 +264,7 @@ def access_scenarios(url: str) -> tuple[list[Row], dict[str, int], int]:
     writes_before = tally.access_writes
     tally.reconcile(session, adapter, facility)
     ok = [(w.kind, w.subject_id) for w in items(session)] == [(MISSING, "lease_BellC0207")] and tally.access_writes == writes_before
-    rows.append(Row("Access", "Payment came back, no lock", "the return puts the unit past a 30-day rule; no lock recorded",
+    rows.append(Row("Access", "Payment came back, no lock", "money", "the return puts the unit past a 30-day rule; no lock recorded",
                     "flagged for a person; no code or lock changed", "Facility manager: decide on an overlock", ok))
     # 4. a lost answer to the task request
     session, adapter, facility = run.start()
@@ -269,7 +273,7 @@ def access_scenarios(url: str) -> tuple[list[Row], dict[str, int], int]:
     tally.reconcile(session, adapter, facility, passes=3)
     tasks = run.tasks("lease_WhitB1042")
     ok = len(tasks) == 1 and items(session)[0].task_state == "created"
-    rows.append(Row("Access", "Task answer lost", "makes the task, then the answer breaks", f"found it by its marker; {len(tasks)} task in the FMS",
+    rows.append(Row("Access", "Task answer lost", "late", "makes the task, then the answer breaks", f"found it by its marker; {len(tasks)} task in the FMS",
                     "Facility manager: one task", ok))
     # 5. no rule recorded: nothing is judged, but the red lines that apply are still counted
     run.sim("/sim/reset")
@@ -283,7 +287,7 @@ def access_scenarios(url: str) -> tuple[list[Row], dict[str, int], int]:
     tally.reconcile(session, adapter, facility, judged=False)
     kinds = [(w.kind, w.subject_type) for w in items(session)]
     ok = kinds == [("access_review_required", "facility")] and not run.tasks("lease_WhitB1042")
-    rows.append(Row("Access", "No rule recorded", "a paid unit is still locked, but the facility has no stated rule",
+    rows.append(Row("Access", "No rule recorded", "disagree", "a paid unit is still locked, but the facility has no stated rule",
                     "one review item; no verdict and no task", "Operations manager: record the rule", ok))
     return rows, tally.totals, tally.access_writes
 
@@ -366,7 +370,7 @@ def sales_scenarios(url: str) -> tuple[list[Row], dict[str, int], int]:
     tally.reconcile(session, adapter, facility, passes=3)
     listed, tasks = sale_items(session, sales.LISTED_PAID), sale_tasks(run, "lease_WhitB1042")
     ok = len(listed) == 1 and len(tasks) == 1
-    rows.append(Row("Lien sales", "Paid, sale still listed", "the ledger shows nothing owed; auctions/search still lists the sale",
+    rows.append(Row("Lien sales", "Paid, sale still listed", "disagree", "the ledger shows nothing owed; auctions/search still lists the sale",
                     f"{len(listed)} urgent item, {len(tasks)} FMS task after three passes", "Collections lead: cancel it or say why", ok))
     if tasks:
         run.sim("/sim/tasks/complete", {"taskId": tasks[0]["taskId"]})
@@ -377,14 +381,14 @@ def sales_scenarios(url: str) -> tuple[list[Row], dict[str, int], int]:
     closed = sale_items(session, sales.LISTED_PAID, state="closed")
     outside_open = bool(sale_items(session, sales.OUTSIDE))
     ok = still and len(closed) == 1 and closed[0].verification == sales.CANCELLED_BY and outside_open
-    rows.append(Row("Lien sales", "Task marked done, sale still listed", "the task is COMPLETED; the sale is cancelled later",
+    rows.append(Row("Lien sales", "Task marked done, sale still listed", "disagree", "the task is COMPLETED; the sale is cancelled later",
                     "open while listed; closed as FMS lien cancellation verified; the outside listing stays open",
                     "The outside site is a separate check", ok))
     run.sim("/sim/listings/withdraw", {"leaseId": "lease_WhitB1042"})
     tally.reconcile(session, adapter, facility)
     out = sale_items(session, sales.OUTSIDE, state="closed")
     ok = len(out) == 1 and out[0].verification == FEED_CONFIRMED
-    rows.append(Row("Lien sales", "Outside listing withdrawn", "the outside site's feed reports the listing withdrawn",
+    rows.append(Row("Lien sales", "Outside listing withdrawn", "disagree", "the outside site's feed reports the listing withdrawn",
                     "closed on that feed, not on the FMS cancellation", "Front desk: nothing more", ok))
 
     # 2. the payment comes back before anyone cancels
@@ -396,7 +400,7 @@ def sales_scenarios(url: str) -> tuple[list[Row], dict[str, int], int]:
     tally.reconcile(session, adapter, facility, passes=2)
     review = sale_items(session, sales.BALANCE_CHANGED)
     ok = len(review) == 1 and not sale_items(session, sales.LISTED_PAID) and len(sale_tasks(run, "lease_BellC0207")) == 1
-    rows.append(Row("Lien sales", "Payment came back before cancelling", "the full payment is returned; the sale is still listed",
+    rows.append(Row("Lien sales", "Payment came back before cancelling", "money", "the full payment is returned; the sale is still listed",
                     "the same item moves to review; its task is marked as resting on the older reading; no second task",
                     "Collections lead: reassess the sale", ok))
 
@@ -407,7 +411,7 @@ def sales_scenarios(url: str) -> tuple[list[Row], dict[str, int], int]:
     tally.reconcile(session, adapter, facility)
     after = sale_items(session, sales.AFTER_NOTICE)
     ok = len(after) == 1 and not sale_items(session, sales.LISTED_PAID) and not sale_tasks(run, "lease_OkfrE0505")
-    rows.append(Row("Lien sales", "Payment after the notice, balance left", "$50 paid after the notice; $115 still owed; still listed",
+    rows.append(Row("Lien sales", "Payment after the notice, balance left", "money", "$50 paid after the notice; $115 still owed; still listed",
                     "a review item for a person and counsel; no cancellation task and no conclusion", "Collections lead, with counsel", ok))
 
     # 4. nothing owed because of a credit, not a payment
@@ -417,7 +421,7 @@ def sales_scenarios(url: str) -> tuple[list[Row], dict[str, int], int]:
     tally.reconcile(session, adapter, facility)
     listed = sale_items(session, sales.LISTED_PAID)
     ok = len(listed) == 1 and "does not call it a tenant payment" in listed[0].problem
-    rows.append(Row("Lien sales", "Nothing owed after a credit", "a credit clears the balance; no payment since the notice",
+    rows.append(Row("Lien sales", "Nothing owed after a credit", "money", "a credit clears the balance; no payment since the notice",
                     "urgent item that says no payment was found", "Collections lead: check why", ok))
 
     # 5. a sale already settled on an account with nothing owed
@@ -429,7 +433,7 @@ def sales_scenarios(url: str) -> tuple[list[Row], dict[str, int], int]:
     tally.reconcile(session, adapter, facility)
     settled = sale_items(session, sales.SETTLED_REVIEW)
     ok = len(settled) == 1 and not sale_items(session, sales.LISTED_PAID)
-    rows.append(Row("Lien sales", "Sold, account paid", "the FMS records the sale SOLD; the ledger shows nothing owed",
+    rows.append(Row("Lien sales", "Sold, account paid", "disagree", "the FMS records the sale SOLD; the ledger shows nothing owed",
                     "urgent review that claims no order between the sale and the payment", "Manager, with counsel", ok))
 
     # 6. the ledger cannot be read
@@ -450,7 +454,7 @@ def sales_scenarios(url: str) -> tuple[list[Row], dict[str, int], int]:
     tally.reconcile(session, LedgerDown(), facility)
     after = sale_items(session, sales.AFTER_NOTICE)
     ok = len(after) == 1 and "Not freshly verified" in (after[0].note or "")
-    rows.append(Row("Lien sales", "Ledger read fails", "ledgers/search times out", "the item stays open, marked not freshly verified",
+    rows.append(Row("Lien sales", "Ledger read fails", "no", "ledgers/search times out", "the item stays open, marked not freshly verified",
                     "Nothing is decided on an old reading", ok))
 
     # 7. the answer to the task request is lost
@@ -461,7 +465,7 @@ def sales_scenarios(url: str) -> tuple[list[Row], dict[str, int], int]:
     tally.reconcile(session, adapter, facility, passes=3)
     listed, tasks = sale_items(session, sales.LISTED_PAID), sale_tasks(run, "lease_WhitB1042")
     ok = len(tasks) == 1 and len(listed) == 1 and listed[0].task_state == "created"
-    rows.append(Row("Lien sales", "Task answer lost", "makes the task, then the answer breaks", f"found it by its marker; {len(tasks)} task",
+    rows.append(Row("Lien sales", "Task answer lost", "late", "makes the task, then the answer breaks", f"found it by its marker; {len(tasks)} task",
                     "Collections lead: one task", ok))
 
     # 8. a sale time that happens twice when the clocks go back
@@ -471,7 +475,7 @@ def sales_scenarios(url: str) -> tuple[list[Row], dict[str, int], int]:
     tally.reconcile(session, adapter, facility)
     listed = sale_items(session, sales.LISTED_PAID)
     ok = len(listed) == 1 and listed[0].observed.get("sale_at") is None and bool(listed[0].observed.get("sale_time_problem"))
-    rows.append(Row("Lien sales", "Sale time on a clock change", "1:30 AM on the night the clocks go back",
+    rows.append(Row("Lien sales", "Sale time on a clock change", "disagree", "1:30 AM on the night the clocks go back",
                     "the time is refused, not guessed; the item still opens", "The page says the time could not be worked out", ok))
     return rows, tally.totals, tally.sale_writes
 
@@ -488,7 +492,7 @@ def control_sale_task_closes(url: str) -> Control:
     item.state, item.verification = "closed", sales.CANCELLED_BY            # what the wrong build would do
     session.commit()
     caught = sales_red_lines(session, url)["a sale item closed while the FMS does not show that auction and lease cancelled"] > 0
-    return Control("A build that closes a sale item when its task is marked done",
+    return Control("A build that closes a sale item when its task is marked done", "Closes a sale item", "disagree",
                    "calls the lien cancelled while the FMS still lists the sale", caught)
 
 
@@ -509,7 +513,7 @@ def control_sale_cancelled_by_gatehouse(url: str) -> Control:
         tally.reconcile(session, adapter, facility)
     finally:
         sales.reconcile_sales = real
-    return Control("A build that cancels a sale itself", "sends cancel-lien to the FMS through its own client", tally.sale_writes > 0)
+    return Control("A build that cancels a sale itself", "Cancels a sale itself", "disagree", "sends cancel-lien to the FMS through its own client", tally.sale_writes > 0)
 
 
 def control_outside_from_fms(url: str) -> Control:
@@ -525,7 +529,7 @@ def control_outside_from_fms(url: str) -> Control:
     item.state, item.verification = "closed", FEED_CONFIRMED                 # what the wrong build would do
     session.commit()
     caught = sales_red_lines(session, url)["an outside listing closed without that site's own feed reporting it withdrawn"] > 0
-    return Control("A build that takes the FMS cancellation as the outside listing's withdrawal",
+    return Control("A build that takes the FMS cancellation as the outside listing's withdrawal", "Closes the outside listing", "disagree",
                    "closes the outside listing when the FMS shows the lien cancelled", caught)
 
 
@@ -567,7 +571,7 @@ def payment_rows(url: str) -> tuple[list[Row], int, int]:
     try:
         for fn in scenarios.SCENARIOS:
             desk, told, passed = fn(run)
-            rows.append(Row("Payments", fn.title, fn.fms, desk, told, passed))
+            rows.append(Row("Payments", fn.title, fn.trouble, fn.fms, desk, told, passed))
             duplicates += max(0, card_charges(url, scenarios.DANA) - EXPECTED_CARD_CHARGES[fn.title])
     finally:
         scenarios.tenant_message = original
@@ -584,7 +588,7 @@ def control_retry(url: str) -> Control:
     PaymentService(session, adapter).take_payment(case.id, scenarios.DANA_CARD, Authorization.new(True, 24000, 24000))
     adapter.make_payment(scenarios.DANA, scenarios.DANA_CARD, 24000)          # what the wrong build would do
     caught = card_charges(url, scenarios.DANA) - EXPECTED_CARD_CHARGES["Response lost after charging"] > 0
-    return Control("A build that resends a payment whose answer was lost",
+    return Control("A build that resends a payment whose answer was lost", "Resends a payment", "late",
                    "sends the same $240.00 again after the first answer was lost", caught)
 
 
@@ -600,8 +604,29 @@ def control_task_closes(url: str) -> Control:
     item.state, item.verification = "closed", CLOSED_BY                       # what the wrong build would do
     session.commit()
     caught = access_red_lines(session, adapter)["an access item closed while Locks Search still shows the operator lock"] > 0
-    return Control("A build that closes an access item when its task is marked done",
+    return Control("A build that closes an access item when its task is marked done", "Closes an access item", "disagree",
                    "closes the item as reconciled while the FMS still records the lock", caught)
+
+
+# What each red line guards against, as a kind of trouble (desk/wording.py TROUBLES). The two lines about requests Gatehouse could make
+# belong to "disagree": when the records disagree, the tempting fix is to change the FMS directly, and the desk only reads and asks for tasks.
+GUARDS = {
+    "a duplicate charge": "twice",
+    "a tenant told a payment was applied without FMS proof": "late",
+    "an access item closed while Locks Search still shows the operator lock": "disagree",
+    "a physical outcome labeled verified": "disagree",
+    "a mismatch (lock, missing lock or gate code) left without a work item after a pass": "disagree",
+    "a request from Gatehouse that could change access (anything but a read or a task)": "disagree",
+    "a sale item closed while the FMS does not show that auction and lease cancelled": "disagree",
+    "an outside listing closed without that site's own feed reporting it withdrawn": "disagree",
+    "a zero balance with no payment since the notice described as a tenant payment": "money",
+    "a settled sale shown with an order between the sale and the payments": "disagree",
+    "a request from Gatehouse that could change a sale (cancel, settle or complete)": "disagree",
+}
+
+
+def red_line(module: str, line: str, count: int) -> RedLine:
+    return RedLine(module, line, GUARDS[line], count)
 
 
 def evaluate(url: str) -> Report:
@@ -610,15 +635,15 @@ def evaluate(url: str) -> Report:
     report.rows.extend(rows)
     access_rows, access_totals, access_writes = access_scenarios(url)
     report.rows.extend(access_rows)
-    report.red_lines += [RedLine("Payments", "a duplicate charge", duplicates),
-                         RedLine("Payments", "a tenant told a payment was applied without FMS proof", applied_without_proof)]
-    report.red_lines += [RedLine("Access", line, n) for line, n in access_totals.items()]
-    report.red_lines.append(RedLine("Access", "a request from Gatehouse that could change access (anything but a read or a task)",
+    report.red_lines += [red_line("Payments", "a duplicate charge", duplicates),
+                         red_line("Payments", "a tenant told a payment was applied without FMS proof", applied_without_proof)]
+    report.red_lines += [red_line("Access", line, n) for line, n in access_totals.items()]
+    report.red_lines.append(red_line("Access", "a request from Gatehouse that could change access (anything but a read or a task)",
                                     access_writes))
     sale_rows, sale_totals, sale_writes = sales_scenarios(url)
     report.rows.extend(sale_rows)
-    report.red_lines += [RedLine("Lien sales", line, n) for line, n in sale_totals.items()]
-    report.red_lines.append(RedLine("Lien sales", "a request from Gatehouse that could change a sale (cancel, settle or complete)",
+    report.red_lines += [red_line("Lien sales", line, n) for line, n in sale_totals.items()]
+    report.red_lines.append(red_line("Lien sales", "a request from Gatehouse that could change a sale (cancel, settle or complete)",
                                     sale_writes))
     report.controls += [control_retry(url), control_task_closes(url), control_sale_task_closes(url), control_outside_from_fms(url),
                         control_sale_cancelled_by_gatehouse(url)]
