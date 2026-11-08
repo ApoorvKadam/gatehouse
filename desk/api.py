@@ -121,7 +121,8 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
             except Exception:
                 # the pages still work without it; they just do not show the simulator's own record
                 log.exception("could not save the simulator's record of the seeded payments")
-    worker = Worker(factory, adapter, settings.reconcile_every_seconds, run_id=settings.run_id, feed_url=settings.marketplace_url)
+    worker = Worker(factory, adapter, settings.reconcile_every_seconds, run_id=settings.run_id, feed_url=settings.marketplace_url,
+                    text_numbers=settings.text_numbers)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -254,11 +255,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
             raise HTTPException(422, f"not an SMS Received payload: {exc}") from exc
         if text.facility_provider_id is not None:
             check_facility(session, text.facility_provider_id)
-        try:
-            row = receive_text(session, text, settings.text_numbers)
-        except LookupError as exc:
-            # a non-200 makes Cubby try again, which is right: this facility will be read soon
-            raise HTTPException(503, str(exc)) from exc
+        row = receive_text(session, text, settings.text_numbers)
         if row is not None and row.facility_id is not None:
             try:
                 match_pending(session, adapter, session.get(Facility, row.facility_id))

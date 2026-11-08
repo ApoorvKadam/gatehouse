@@ -100,7 +100,8 @@ def register(app: FastAPI, db, caller, ok, iso, ApiError, customer_json) -> None
                 c.sms_carrier_stop = True
             elif word in START_WORDS:
                 c.sms_carrier_stop = False
-        # Cubby names the tenant only when the number belongs to a customer with a lease
+        # Cubby names the tenant only when the number belongs to a customer with an active lease. Every lease in the simulator
+        # is active, because it has no move-outs.
         tenant = next((c for c in owners if session.scalar(select(Lease.lease_id).where(Lease.customer_id == c.customer_id).limit(1))), None)
         message = TextMessage(message_id=carrier_id(), facility_id=facility.facility_id, customer_id=tenant.customer_id if tenant else None,
                               direction="INBOUND", phone=number, body=text, status="RECEIVED")

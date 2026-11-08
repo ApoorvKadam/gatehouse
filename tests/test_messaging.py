@@ -18,8 +18,8 @@ from desk.api import create_app
 from desk.cases import sync_facility
 from desk.config import Settings
 from desk.db import bind_to_fms, make_session_factory, utcnow
-from desk.messaging import (SMS_LIMIT, can_text, decide, e164, hold_stranded, inbox, match_pending, receive_text, send_text,
-                            unrouted)
+from desk.messaging import (SMS_LIMIT, can_text, decide, e164, file_unrouted, hold_stranded, inbox, match_pending, receive_text,
+                            send_text, unrouted)
 from desk.models import Facility, InboundMessage, OutboundMessage
 from desk.worker import run_once
 
@@ -142,10 +142,16 @@ def test_a_payload_that_is_not_an_sms_received_webhook_is_refused(sim, adapter):
     assert adapter.inbound_text({**good, "facilityId": None}).facility_provider_id is None      # null is how Cubby says "several"
 
 
-def test_a_text_for_a_facility_the_desk_has_not_read_is_refused_so_cubby_tries_again(sim, adapter, session):
-    with pytest.raises(LookupError):
-        arrive(session, adapter, texts_in(sim, DANA, "hello"))
-    assert session.scalars(select(InboundMessage)).all() == []
+def test_a_text_for_a_facility_the_desk_has_not_read_yet_is_kept_and_filed_when_it_is(sim, adapter, session):
+    m = arrive(session, adapter, texts_in(sim, DANA, "hello"))
+    assert m is not None and m.facility_id is None and m.match_state == "unrouted" and "has not been read yet" in m.match_note
+    assert file_unrouted(session) == 0                                    # still not read
+    sync_facility(session, adapter, ORLANDO)
+    assert file_unrouted(session) == 1
+    desk = session.scalar(select(Facility).where(Facility.provider_id == ORLANDO))
+    session.refresh(m)
+    assert (m.facility_id, m.match_state, m.match_note) == (desk.id, "pending", None)
+    assert match_pending(session, adapter, desk) == 1 and m.match_state == "matched"
 
 
 def test_a_text_from_a_number_shared_by_several_facilities_is_kept_unrouted_until_the_operator_says_which_is_which(sim, adapter, session, desk):
@@ -156,9 +162,12 @@ def test_a_text_from_a_number_shared_by_several_facilities_is_kept_unrouted_unti
     assert match_pending(session, adapter, desk) == 0 and inbox(session, desk) == []
     [listed] = unrouted(session)
     assert listed["from"] == DANA and listed["to"] == "+14075550100" and "DESK_TEXT_NUMBERS" in listed["note"]
-    # with the number set to a facility, the next such text is filed under it
+    # with the number set to a facility, the next such text is filed under it, and so is the one that was waiting
     filed = receive_text(session, adapter.inbound_text({**shared, "messageId": "SM-other"}), {"(407) 555-0100": ORLANDO})
     assert filed is not None and filed.facility_id == desk.id and filed.match_state == "pending"
+    assert file_unrouted(session, {"(407) 555-0100": ORLANDO}) == 1 and unrouted(session) == []
+    session.refresh(m)
+    assert (m.facility_id, m.match_state) == (desk.id, "pending")
 
 
 # ---------------------------------------------------------------- whose number it is
@@ -415,9 +424,16 @@ def test_the_webhook_receiver_needs_the_shared_secret_and_a_real_payload(fms_url
     assert webhook(api, payload).json() == {"stored": False}                  # Cubby delivered it twice
     assert len(api.get(f"/api/facilities/{ORLANDO}/inbox").json()["messages"]) == 1
 
-    # a facility of another operator is not this desk's, and one this desk has not read yet is asked to be tried again
+    # a facility of another operator is not this desk's; one this desk has not read yet is kept and filed once it is
     assert webhook(api, {**texts_in(sim, DANA, "hi"), "facilityId": "fac_HBtampa0001"}).status_code == 404
-    assert webhook(api, {**texts_in(sim, DANA, "hi"), "facilityId": "fac_NSalbany001"}).status_code == 503
+    assert webhook(api, {**texts_in(sim, DANA, "hi"), "facilityId": "fac_NSalbany001"}).json() == {"stored": True}
+    [waiting] = api.get("/api/inbox/unrouted").json()["messages"]
+    assert "has not been read yet" in waiting["note"]
+    assert api.post("/api/facilities/fac_NSalbany001/sync").status_code == 200
+    with api.app.state.session_factory() as s:
+        assert file_unrouted(s) == 1
+    assert api.get("/api/inbox/unrouted").json() == {"messages": []}
+    assert [m["from"] for m in api.get("/api/facilities/fac_NSalbany001/inbox").json()["messages"]] == [DANA]
 
 
 def test_a_desk_without_a_webhook_token_refuses_every_webhook(fms_url, sim):
@@ -537,3 +553,30 @@ def test_a_shared_number_is_filed_by_the_receiving_number_or_listed_as_unrouted(
         assert waiting["from"] == DANA and "DESK_TEXT_NUMBERS" in waiting["note"]
         reply = unset.post(f"/api/inbox/{waiting['id']}/reply", json={"text": "Hi.", "staff": "J. Ortiz", "request_id": "reply-0004"})
         assert reply.status_code == 404                                   # no facility to answer from
+
+
+def test_one_request_id_cannot_stand_for_two_different_texts(fms_url, sim, adapter, session, desk):
+    first = matched(session, adapter, desk, sim, DANA, "I paid, so why is B-1042 on the auction list?")
+    arrive(session, adapter, texts_in(sim, DANA, "And is my gate code still on?"))
+    second = session.scalars(select(InboundMessage).where(InboundMessage.body.like("And is%"))).one()
+    reply = send_text(session, adapter, desk, "cust_DanaWhit01", "We are looking at it now.", "front desk", reply_to=first, request_id="reply-0005")
+    assert reply.state == "sent"
+    # the same words under the same id, for the other message, are a mistake and nothing is sent
+    with pytest.raises(ValueError):
+        send_text(session, adapter, desk, "cust_DanaWhit01", "We are looking at it now.", "front desk", reply_to=second, request_id="reply-0005")
+    assert len(went_out(fms_url)) == 1 and session.scalars(select(OutboundMessage)).all() == [reply]
+
+
+def test_the_worker_files_a_waiting_text_once_the_operator_has_set_its_number(fms_url, sim, adapter):
+    factory = make_session_factory("sqlite:///:memory:")
+    bind_to_fms(factory, adapter, fms_url)
+    with factory() as s:
+        sync_facility(s, adapter, ORLANDO)
+        arrive(s, adapter, {**texts_in(sim, DANA, "hello"), "facilityId": None})
+        assert s.scalar(select(InboundMessage.match_state)) == "unrouted"
+    run_once(factory, adapter)                                                                  # no number set: still waiting
+    with factory() as s:
+        assert s.scalar(select(InboundMessage.match_state)) == "unrouted"
+    run_once(factory, adapter, text_numbers={"+14075550100": ORLANDO})
+    with factory() as s:
+        assert s.scalar(select(InboundMessage.match_state)) == "matched"

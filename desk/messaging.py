@@ -65,24 +65,25 @@ def full_name(customer: ProviderCustomer | None) -> str | None:
 
 def receive_text(session: Session, text: InboundText, routes: Mapping[str, str] | None = None) -> InboundMessage | None:
     """Keep one text from Cubby's webhook. None when it is already kept. The facility is the one the webhook names, or the one
-    `routes` gives for the receiving number (Cubby leaves it out when a number serves several facilities); with neither, the
-    text is kept as unrouted. Raises LookupError when the facility is not one this desk has read yet, so the sender tries again."""
+    `routes` gives for the receiving number (Cubby leaves it out when a number serves several facilities). With no facility, or
+    one the desk has not read yet, the text is still kept, as unrouted, and filed later by file_unrouted."""
     if session.scalar(select(InboundMessage.id).where(InboundMessage.provider_message_id == text.message_id)) is not None:
         return None
-    facility_id = text.facility_provider_id or {e164(k): v for k, v in (routes or {}).items()}.get(e164(text.to))
-    facility = None
-    if facility_id is not None:
-        facility = session.scalar(select(Facility).where(Facility.provider_id == facility_id))
-        if facility is None:
-            raise LookupError(f"facility {facility_id} has not been read yet")
+    named = text.facility_provider_id or {e164(k): v for k, v in (routes or {}).items()}.get(e164(text.to))
+    facility = session.scalar(select(Facility).where(Facility.provider_id == named)) if named else None
+    if facility is not None:
+        note = None
+    elif named:
+        note = f"Facility {named} has not been read yet. The text is filed when it is."
+    else:
+        note = f"No facility is set for the receiving number {text.to}; see DESK_TEXT_NUMBERS."
     # a time in the future is not believable, and the order of texts decides who has asked to stop: the desk's own clock is
     # the limit, so a text dated tomorrow can never outrank a STOP that really came after it
     received_at = min(text.received_at, utcnow())
     row = InboundMessage(
-        facility_id=facility.id if facility else None, provider_message_id=text.message_id, phone=text.sender,
-        phone_key=e164(text.sender), to_number=text.to or None, body=text.body, received_at=received_at,
-        match_state="pending" if facility else "unrouted",
-        match_note=None if facility else f"No facility is set for the receiving number {text.to or '(none given)'}; see DESK_TEXT_NUMBERS.",
+        facility_id=facility.id if facility else None, facility_provider_id=named, provider_message_id=text.message_id,
+        phone=text.sender, phone_key=e164(text.sender), to_number=text.to, body=text.body, received_at=received_at,
+        match_state="pending" if facility else "unrouted", match_note=note,
         customer_provider_id=text.customer.provider_id if text.customer else None, customer_name=full_name(text.customer))
     session.add(row)
     try:
@@ -91,6 +92,21 @@ def receive_text(session: Session, text: InboundText, routes: Mapping[str, str] 
         session.rollback()          # the same text was delivered a second time at the same moment
         return None
     return row
+
+
+def file_unrouted(session: Session, routes: Mapping[str, str] | None = None) -> int:
+    """File the kept texts that have no facility yet: the desk has read the facility since, or the operator has since set
+    a facility for the receiving number. A filed text is then matched like any other."""
+    mapped = {e164(k): v for k, v in (routes or {}).items()}
+    filed = 0
+    for m in session.scalars(select(InboundMessage).where(InboundMessage.facility_id.is_(None), InboundMessage.match_state == "unrouted")):
+        named = m.facility_provider_id or mapped.get(e164(m.to_number))
+        facility = session.scalar(select(Facility).where(Facility.provider_id == named)) if named else None
+        if facility is not None:
+            m.facility_id, m.facility_provider_id, m.match_state, m.match_note = facility.id, facility.provider_id, "pending", None
+            filed += 1
+    session.commit()
+    return filed
 
 
 @dataclass(frozen=True)
@@ -206,8 +222,11 @@ def can_text(session: Session, facility: Facility, customer: ProviderCustomer | 
 # ---------------------------------------------------------------- outbound
 
 
-def _same_request(earlier: OutboundMessage, customer_provider_id: str | None, body: str) -> OutboundMessage:
-    if (earlier.customer_provider_id, earlier.body) != (customer_provider_id, body):
+def _same_request(earlier: OutboundMessage, facility: Facility, reply_to: InboundMessage | None, customer_provider_id: str | None,
+                  body: str) -> OutboundMessage:
+    """A request id names one text to one tenant about one message. The same id for anything else is a mistake, not a retry."""
+    asked = (facility.id, reply_to.id if reply_to is not None else None, customer_provider_id, body)
+    if (earlier.facility_id, earlier.inbound_id, earlier.customer_provider_id, earlier.body) != asked:
         raise ValueError("this request id was already used for a different text")
     return earlier
 
@@ -223,7 +242,7 @@ def send_text(session: Session, adapter: FMSAdapter, facility: Facility, custome
     if request_id:
         earlier = session.scalar(select(OutboundMessage).where(OutboundMessage.request_id == request_id))
         if earlier is not None:
-            return _same_request(earlier, customer_provider_id, body)
+            return _same_request(earlier, facility, reply_to, customer_provider_id, body)
     customer = None
     if customer_provider_id:
         try:
@@ -242,7 +261,7 @@ def send_text(session: Session, adapter: FMSAdapter, facility: Facility, custome
     except IntegrityError:
         session.rollback()          # the same request id arrived twice at once
         return _same_request(session.scalars(select(OutboundMessage).where(OutboundMessage.request_id == request_id)).one(),
-                             customer_provider_id, body)
+                             facility, reply_to, customer_provider_id, body)
     if not verdict.ok or customer is None:
         return row
     outcome = adapter.send_sms(facility.provider_id, customer.provider_id, body)

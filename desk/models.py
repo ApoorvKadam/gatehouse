@@ -313,8 +313,11 @@ class InboundMessage(Base):
 
     __tablename__ = "inbound_messages"
     id: Mapped[int] = mapped_column(primary_key=True)
-    # none when the receiving number serves several facilities: the text is kept, filed under no facility yet
+    # none until the text can be filed: the receiving number serves several facilities and none is set, or the desk has not
+    # read the named facility yet. The text is kept either way.
     facility_id: Mapped[int | None] = mapped_column(ForeignKey("facilities.id"), nullable=True)
+    # the facility the webhook named, or the one the receiving number is set to, kept while the desk has no row for it
+    facility_provider_id: Mapped[str | None] = mapped_column(String, nullable=True)
     provider_message_id: Mapped[str] = mapped_column(String, unique=True)
     phone: Mapped[str] = mapped_column(String)
     # the sender's whole number, normalized (+1 and ten digits for a US or Canadian number), never a suffix of it
