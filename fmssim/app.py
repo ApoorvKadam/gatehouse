@@ -2,6 +2,7 @@
 Cubby's Operator API documentation; the /sim routes are test controls a real FMS would not have."""
 from __future__ import annotations
 
+import re
 import time
 from datetime import date, datetime
 
@@ -10,13 +11,13 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from . import access, auctions, seed
+from . import access, auctions, messaging, seed
 from .store import (
     ApiKey, BookEntry, Customer, Facility, Lease, LeaseBehavior, Payment, PaymentMethod,
     apply_to_lease, lease_total_due, make_session_factory, new_id, reverse_on_lease, unit_id_of, utcnow,
 )
 
-PII_FIELDS = ("name", "firstName", "lastName", "phone", "email")
+PII_FIELDS = ("name", "firstName", "lastName", "contact", "communicationPreferences")
 PAYMENT_MODES = {"approve", "decline", "fail", "pending_then_succeed", "pending_then_decline",
                  "late_application", "lose_response", "drop_after_charge", "server_error", "gateway_error", "reject"}
 
@@ -64,8 +65,9 @@ def create_app(database_url: str | None = None, lose_response_seconds: float = 8
             raise ApiError(404, "Lease not found")
         return lease
 
-    def strip_pii(obj: dict, key: ApiKey) -> dict:
-        return obj if key.pii else {k: v for k, v in obj.items() if k not in PII_FIELDS}
+    def strip_pii(obj: dict, key: ApiKey | None) -> dict:
+        """No key means the organization's own webhook, which withholds nothing."""
+        return obj if key is None or key.pii else {k: v for k, v in obj.items() if k not in PII_FIELDS}
 
     def lease_json(session: Session, lease: Lease) -> dict:
         due = lease_total_due(session, lease.lease_id)
@@ -105,17 +107,33 @@ def create_app(database_url: str | None = None, lose_response_seconds: float = 8
     @app.post("/v1/facilities/search")
     def facilities_search(body: dict, key: ApiKey = Depends(caller), session: Session = Depends(db)):
         rows = session.scalars(select(Facility).where(Facility.org_id == key.org_id)).all()
-        return ok({"facilities": [{"facilityId": f.facility_id, "name": f.name, "state": f.state,
+        return ok({"facilities": [{"facilityId": f.facility_id, "organizationId": f.org_id, "name": f.name, "state": f.state,
                                    "timeZone": f.time_zone, "billingCycle": f.billing_cycle} for f in rows]})
+
+    def customer_json(c: Customer, key: ApiKey | None = None) -> dict:
+        return strip_pii({
+            "customerId": c.customer_id, "name": f"{c.first_name} {c.last_name}", "firstName": c.first_name,
+            "lastName": c.last_name, "contact": {"phone": c.phone, "email": c.email},
+            "communicationPreferences": {
+                "sms": {"marketing": c.sms_marketing, "suppressed": c.sms_suppressed, "suppressionReason": c.sms_suppression_reason},
+                "email": {"marketing": True, "suppressed": False, "suppressionReason": None}},
+        }, key)
 
     @app.post("/v1/customers/search")
     def customers_search(body: dict, key: ApiKey = Depends(caller), session: Session = Depends(db)):
-        cid = (body.get("where") or {}).get("customerId")
-        rows = session.scalars(select(Customer).where(Customer.org_id == key.org_id,
-                                                      *( [Customer.customer_id == cid] if cid else []))).all()
-        return ok({"customers": [strip_pii({"customerId": c.customer_id, "firstName": c.first_name,
-                                            "lastName": c.last_name, "name": f"{c.first_name} {c.last_name}",
-                                            "phone": c.phone, "email": c.email}, key) for c in rows]})
+        where = body.get("where") or {}
+        q = select(Customer).where(Customer.org_id == key.org_id)
+        if where.get("customerId"):
+            q = q.where(Customer.customer_id == where["customerId"])
+        if where.get("facilityId"):
+            q = q.where(Customer.customer_id.in_(select(Lease.customer_id).where(Lease.facility_id == where["facilityId"])))
+        rows = session.scalars(q.order_by(Customer.customer_id)).all()
+        if where.get("phone"):
+            # Cubby's changelog says the customer phone filter remains a partial match, so a short number finds every
+            # customer whose number contains it
+            wanted = re.sub(r"\D", "", str(where["phone"]))
+            rows = [c for c in rows if wanted and wanted in re.sub(r"\D", "", c.phone)]
+        return ok({"customers": [customer_json(c, key) for c in rows]})
 
     @app.post("/v1/leases/search")
     def leases_search(body: dict, key: ApiKey = Depends(caller), session: Session = Depends(db)):
@@ -318,6 +336,7 @@ def create_app(database_url: str | None = None, lose_response_seconds: float = 8
 
     access.register(app, db, caller, own_lease, ok, iso, ApiError)
     auctions.register(app, db, caller, own_lease, ok, iso, ApiError)
+    messaging.register(app, db, caller, ok, iso, ApiError, customer_json)
 
     with factory() as session:
         if session.scalars(select(Facility)).first() is None:

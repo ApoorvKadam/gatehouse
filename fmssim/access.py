@@ -19,7 +19,7 @@ from .store import (
 )
 
 TASK_STATUSES = ("OPEN", "COMPLETED", "ARCHIVED")
-FAULTS = ("gate_sync_stale", "lose_task_response")
+FAULTS = ("gate_sync_stale", "lose_task_response", "lose_send_response")
 
 
 def register(app: FastAPI, db, caller, own_lease, ok, iso, ApiError) -> None:
@@ -282,7 +282,8 @@ def register(app: FastAPI, db, caller, own_lease, ok, iso, ApiError) -> None:
 
     @app.post("/sim/faults")
     def sim_fault(body: dict, session: Session = Depends(db)):
-        """Switch a named fault on or off: gate_sync_stale (facilityId, customerId) or lose_task_response (facilityId)."""
+        """Switch a named fault on or off: gate_sync_stale (facilityId, customerId), lose_task_response (facilityId) or
+        lose_send_response (facilityId: messages/sms/send sends the text, then the connection breaks)."""
         kind = body.get("kind")
         if kind not in FAULTS:
             raise ApiError(400, f"kind must be one of {', '.join(FAULTS)}")

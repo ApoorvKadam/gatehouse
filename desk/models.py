@@ -202,6 +202,8 @@ class DeskBinding(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     fms_base_url: Mapped[str] = mapped_column(String, default="")
     facility_ids: Mapped[list] = mapped_column(JSON, default=list)
+    # the organizations those facilities belong to, from the facility objects; empty when the FMS does not say
+    org_ids: Mapped[list] = mapped_column(JSON, default=list)
     fms_fingerprint: Mapped[str] = mapped_column(String, default="")
     bound_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
@@ -304,6 +306,60 @@ class WorkItem(Base):
     task_status: Mapped[str | None] = mapped_column(String, nullable=True)
     task_intent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     __table_args__ = (UniqueConstraint("run_id", "facility_id", "kind", "subject_type", "subject_id", "episode_key"),)
+
+
+class InboundMessage(Base):
+    """A text sent to a facility's number, kept as Cubby's SMS Received webhook reported it, with who the desk concluded
+    sent it. It is stored before it is matched, so a text is never lost because the FMS could not be asked; a pending
+    one is matched on a later pass. Cubby may deliver one text twice, so the carrier's message id is unique here."""
+
+    __tablename__ = "inbound_messages"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # none until the text can be filed: the receiving number serves several facilities and none is set, or the desk has not
+    # read the named facility yet. The text is kept either way.
+    facility_id: Mapped[int | None] = mapped_column(ForeignKey("facilities.id"), nullable=True)
+    # the facility the webhook named, kept while the desk has no row for it
+    facility_provider_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    provider_message_id: Mapped[str] = mapped_column(String, unique=True)
+    phone: Mapped[str] = mapped_column(String)
+    # the sender's whole number, normalized (+1 and ten digits for a US or Canadian number), never a suffix of it
+    phone_key: Mapped[str] = mapped_column(String, index=True)
+    to_number: Mapped[str | None] = mapped_column(String, nullable=True)
+    body: Mapped[str] = mapped_column(Text)
+    received_at: Mapped[datetime] = mapped_column(DateTime)
+    stored_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    # pending (not checked yet), matched, unmatched, ambiguous (two tenants share the number: a person decides) or unrouted
+    match_state: Mapped[str] = mapped_column(String, default="pending")
+    match_note: Mapped[str | None] = mapped_column(String, nullable=True)
+    # who Cubby named in the webhook, until a check says otherwise; the FMS stays the owner of both
+    customer_provider_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    customer_name: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class OutboundMessage(Base):
+    """A text the desk means to send, written before Cubby is called, like a payment command. Cubby's send takes no
+    idempotency key and no look-up afterwards, so there is one call: `sent` only when Cubby answered 200, and a
+    call that got no usable answer stays outcome_unknown for a person to check, never sent again by the desk."""
+
+    __tablename__ = "outbound_messages"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    facility_id: Mapped[int] = mapped_column(ForeignKey("facilities.id"))
+    # the tenant's text this one answers; none for a text the desk starts
+    inbound_id: Mapped[int | None] = mapped_column(ForeignKey("inbound_messages.id"), nullable=True)
+    # Cubby texts a customer's number on file, so the recipient is a customer, never a number someone typed
+    customer_provider_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    phone: Mapped[str] = mapped_column(String)
+    body: Mapped[str] = mapped_column(Text)
+    # who wrote the words: a person at the desk, or later Claude
+    author: Mapped[str] = mapped_column(String)
+    # the screen's own id for this reply, so a double click is one text; Cubby never sees it
+    request_id: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
+    # intent, sent, blocked (the rule said no; Cubby was not called), rejected (Cubby refused; nothing went out) or
+    # outcome_unknown (no usable answer)
+    state: Mapped[str] = mapped_column(String)
+    reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class AccessView(Base):

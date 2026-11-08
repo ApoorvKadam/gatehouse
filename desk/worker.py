@@ -14,20 +14,33 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session, sessionmaker
 
 from .access import bound_facilities, reconcile_access
-from .adapter import FMSAdapter
+from .adapter import FMSAdapter, FMSError
+from .db import refresh_binding
+from .messaging import file_unrouted, hold_stranded, match_pending
 from .payments import PaymentService
 from .sales import reconcile_sales
 
 log = logging.getLogger("desk.worker")
 
 
-def run_once(factory: sessionmaker[Session], adapter: FMSAdapter, run_id: str = "local", feed_url: str | None = None) -> tuple[int, int]:
-    """One pass: how many payments were checked, and how many FMS reads failed along the way (payments, access, sales)."""
+def run_once(factory: sessionmaker[Session], adapter: FMSAdapter, run_id: str = "local", feed_url: str | None = None,
+             text_numbers: dict[str, str] | None = None) -> tuple[int, int]:
+    """One pass: how many payments were checked, and how many FMS reads failed along the way (the facility list, payments,
+    access, sales, and matching texts that arrived while the FMS could not be asked)."""
     with factory() as session:
+        failures = 0
+        try:
+            # first, so a facility that joined or left the account is served or dropped on this pass, not at the next restart
+            refresh_binding(session, adapter)
+        except FMSError as exc:
+            failures += 1
+            log.warning("could not read which facilities this key sees: %s", exc)
         service = PaymentService(session, adapter)
         checked = service.reconcile_all()
-        failures = service.read_failures
-        for facility in bound_facilities(session):
+        failures += service.read_failures
+        facilities = bound_facilities(session)
+        file_unrouted(session, text_numbers, {f.provider_id for f in facilities})
+        for facility in facilities:
             result = reconcile_access(session, adapter, facility, run_id)
             failures += len(result.failures)
             if result.opened or result.closed:
@@ -36,13 +49,25 @@ def run_once(factory: sessionmaker[Session], adapter: FMSAdapter, run_id: str = 
             failures += len(sales.failures)
             if sales.opened or sales.closed:
                 log.info("sales at %s: %d opened, %d closed", facility.provider_id, sales.opened, sales.closed)
+            try:
+                matched = match_pending(session, adapter, facility)
+            except FMSError as exc:
+                failures += 1
+                log.warning("texts at %s: %s", facility.provider_id, exc)
+            else:
+                if matched:
+                    log.info("texts at %s: %d matched", facility.provider_id, matched)
+        stranded = hold_stranded(session)
+        if stranded:
+            log.warning("%d text(s) were cut off before their outcome was recorded and are held for a person", stranded)
         return checked, failures
 
 
 class Worker:
     def __init__(self, factory: sessionmaker[Session], adapter: FMSAdapter, every_seconds: float, stale_after: float | None = None,
-                 run_id: str = "local", feed_url: str | None = None):
+                 run_id: str = "local", feed_url: str | None = None, text_numbers: dict[str, str] | None = None):
         self.factory, self.adapter, self.every, self.run_id, self.feed_url = factory, adapter, every_seconds, run_id, feed_url
+        self.text_numbers = text_numbers
         # how long without a successful pass before readiness says the worker is not doing its job
         self.stale_after = stale_after if stale_after is not None else every_seconds * 3 + 30
         self._stop = threading.Event()
@@ -83,7 +108,7 @@ class Worker:
             started, clock = datetime.now(timezone.utc).replace(tzinfo=None), time.monotonic()
             record = {"started_at": started, "seconds": None, "checked": None, "failures": None, "error": None}
             try:
-                checked, failed = run_once(self.factory, self.adapter, self.run_id, self.feed_url)
+                checked, failed = run_once(self.factory, self.adapter, self.run_id, self.feed_url, self.text_numbers)
                 record.update(checked=checked, failures=failed)
                 if failed:
                     # the pass went on with the other cases, but it did not do its whole job
@@ -115,7 +140,7 @@ if __name__ == "__main__":
     s = Settings.from_env()
     factory, fms = make_session_factory(s.database_url), CubbyAdapter(s.fms_base_url, s.fms_api_key, s.fms_timeout_seconds)
     bind_to_fms(factory, fms, s.fms_base_url)   # the same check the API makes: never reconcile another account's records
-    w = Worker(factory, fms, s.reconcile_every_seconds)
+    w = Worker(factory, fms, s.reconcile_every_seconds, text_numbers=s.text_numbers)
     w.start()
     while True:
         time.sleep(3600)

@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 
 import httpx
 
 from .base import (
-    AccessCheck, FMSError, NotFound, PermissionDenied, ProviderAccessCode, ProviderCustomer, ProviderExemption, ProviderLease,
-    ProviderAuctionEntry, ProviderLedger, ProviderLock, ProviderPayment, ProviderTask, SubmitOutcome, TaskCreateOutcome,
+    AccessCheck, FMSError, InboundText, NotFound, PermissionDenied, ProviderAccessCode, ProviderCustomer, ProviderExemption,
+    ProviderLease, ProviderAuctionEntry, ProviderLedger, ProviderLock, ProviderPayment, ProviderTask, SmsOutcome, SmsPreference,
+    SubmitOutcome, TaskCreateOutcome,
 )
 
 AUCTION_STATUSES = ("LISTED", "NO_BIDS", "SOLD", "PAYMENT_RECEIVED", "COMPLETE", "CANCELLED")
@@ -41,6 +43,10 @@ def _json(response: httpx.Response) -> dict:
     except ValueError:
         return {}
     return body if isinstance(body, dict) else {}
+
+
+def _dict(value) -> dict:
+    return value if isinstance(value, dict) else {}
 
 
 log = logging.getLogger("desk.adapter")
@@ -88,7 +94,11 @@ class CubbyAdapter:
                              overlock_needed=raw.get("overlockNeeded") if isinstance(raw.get("overlockNeeded"), bool) else None)
 
     def facilities(self) -> list[dict]:
-        return self._read("/v1/facilities/search", {}).get("facilities", [])
+        rows = self._read("/v1/facilities/search", {}).get("facilities")
+        if not isinstance(rows, list):
+            # an empty list is an answer; a missing one (a gateway page, a changed shape) is not
+            raise FMSError("/v1/facilities/search: the answer has no facilities list")
+        return rows
 
     def delinquent_leases(self, facility_provider_id: str) -> list[ProviderLease]:
         data = self._read("/v1/leases/search", {"facilityId": facility_provider_id, "delinquent": True})
@@ -114,13 +124,40 @@ class CubbyAdapter:
             raise FMSError(f"/v1/ledgers/search: no readable totalDue for {lease_provider_id}") from exc
         return ProviderLedger(lease_provider_id=lease_provider_id, total_due=total_due, prepaid=prepaid, raw=raw)
 
+    @staticmethod
+    def _customer(c: dict) -> ProviderCustomer:
+        contact = _dict(c.get("contact"))
+        sms = _dict(_dict(c.get("communicationPreferences")).get("sms"))
+        # a preference counts only when the FMS states both flags; a half-stated one is treated as not stated
+        known = isinstance(sms.get("marketing"), bool) and isinstance(sms.get("suppressed"), bool)
+        return ProviderCustomer(provider_id=c["customerId"], first_name=c.get("firstName"), last_name=c.get("lastName"),
+                                phone=contact.get("phone"),
+                                sms=SmsPreference(sms["marketing"], sms["suppressed"], sms.get("suppressionReason")) if known else None)
+
     def customer(self, customer_provider_id: str) -> ProviderCustomer:
         rows = self._read("/v1/customers/search", {"customerId": customer_provider_id}).get("customers", [])
         if not rows:
             raise NotFound(customer_provider_id)
-        c = rows[0]
-        return ProviderCustomer(provider_id=c["customerId"], first_name=c.get("firstName"), last_name=c.get("lastName"),
-                                phone=c.get("phone"))
+        return self._customer(rows[0])
+
+    def _customer_rows(self, where: dict) -> list:
+        """The customers a search answered with. An answer with no list (a gateway page, a changed shape) is an error, so a
+        text waiting to be matched stays pending instead of being called unmatched."""
+        rows = self._read("/v1/customers/search", where).get("customers")
+        if not isinstance(rows, list):
+            raise FMSError("/v1/customers/search: the answer has no customers list")
+        return rows
+
+    def has_customer(self, facility_provider_id: str, customer_provider_id: str) -> bool:
+        """Is this customer at this facility? Customers search by facility and customer id answers it, and it needs no
+        personal data."""
+        rows = self._customer_rows({"facilityId": facility_provider_id, "customerId": customer_provider_id})
+        return any(isinstance(r, dict) and r.get("customerId") == customer_provider_id for r in rows)
+
+    def customers_by_phone(self, facility_provider_id: str, phone: str) -> list[ProviderCustomer]:
+        """Customers at a facility whose number contains this one. The FMS filter is a partial match, so the caller
+        compares whole numbers before treating anyone as the sender."""
+        return [self._customer(c) for c in self._customer_rows({"facilityId": facility_provider_id, "phone": phone})]
 
     def payments_for_lease(self, lease_provider_id: str) -> list[ProviderPayment]:
         data = self._read("/v1/payments/search", {"leaseId": lease_provider_id})
@@ -213,6 +250,55 @@ class CubbyAdapter:
             # a 5xx, a gateway page or a 200 without an id: the task may or may not exist
             return TaskCreateOutcome(kind="lost", detail=f"HTTP {response.status_code} without a task id")
         return TaskCreateOutcome(kind="created", task_id=task_id)
+
+    # ------------------------------------------------------------------ texts
+    @staticmethod
+    def inbound_text(payload: dict) -> InboundText:
+        """Cubby's SMS Received webhook. Raises ValueError for anything that is not one: the documented fields must all be
+        there, the numbers must be phone numbers, and facilityId must be present (it is null when a number serves several
+        facilities)."""
+        def need(field: str) -> str:
+            value = payload.get(field)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"the payload has no usable {field}")
+            return value
+
+        def number(field: str) -> str:
+            value = need(field)
+            if len(re.sub(r"\D", "", value)) < 10:
+                raise ValueError(f"{field} is not a phone number")
+            return value
+
+        if "facilityId" not in payload or not (payload["facilityId"] is None or isinstance(payload["facilityId"], str)):
+            raise ValueError("the payload has no usable facilityId")
+        received = _parse_time(need("receivedAt"))
+        if received is None:
+            raise ValueError("the payload has no usable receivedAt")
+        customer = payload.get("customer")
+        named = isinstance(customer, dict) and isinstance(customer.get("customerId"), str)
+        return InboundText(message_id=need("messageId"), org_id=need("orgId"), facility_provider_id=payload["facilityId"] or None, to=number("to"),
+                           sender=number("from"), body=need("body"), received_at=received,
+                           customer=CubbyAdapter._customer(customer) if named and isinstance(customer, dict) else None)
+
+    def send_sms(self, facility_provider_id: str, customer_provider_id: str, body: str) -> SmsOutcome:
+        """Cubby texts the customer's number on file. The call takes no idempotency key and Cubby documents no way to look a
+        sent text up, so an answer that never arrives leaves the outcome unknown for good."""
+        request = {"customerId": customer_provider_id, "facilityId": facility_provider_id, "body": body}
+        try:
+            response = self._http.post("/v1/messages/sms/send", json=request)
+        except httpx.TimeoutException:
+            return SmsOutcome("lost", "no response before the timeout")
+        except httpx.HTTPError as exc:
+            # the request may have reached Cubby before the connection broke
+            log.info("text request lost after sending: %s", exc.__class__.__name__)
+            return SmsOutcome("lost", "the connection broke before the answer arrived")
+        payload = _json(response)
+        if 400 <= response.status_code < 500 and "errors" in payload:
+            return SmsOutcome("rejected", "; ".join(str(e) for e in payload.get("errors") or []) or f"HTTP {response.status_code}")
+        if response.status_code != 200 or payload.get("status") != 200:
+            # a 5xx, a gateway page, or a 200 that is not Cubby's envelope: the text may or may not have gone out
+            return SmsOutcome("lost", f"HTTP {response.status_code} without a confirmation")
+        return SmsOutcome("sent")
 
     # ------------------------------------------------------------------ the one write
     def make_payment(self, lease_provider_id: str, payment_method_id: str, amount: int) -> SubmitOutcome:

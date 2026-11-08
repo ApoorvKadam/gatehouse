@@ -16,15 +16,18 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from .adapter import FMSAdapter, FMSError
+from .adapter import FMSAdapter, FMSError, InboundText
 from .adapter.cubby import CubbyAdapter
 from .cases import queue, sync_facility
 from .config import Settings
 from .conversation import Conversation
 from .lien_files import ensure_append_only, evaluate_case, record_evidence, replay
 from .liens import FL_R1, ValidationError
-from .db import bind_to_fms, make_session_factory
-from .models import CaseEvent, DelinquencyCase, DeskBinding, Facility, Lease, LedgerSnapshot, LienEvaluation, PaymentCommand
+from .db import bind_to_fms, make_session_factory, refresh_binding
+from .messaging import inbox, match_pending, outbound_view, receive_text, send_text, unrouted
+from .models import (
+    CaseEvent, DelinquencyCase, DeskBinding, Facility, InboundMessage, Lease, LedgerSnapshot, LienEvaluation, PaymentCommand,
+)
 from .payments import (
     IdentityClaim, PaymentRefused, PaymentService, check_identity, collected, confirm, propose, tenant_message,
 )
@@ -64,6 +67,13 @@ class EvidenceIn(BaseModel):
 class ConfirmIn(BaseModel):
     confirmed_by: str = Field(min_length=2, description="the person at the desk who heard the tenant's yes")
     tenant_answer: str = Field(min_length=1, max_length=500, description="what the tenant said, in their words")
+
+
+class ReplyIn(BaseModel):
+    text: str = Field(min_length=1, max_length=1600)
+    staff: str = Field(min_length=2, description="the person at the desk who wrote the reply")
+    request_id: str = Field(min_length=8, max_length=64,
+                            description="chosen by the screen for each reply and kept for its retries; sending it twice sends one text")
 
 
 class StaffResolutionIn(BaseModel):
@@ -111,7 +121,8 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
             except Exception:
                 # the pages still work without it; they just do not show the simulator's own record
                 log.exception("could not save the simulator's record of the seeded payments")
-    worker = Worker(factory, adapter, settings.reconcile_every_seconds, run_id=settings.run_id, feed_url=settings.marketplace_url)
+    worker = Worker(factory, adapter, settings.reconcile_every_seconds, run_id=settings.run_id, feed_url=settings.marketplace_url,
+                    text_numbers=settings.text_numbers)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -223,6 +234,84 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
     def facility_queue(facility_id: str, session: Session = Depends(db), _: str = Depends(viewer)):
         check_facility(session, facility_id)
         return {"rows": [r.__dict__ for r in queue(session, facility_id)], "collected": collected(session, adapter.provider, facility_id)}
+
+    def owns(binding: DeskBinding, text: InboundText) -> bool:
+        """A text belongs to this desk when its facility is one the FMS key sees. A text with no facility (a number several
+        facilities share) belongs to it when its organization is one the key sees."""
+        if text.facility_provider_id is not None:
+            return text.facility_provider_id in binding.facility_ids
+        return text.org_id in (binding.org_ids or [])
+
+    def known_facility(session: Session, facility_id: str) -> Facility | None:
+        """The desk's row for a facility the FMS key can see, or None when nothing has been synced from it yet."""
+        check_facility(session, facility_id)
+        return session.scalar(select(Facility).where(Facility.provider_id == facility_id))
+
+    @app.post("/webhooks/cubby/sms-received")
+    def sms_received(payload: dict, x_webhook_token: str | None = Header(default=None), session: Session = Depends(db)):
+        """Cubby's SMS Received webhook. Cubby documents no signing, so the sender must present the shared token, in a header
+        that a gateway such as Make.com adds. A 200 tells Cubby the text is kept, and a text already kept is a 200 too,
+        because Cubby may deliver one twice."""
+        if settings.webhook_token is None:
+            raise HTTPException(503, "the desk has no webhook token configured")
+        if x_webhook_token is None or not hmac.compare_digest(x_webhook_token, settings.webhook_token):
+            raise HTTPException(401, "webhook token required")
+        try:
+            text = adapter.inbound_text(payload)
+        except ValueError as exc:
+            raise HTTPException(422, f"not an SMS Received payload: {exc}") from exc
+        binding = session.get(DeskBinding, 1)
+        if binding is None:
+            raise HTTPException(503, "the desk has not recorded which FMS account it serves yet")
+        if not owns(binding, text):
+            # a facility added to the account after the desk started is not in the binding yet: ask the FMS once
+            try:
+                refresh_binding(session, adapter)
+            except FMSError as exc:
+                raise HTTPException(503, "could not check which facilities this desk serves; try again") from exc
+            session.refresh(binding)
+            if not owns(binding, text):
+                raise HTTPException(404, "this text is not for a facility or organization this desk serves")
+        row = receive_text(session, text, settings.text_numbers, set(binding.facility_ids))
+        if row is not None and row.facility_id is not None:
+            try:
+                match_pending(session, adapter, session.get(Facility, row.facility_id))
+            except FMSError as exc:
+                # the text is kept; the worker checks it on its next pass
+                log.warning("could not match text %s yet: %s", row.id, exc)
+        return {"stored": row is not None}
+
+    @app.get("/api/facilities/{facility_id}/inbox")
+    def facility_inbox(facility_id: str, limit: int = 50, offset: int = 0, session: Session = Depends(db), _: str = Depends(viewer)):
+        """The texts people sent this facility, newest first, each matched to a tenant or marked as not matched."""
+        facility = known_facility(session, facility_id)
+        return {"messages": inbox(session, facility, min(max(limit, 1), 200), max(offset, 0)) if facility else []}
+
+    @app.get("/api/inbox/unrouted")
+    def unrouted_texts(limit: int = 50, offset: int = 0, session: Session = Depends(db), _: str = Depends(viewer)):
+        """Texts kept without a facility because no facility is set for the number that received them."""
+        binding = session.get(DeskBinding, 1)
+        return {"messages": unrouted(session, binding.facility_ids if binding else [], min(max(limit, 1), 200), max(offset, 0))}
+
+    @app.post("/api/inbox/{message_id}/reply")
+    def reply_to_text(message_id: int, body: ReplyIn, session: Session = Depends(db), _: str = Depends(operator)):
+        """A person at the desk answers a text through Cubby. The rule still applies: a number that texted STOP, one the FMS
+        has switched off, or one that is not the customer's number on file gets nothing, and the answer says why."""
+        message = session.get(InboundMessage, message_id)
+        facility = session.get(Facility, message.facility_id) if message is not None and message.facility_id is not None else None
+        if message is None or facility is None:
+            raise HTTPException(404, "text not found")
+        check_facility(session, facility.provider_id)
+        if message.match_state in ("pending", "ambiguous"):
+            raise HTTPException(409, "not sent: " + (message.match_note or "this text is not matched to a tenant yet; try again in a moment"))
+        try:
+            row = send_text(session, adapter, facility, message.customer_provider_id if message.match_state == "matched" else None,
+                            body.text, f"staff: {body.staff}", reply_to=message, request_id=body.request_id)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if row.state in ("blocked", "rejected"):
+            raise HTTPException(409, f"not sent: {row.reason}")
+        return outbound_view(row)
 
     @app.get("/api/cases/{case_id}")
     def case_detail(case_id: int, session: Session = Depends(db), _: str = Depends(viewer)):
