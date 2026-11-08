@@ -42,7 +42,7 @@ CALL_TIMEOUT = 60.0
 STRANDED_AFTER = timedelta(minutes=5)
 # what the desk says about a packet it could not check against its own records
 UNCHECKED = ("Claude's reading. The desk checked only that the records it lists exist and that every amount and date in the summary and the "
-             "reason appears in them.")
+             "reason appears in them or in the tenant's message.")
 INTENTS = ("sale_after_payment", "payment_status", "balance_question", "access_problem", "stop_request", "other")
 MAX_SUMMARY, MAX_RECORDS = 400, 8
 
@@ -306,13 +306,13 @@ def days(text: str) -> set[tuple[str, int, int | None]]:
 def ungrounded(packet: dict, facts: dict[str, str], tenant_text: str = "") -> list[str]:
     """The amounts and dates in the packet's own words (the summary and the reason) that none of the records it lists shows. The
     message under investigation counts too, since staff see it beside the packet.
-    A date with a year must match a record's year when the record gives one. Claude may pick and order what the records say;
+    A date with a year must match a record's date of that year; a date without one matches the day in any year. Claude may pick and order what the records say;
     it may not bring a figure or a date of its own. Amounts spelled out in words are not read."""
     shown = " ".join([facts[i] for i in packet["records"]] + [facts.get(tenant_text, "")])
     words = " ".join([packet["summary"], packet["reason"]])
     known = days(shown)
     money = sorted(amounts(words) - amounts(shown))
-    loose = sorted(d for d in days(words) if not any(d[:2] == k[:2] and (d[2] is None or k[2] is None or d[2] == k[2]) for k in known))
+    loose = sorted(d for d in days(words) if not any(d[:2] == k[:2] and (d[2] is None or d[2] == k[2]) for k in known))
     return [f"${c / 100:,.2f}" for c in money] + [f"{m.title()} {d}" + (f", {y}" if y else "") for m, d, y in loose]
 
 

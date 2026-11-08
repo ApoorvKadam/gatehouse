@@ -601,6 +601,9 @@ def test_what_makes_a_packet_acceptable():
     assert "Dec 25" in packet_problem({**good, "reason": "The sale is on December 25."}, facts)
     assert "Dec 25, 2030" in packet_problem({**good, "reason": "The sale is on 12/25/2030."}, facts)
     assert "Nov 8, 2031" in packet_problem({**good, "reason": "She has owed it since Nov 8, 2031."}, facts)       # the same day of another year
+    yearless = {"lease:1": "Unit B-1042. The tenant says the balance has been owed since Nov 8."}
+    assert packet_problem({**good, "reason": "Owed since Nov 8."}, yearless) is None
+    assert "Nov 8, 2031" in packet_problem({**good, "reason": "Owed since Nov 8, 2031."}, yearless)                 # a year no record gives is a claim
     assert "$1,200.50" in packet_problem({**good, "reason": "She paid $1,200.50."}, facts)
     assert len(packet_problem(packet("other", ["x" * 500]), facts)) < 150
 
@@ -609,6 +612,15 @@ def test_the_cost_is_haiku_5_5s_price_and_nothing_else_is_priced():
     usage = SimpleNamespace(input_tokens=1_000_000, output_tokens=1_000_000)
     assert cost_usd("claude-haiku-5-5", usage) == pytest.approx(0.60)
     assert list(PRICES) == ["claude-haiku-5-5"]                                                          # no Sonnet anywhere
+
+
+def test_the_chat_model_must_be_one_the_desk_prices(monkeypatch):
+    from desk.config import Settings
+    monkeypatch.delenv("DESK_CHAT_MODEL", raising=False)
+    assert Settings.from_env().chat_model == "claude-haiku-5-5"
+    monkeypatch.setenv("DESK_CHAT_MODEL", "claude-sonnet-5-5")
+    with pytest.raises(ValueError, match="DESK_CHAT_MODEL must be one of: claude-haiku-5-5"):
+        Settings.from_env()
 
 
 def test_a_model_without_a_price_is_logged_with_a_warning_not_as_free_in_silence(caplog):

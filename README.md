@@ -92,7 +92,7 @@ Texts reach the desk as Cubby's SMS Received webhook (`POST /webhooks/cubby/sms-
 
 `POST /api/inbox/{id}/investigate` (operator token and a request id) has Claude Haiku 5.5 read a matched text, look up the desk's own records through read-only tools bound to that tenant and that facility, and submit a case packet. The packet is a summary and a reason in Claude's own words, plus the list of records it relied on, which staff read word for word. The desk keeps its own check apart from it. It checks that every record the packet lists came from a lookup in the run, and that every dollar amount and calendar date in the summary and the reason is in one of those records (amounts spelled out in words are not read). For a sale claim it also reads its own sale item and says what that item shows, including whether the FMS reported a payment. A text has one run unless `again` is set, and a double click is one run. Each run records its tokens and cost, and `GET /api/agent-runs/{id}` shows it with its lookups. It needs `ANTHROPIC_API_KEY`.
 
-The conversation endpoint needs `ANTHROPIC_API_KEY` in `.env` (Claude Haiku 5.5 by default, `DESK_CHAT_MODEL` to change it). Each model call's tokens and estimated cost are logged; a whole conversation costs about a tenth of a cent.
+The conversation endpoint needs `ANTHROPIC_API_KEY` in `.env` (Claude Haiku 5.5, the only model the desk prices; `DESK_CHAT_MODEL` refuses any other at startup). Each model call's tokens and estimated cost are logged; a whole conversation costs about a tenth of a cent.
 
 ```bash
 curl -X POST -H "$H" -H "$J" localhost:8000/api/cases/1/chat \

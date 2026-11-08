@@ -4,6 +4,17 @@ import json
 import os
 from dataclasses import dataclass, field
 
+from .usage import PRICES
+
+
+def _chat_model(raw: str | None) -> str:
+    """DESK_CHAT_MODEL: only a model that has a price in desk/usage.py, so every call's cost is logged. That is Claude Haiku 5.5
+    alone, by the owner's order. A bad value stops the desk at startup, naming the setting."""
+    model = raw or "claude-haiku-5-5"
+    if model not in PRICES:
+        raise ValueError(f"DESK_CHAT_MODEL must be one of: {', '.join(PRICES)}")
+    return model
+
 
 def _text_numbers(raw: str | None) -> dict[str, str]:
     """DESK_TEXT_NUMBERS: a JSON object from a receiving number to a facility id. A bad value stops the desk at startup, naming
@@ -53,7 +64,7 @@ class Settings:
             reconcile_every_seconds=float(os.environ.get("DESK_RECONCILE_EVERY_SECONDS", "10")),
             operator_token=os.environ.get("DESK_OPERATOR_TOKEN") or None,
             allow_without_token=os.environ.get("DESK_ALLOW_WITHOUT_TOKEN") == "1",
-            chat_model=os.environ.get("DESK_CHAT_MODEL", "claude-haiku-5-5"),
+            chat_model=_chat_model(os.environ.get("DESK_CHAT_MODEL")),
             staff_token=os.environ.get("DESK_STAFF_TOKEN") or None,
             public_view=os.environ.get("DESK_PUBLIC_VIEW") == "1",
             demo_seed=os.environ.get("DESK_DEMO_SEED") == "1",
