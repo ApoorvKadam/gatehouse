@@ -31,7 +31,7 @@ def test_the_page_shows_the_report_or_says_there_is_none(fms_url, sim, monkeypat
                                                                "generated": __import__("datetime").datetime(2026, 11, 7, 1)})
         page = visitor.get("/evaluation").text
         assert "Paid, still locked" in page and "1 of 1" in page and "Passed" in page
-        assert page.count('<i class="seg ') == 3 and "The FMS did" in page and "Table view of every result" in page     # a mark for each result, and the table under them
+        assert page.count('<i class="seg ') == 3 and page.count('role="img" aria-label="') == 3 and "The FMS did" in page and "Table view of every result" in page     # a mark for each result, and the table under them
         assert "Every build runs the failures" in visitor.get("/").text
         monkeypatch.setattr(web, "evaluation_report", lambda: None)
         assert "has no evaluation report" in visitor.get("/evaluation").text

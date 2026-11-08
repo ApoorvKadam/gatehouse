@@ -1,10 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Evaluation | Gatehouse{% endblock %}
 {% macro bar(groups, label) %}
-  <div class="segbar" role="img" aria-label="{{ label }}">
+  <div class="segbar" role="group" aria-label="{{ label }}">
     {% for name, items in groups %}
     <div class="seggroup" style="flex: {{ items|length }} 1 0">
-      {% for tip, ok in items %}<i class="seg {{ '' if ok else 'fail' }}" tabindex="0" data-tip="{{ tip }}"></i>{% endfor %}
+      {% for tip, ok in items %}<i class="seg {{ '' if ok else 'fail' }}" tabindex="0" role="img" aria-label="{{ tip }}" data-tip="{{ tip }}"></i>{% endfor %}
     </div>
     {% endfor %}
   </div>
