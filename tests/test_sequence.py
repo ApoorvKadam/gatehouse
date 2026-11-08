@@ -108,3 +108,15 @@ def test_a_step_that_is_hidden_stays_hidden():
 
 def test_a_copy_where_the_agent_is_off_shows_no_waiting_steps():
     assert keys(sequence(message(), explorable=False)) == ["received"]
+
+
+def test_a_reply_an_earlier_exploration_sent_is_not_hidden_by_a_later_one_that_sent_nothing():
+    """A message is answered once. Exploring it again proposes nothing, and the page must still say the tenant got the first text."""
+    sent = {"author": "agent", "state": "sent", "body": REPLY["body"], "reason": None, "created_at": datetime(2026, 11, 8, 15, 21, 10),
+            "sent_at": datetime(2026, 11, 8, 15, 21, 11)}
+    later = run(actions=[NOT_SENT], started_at=datetime(2026, 11, 8, 15, 40), finished_at=datetime(2026, 11, 8, 15, 40, 7))
+    steps = sequence(message(investigation=later, replies=[sent]))
+    assert keys(steps) == ["received", "reply", "read", "check", "reply"]
+    first, last = steps[1], steps[-1]
+    assert first["chip"] == "Sent" and first["bubble"] == {"side": "out", "text": REPLY["body"]} and first["at"] == sent["sent_at"]
+    assert last["chip"] == "No reply sent" and last["bubble"] is None

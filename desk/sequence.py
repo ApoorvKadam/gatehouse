@@ -102,14 +102,16 @@ def sequence(t: dict, explorable: bool = True) -> list[dict]:
                            "act", "No case notes", run.get("finished_at")))
     elif run["status"] != "running":
         steps += _read(run)
-    agent = next((s for s in steps if s["key"] == "reply"), None)
+    # the reply step of this run, when it is the run that wrote the text. A later run proposes nothing for a message that was answered, so its
+    # step carries no text, and the reply an earlier run sent is shown as a step of its own, by its time.
+    agent = next((s for s in steps if s["key"] == "reply" and s["bubble"] is not None), None)
     for reply in replies:
         at = reply.get("sent_at") or reply["created_at"]
         if reply["author"] == "agent" and agent is not None:
             agent["at"] = agent["at"] or at
             continue
         chip, tone = REPLIES.get(reply["state"], (reply["state"], "plain"))
-        who = "The agent" if reply["author"] == "agent" else "A person at the desk"
-        line = f"{who} sent it." if reply["state"] == "sent" else (reply.get("reason") or "It was not sent.")
+        who = "The desk sent it after an earlier exploration." if reply["author"] == "agent" else "A person at the desk sent it."
+        line = who if reply["state"] == "sent" else (reply.get("reason") or "It was not sent.")
         _placed(steps, _step("reply", "send", "Reply to the tenant", line, tone, chip, at, bubble=("out", reply["body"])))
     return steps
