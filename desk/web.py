@@ -28,6 +28,7 @@ from .models import (
     LienEvaluation, LienEvidence, PaymentCommand, PaymentProposal, WorkItem,
 )
 from .payments import tenant_message
+from .sequence import sequence
 from .wording import TROUBLES, plain
 
 HERE = Path(__file__).parent
@@ -282,8 +283,6 @@ class Pages:
     trace: dict = field(default_factory=dict)   # simulator truth saved when the world was built, keyed by lease
     worker: object | None = None                 # the reconciliation worker in this process, for the operations page
     live: bool = False                           # a visitor may prepare a case from the inbox (a model key and the switch are both there)
-    budget_usd: float = 1.0
-    cases_per_day: int = 10
 
     def facilities(self, s: Session) -> list[Facility]:
         binding = s.get(DeskBinding, 1)
@@ -514,7 +513,8 @@ def router(pages: Pages) -> APIRouter:
 
     @r.get("/inbox", response_class=HTMLResponse)
     def inbox_page(request: Request, facility: str | None = None, text: int | None = None):
-        """The messages that reached a facility's number, newest first, and for the one chosen the conversation beside what our agent did."""
+        """The messages that reached a facility's number, newest first, and for the one chosen the steps it went through, with what our agent
+        wrote under them."""
         with session() as s:
             facilities = pages.facilities(s)
             if not facilities:
@@ -522,12 +522,11 @@ def router(pages: Pages) -> APIRouter:
             current = next((f for f in facilities if f.provider_id == facility), None) if facility is not None else facilities[0]
             if current is None:
                 raise HTTPException(404, "No such facility")
-            left = spend.allowance(s, pages.budget_usd, pages.cases_per_day, spend.visitor_of(request)) if pages.live else None
             texts = inbox_of(s, current, limit=30)
             selected = next((t for t in texts if t["id"] == text), texts[0] if texts else None)
             return templates.TemplateResponse(request, "inbox.html", {
-                "facilities": facilities, "facility": current, "texts": texts, "selected": selected, "local": local, "nav": "inbox",
-                "live": pages.live, "left": left, "cases_per_day": pages.cases_per_day})
+                "facilities": facilities, "facility": current, "texts": texts, "selected": selected, "local": local, "sequence": sequence, "nav": "inbox",
+                "live": pages.live})
 
     @r.get("/accounts/{case_id}", response_class=HTMLResponse)
     def account(request: Request, case_id: int):
@@ -667,7 +666,7 @@ def router(pages: Pages) -> APIRouter:
                         "Access": ago(s.scalar(select(func.max(AccessView.observed_at))), now)}
             runs = s.scalars(select(AgentRun).where(AgentRun.started_at >= spend.day_start(now))).all()
             outcomes = Counter(a.get("outcome") for r in runs for a in (r.actions or []) if a.get("kind") == "staff_review")
-            agent = {"runs": len(runs), "cost": sum(r.cost_usd for r in runs), "budget": pages.budget_usd,
+            agent = {"runs": len(runs), "cost": sum(r.cost_usd for r in runs),
                      "confirmed": outcomes["linked"] + outcomes["requested"], "unconfirmed": outcomes["not_confirmed"] + outcomes["refused"]}
             return templates.TemplateResponse(request, "operations.html", {
                 "open_work": open_work, "by_who": by_who.most_common(), "by_part": by_part.most_common(), "peak": max(by_who.values(), default=1),

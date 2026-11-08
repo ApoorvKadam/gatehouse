@@ -78,7 +78,7 @@ def review_view(action: dict) -> dict:
     text = done.format(at=when(read), status=status)
     if outcome in ("linked", "requested") and status == "completed":
         text += " A completed task does not close the sale."
-    return {"kind": action.get("kind"), "label": label, "tone": tone, "text": text}
+    return {"kind": action.get("kind"), "label": label, "tone": tone, "text": text, "at": read}
 
 
 # What an acknowledgement may say. Every sentence is written here, in advance, and filled from a verified record. Nothing a model writes

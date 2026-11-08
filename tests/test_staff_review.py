@@ -47,6 +47,18 @@ def test_a_review_asked_for_links_the_task_the_desk_already_opened_and_reads_it_
         assert "task_" not in str(shown) and "OPEN" not in str(shown)         # no task id and no state code reaches a screen
 
 
+def test_the_desk_marks_reading_the_task_back_in_the_run_so_a_waiting_page_shows_the_step(factory, adapter):
+    from desk.investigator import progress
+    with factory() as s:
+        dana = text_of(s, "Dana Whitfield")
+        run, _ = investigate(s, asking(s), dana, "request-review-trace", adapter=adapter)
+        assert run.status == "done" and run.actions[0]["outcome"] == "linked"
+        steps = progress(s, dana.id)["steps"]
+        assert steps.index("Writing the case notes") < steps.index("Reading the FMS task back")      # after the packet, as it happened
+        marked = [turn for turn in run.trace if turn.get("asked") == ["read_task_back"]]
+        assert len(marked) == 1 and marked[0]["calls"] == []                                          # marked once, with no model call behind it
+
+
 def test_a_sale_item_with_no_task_gets_one_asked_for_once_the_desk_has_confirmed_the_sale(factory, adapter):
     with factory() as s:
         item = dana_facts(s)["sale"]
