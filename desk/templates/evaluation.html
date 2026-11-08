@@ -19,7 +19,7 @@
   {% if report %}<p class="head-result"><span class="chip {{ 'done' if report.ok else 'act' }}">{% include "icons/circle-check.svg" %}{{ 'Passed' if report.ok else 'Failed' }}</span> Run when this build was made, {{ local(report.generated) }}</p>{% endif %}
 </div>
 {% if report %}
-<p class="lede">Every build runs each scenario against its own throwaway simulator and counts the red lines. A red line above zero stops the build, so a version that breaks one never reaches this page.</p>
+<p class="lede">Every build runs each scenario against its own throwaway simulator and counts the red lines. A red line above zero stops the build.</p>
 
 <section class="panel glance" aria-label="Result at a glance">
   <div class="meter-row">

@@ -71,3 +71,11 @@ def test_a_sale_page_writes_its_times_as_a_person_reads_them_and_keeps_the_ids_i
         for link in links:
             text = visible(client.get(link).text)
             assert re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", text) is None, link
+
+
+def test_the_front_page_names_what_the_fms_shows_in_words(fms_url, sim):
+    with TestClient(preview(fms_url, None)) as client:
+        text = visible(client.get("/").text)
+        assert re.search(r"\b(?:payment|auction|listing|task|lease)_[A-Za-z0-9]{4,}", text) is None
+        assert re.search(r"\b[A-Z]+_[A-Z_]+\b|\bSUCCEEDED\b", text) is None
+        assert "A payment that may be this attempt" in text

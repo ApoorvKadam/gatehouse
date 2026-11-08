@@ -536,6 +536,7 @@ html { scrollbar-color: var(--frame) var(--paper); }
 .segkey { display: flex; gap: var(--s3); margin-top: 6px; font-size: var(--t-xs); color: var(--ink-3); }
 .segkey span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .segkey b { color: var(--ink-2); font-weight: 600; margin-left: 4px; }
+.segkey:has(span:only-child) { display: none; }
 .flows { margin-top: var(--s5); }
 .flows h2, .panel h2 .muted { font-weight: 600; }
 .flows h2 .muted, .panel h2 .muted { font-weight: 400; margin-left: var(--s3); }
