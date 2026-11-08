@@ -18,7 +18,7 @@ from desk.adapter.cubby import CubbyAdapter
 from desk.api import create_app
 from desk.config import Settings
 from desk.db import make_session_factory, utcnow
-from desk.investigator import (CALL_TIMEOUT, MAX_TURNS, NOT_ACCEPTED, TOOLS, UNCHECKED, fail_stranded_runs, investigate, packet_problem, run_view)
+from desk.investigator import (CALL_TIMEOUT, MAX_SUMMARY, MAX_TURNS, NOT_ACCEPTED, TOOLS, UNCHECKED, fail_stranded_runs, investigate, packet_problem, run_view, shorten)
 from desk.lien_files import ensure_append_only
 from desk.messaging import STOP_WORDS, inbox
 from desk.models import AgentRequest, AgentRun, Facility, InboundMessage, Lease, PaymentCommand, WorkItem
@@ -469,6 +469,19 @@ def test_a_sentence_put_where_an_id_belongs_is_not_kept_in_the_trace_or_the_erro
         assert run.error == "the packet lists records that no earlier lookup of this run returned: ?"
 
 
+def test_a_summary_that_runs_long_is_cut_at_a_sentence_and_never_fails_the_run(factory):
+    sentence = "Dana asks about her unit and the records show nothing owed. "
+    long_summary = sentence * 12                                                          # about 700 characters
+    assert shorten("Short.", MAX_SUMMARY) == "Short."
+    cut = shorten(long_summary.strip(), MAX_SUMMARY)
+    assert len(cut) <= MAX_SUMMARY + 2 and cut.endswith(". …") and cut.count("nothing owed") >= 9           # whole sentences, then the mark
+    assert shorten("word " * 300, 50).endswith("word …") and shorten("x" * 300, 50) == "x" * 50 + " …"      # at a word, or hard when there is none
+    with factory() as s:
+        run, _ = investigate(s, Scripted([tool("submit_case_packet", packet("other", [], True, "x", summary=long_summary.strip()), id_="a1")]),
+                             text_of(s, "Dana Whitfield"), "request-0054")
+        assert run.status == "done" and run.packet["summary"].endswith(". …") and len(run.packet["summary"]) <= MAX_SUMMARY + 2
+
+
 def test_a_packet_for_any_other_intent_says_the_desk_did_not_check_it(factory):
     with factory() as s:
         run, _ = investigate(s, Scripted([tool("submit_case_packet", packet("other", [], True, "x"))]), text_of(s, "Dana Whitfield"), "request-0029")
@@ -698,7 +711,7 @@ def test_what_makes_a_packet_acceptable():
     assert "no earlier lookup" in packet_problem({**good, "records": ["lease:1", "payment:9"]}, facts)
     assert "person is needed" in packet_problem({**good, "needs_person": "yes"}, facts)
     assert packet_problem("not a packet", facts) == "the packet is not an object"
-    assert "longer than" in packet_problem({**good, "summary": "x" * 401}, facts)
+    assert packet_problem({**good, "summary": "x" * 900}, facts) is None                 # a long summary is cut when it is kept, not refused
     assert "more than" in packet_problem({**good, "records": ["lease:1"] * 9}, facts)
     # figures and dates only as a record shows them
     assert packet_problem({**good, "summary": "She owes $240 since Nov 8 (November 8th is the ledger date)."}, facts) is None

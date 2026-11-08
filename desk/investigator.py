@@ -35,8 +35,8 @@ MAX_TURNS = 8
 # what the model is told when its packet is not accepted; it never repeats what the packet said
 NOT_ACCEPTED = ("The packet was not accepted. Every record_id you list must be one that an earlier lookup returned in this conversation or the one on "
                 "the tenant's message; a lookup that found nothing returned a record that says so. Every amount and date you write in the "
-                "summary and the reason must appear in a record you list, so do not add, subtract or estimate. The summary is at most 400 characters "
-                "and you list at most eight records. Fix that and submit the packet again.")
+                "summary and the reason must appear in a record you list, so do not add, subtract or estimate. You list at most eight records. "
+                "Fix that and submit the packet again.")
 # A model call is cut off after CALL_TIMEOUT seconds and the SDK tries it again at most twice (the app's client once), so a live run
 # writes its heartbeat (AgentRun.beat_at) at least every three and a half minutes. A run silent for STRANDED_AFTER was cut off, not slow.
 CALL_TIMEOUT = 60.0
@@ -48,7 +48,8 @@ SALE_FRESH_FOR = timedelta(minutes=10)
 UNCHECKED = ("Claude's reading. The desk checked only that the records it lists exist and that the dollar amounts and dates it can read in "
              "the summary and the reason appear in them or in the tenant's message.")
 INTENTS = ("sale_after_payment", "payment_status", "balance_question", "access_problem", "stop_request", "other")
-MAX_SUMMARY, MAX_RECORDS = 400, 8
+# the prompt asks for a summary of 400 characters; one that runs past MAX_SUMMARY is cut at a sentence when it is kept, never refused
+MAX_SUMMARY, MAX_RECORDS = 600, 8
 
 SYSTEM = """<role>You investigate one text message that a tenant sent to {facility}, a self-storage facility, and you prepare a case packet for the staff. You do not write to the tenant, and you cannot change anything.</role>
 
@@ -119,6 +120,19 @@ def shown_id(value) -> str:
     id is also a place the model, or a tenant it was reading, could slip a sentence into."""
     text = str(value)
     return text if re.fullmatch(r"[\w:.\-]{1,64}", text) else "?"
+
+
+def shorten(text: str, limit: int) -> str:
+    """A text that is too long, cut after the last whole sentence that fits, or at a word, and marked with an ellipsis. It never ends
+    in the middle of a word, and cutting only drops words, so it adds no claim."""
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    end = max(cut.rfind(". "), cut.rfind("! "), cut.rfind("? "))
+    if end >= limit // 2:
+        return cut[:end + 1] + " …"
+    space = cut.rfind(" ")
+    return (cut[:space] if space > 0 else cut).rstrip(" ,;:") + " …"
 
 
 def money(cents: int) -> str:
@@ -356,8 +370,6 @@ def packet_problem(packet, facts: dict[str, str], tenant_text: str = "") -> str 
         return f"the intent {packet.get('intent')!r} is not one of the allowed values"
     if not isinstance(packet.get("summary"), str) or not packet["summary"].strip():
         return "the packet has no summary"
-    if len(packet["summary"].strip()) > MAX_SUMMARY:
-        return f"the summary is longer than {MAX_SUMMARY} characters"
     if not isinstance(packet.get("needs_person"), bool) or not isinstance(packet.get("reason"), str):
         return "the packet does not say whether a person is needed"
     ids = packet.get("records")
@@ -520,7 +532,7 @@ class Investigation:
     def _accept(self, packet: dict, stop_reason: str | None, problem: str | None) -> None:
         if problem is not None:
             return self._end("needs_person", stop_reason, problem)
-        kept = {"intent": packet["intent"], "summary": packet["summary"].strip(), "records": list(dict.fromkeys(packet["records"])),
+        kept = {"intent": packet["intent"], "summary": shorten(packet["summary"].strip(), MAX_SUMMARY), "records": list(dict.fromkeys(packet["records"])),
                 "needs_person": packet["needs_person"], "reason": packet["reason"].strip()}
         verified = verify(self.session, self.scope, kept, self.fresh_for)
         if verified["checked"] and not verified["sale_listed_nothing_owed"]:
