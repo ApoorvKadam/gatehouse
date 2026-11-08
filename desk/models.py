@@ -363,6 +363,15 @@ class OutboundMessage(Base):
     sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+def record_kind(record_id: str, text: str | None) -> str:
+    """What kind of record this is, in the words a screen uses, from the id the desk gave it."""
+    head = record_id.split(":")[0]
+    if head == "workitem":
+        return "Outside listing" if (text or "").startswith("Outside listing") else "Sale"
+    return {"lease": "Account", "payment": "Payment attempt", "observed": "Payment at the FMS", "lien": "Lien file", "texting": "Texting",
+            "text": "Reply" if record_id.startswith("text:out:") else "Text"}.get(head, "Record")
+
+
 class AgentRun(Base):
     """One investigation of one inbound text: what Claude was shown, which records it looked at, the packet it submitted, what
     the desk checked itself, and what the model calls cost. The packet is Claude's work; `verified` is the desk's own check of
@@ -376,6 +385,8 @@ class AgentRun(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     inbound_id: Mapped[int] = mapped_column(ForeignKey("inbound_messages.id"))
     generation: Mapped[int] = mapped_column(Integer, default=1)
+    # a preview visitor, as a short hash of where the request came from; none for an operator. It counts a visitor's cases for the day.
+    visitor: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
     model: Mapped[str] = mapped_column(String)
     effort: Mapped[str] = mapped_column(String)
     # running, done (a packet the desk accepted), needs_person (no accepted packet, or one the records do not support) or failed
@@ -398,12 +409,13 @@ class AgentRun(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     def reading(self) -> dict:
-        """What staff are shown of a run, in every place it appears: Claude's own words under their label, the records it relied on
-        word for word, and the desk's own check apart from both."""
+        """What staff are shown of a run, in every place it appears: the case notes under their label, the records they rest on as
+        the desk holds them, each with its kind, and the desk's own check apart from both."""
         packet = self.packet or {}
-        return {"claude": {"label": "Claude's reading", "intent": packet.get("intent"), "summary": packet.get("summary"),
-                           "reason": packet.get("reason"), "needs_person": packet.get("needs_person")},
-                "records": [{"id": i, "text": (self.facts or {}).get(i)} for i in packet.get("records", [])],
+        facts = self.facts or {}
+        return {"notes": {"label": "Case notes", "intent": packet.get("intent"), "summary": packet.get("summary"),
+                          "reason": packet.get("reason"), "needs_person": packet.get("needs_person")},
+                "records": [{"id": i, "kind": record_kind(i, facts.get(i)), "text": facts.get(i)} for i in packet.get("records", [])],
                 "verified": self.verified}
 
 

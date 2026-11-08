@@ -11,6 +11,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from decimal import Decimal
 
@@ -25,6 +26,7 @@ from .models import (
     PaymentCommand, WorkItem,
 )
 from .sales import KIND_NAMES, LISTED_KINDS, LISTED_PAID, OUTSIDE, SALE_KINDS
+from .spend import Refused
 from .usage import cost_usd
 
 log = logging.getLogger("desk.investigator")
@@ -45,8 +47,19 @@ STRANDED_AFTER = timedelta(minutes=5)
 # the item open and unchanged), so it cannot confirm that the sale is listed now
 SALE_FRESH_FOR = timedelta(minutes=10)
 # what the desk says about a packet it could not check against its own records
-UNCHECKED = ("Claude's reading. The desk checked only that the records it lists exist and that the dollar amounts and dates it can read in "
+UNCHECKED = ("Case notes. The desk checked only that the records they list exist and that the dollar amounts and dates it can read in "
              "the summary and the reason appear in them or in the tenant's message.")
+# the codes the FMS and the desk use for a payment, as words a person reads; the model reads the same words
+STATE_WORDS = {"NEEDS_STAFF": "needs staff", "CONFIRMED": "confirmed", "AWAITING_APPLICATION": "accepted but not yet on the ledger",
+               "PENDING_AT_FMS": "pending at the FMS", "OUTCOME_UNKNOWN": "outcome unknown", "DECLINED": "declined", "REJECTED": "rejected",
+               "NOT_SUBMITTED": "not sent", "SUBMITTING": "being sent", "NEEDS_REAUTHORIZATION": "needs a new authorization",
+               "RETURNED": "returned by the bank", "REFUNDED": "refunded", "REFUND_PENDING": "refund pending", "DISPUTED": "disputed",
+               "CLEARED_BY_STAFF": "cleared by staff", "SUCCEEDED": "succeeded", "PENDING": "pending", "FAILED": "failed",
+               "DIRECT_DEBIT_RETURN": "returned by the bank", "REFUND_INITIATED": "refund started"}
+
+
+def words(code: str | None) -> str:
+    return STATE_WORDS.get(code or "", (code or "").replace("_", " ").lower())
 INTENTS = ("sale_after_payment", "payment_status", "balance_question", "access_problem", "stop_request", "other")
 # the prompt asks for a summary of 400 characters; one that runs past MAX_SUMMARY is cut at a sentence when it is kept, never refused
 MAX_SUMMARY, MAX_RECORDS = 600, 8
@@ -226,11 +239,11 @@ class Lookups:
     def get_payments(self, lease: Lease) -> dict:
         records = []
         for c in self.session.scalars(select(PaymentCommand).where(PaymentCommand.lease_id == lease.id).order_by(PaymentCommand.id)):
-            text = f"The desk recorded a {money(c.amount)} card payment attempt on {when(c.created_at)}. Its state is {c.state}."
+            text = f"The desk recorded a {money(c.amount)} card payment attempt on {when(c.created_at)}. Its state is {words(c.state)}."
             if c.provider_status:
-                text += f" The FMS reports it as {c.provider_status}."
+                text += f" The FMS reports it as {words(c.provider_status)}."
             if c.suggested_payment_id:
-                text += f" The FMS payment {c.suggested_payment_id} may be this attempt; staff have not confirmed that."
+                text += " A payment at the FMS may be this attempt; staff have not confirmed that."
             if c.confirmed_at:
                 text += f" The desk confirmed it on {when(c.confirmed_at)}."
             records.append(self._record(f"payment:{c.id}", text, state=c.state, amount_cents=c.amount))
@@ -238,7 +251,7 @@ class Lookups:
         # index of payment to lease is the change to make if that grows
         for op in self.session.scalars(select(ObservedPayment).order_by(ObservedPayment.id)):
             if lease.provider_id in (op.lease_provider_ids or []):
-                text = (f"The FMS reports a {money(op.amount)} payment ({op.provider_payment_id}) with status {op.status}. "
+                text = (f"The FMS reports a {money(op.amount)} payment with status {words(op.status)}. "
                         f"The desk first saw it on {when(op.first_seen_at)}.")
                 if op.status_changed_at:
                     text += f" Its status last changed on {when(op.status_changed_at)}."
@@ -618,11 +631,16 @@ def _reply(session: Session, request_id: str | None, run: AgentRun) -> AgentRun:
 
 
 def investigate(session: Session, client, inbound: InboundMessage, request_id: str | None, again: bool = False,
-                fresh_for: timedelta = SALE_FRESH_FOR) -> tuple[AgentRun, bool]:
+                fresh_for: timedelta = SALE_FRESH_FOR, visitor: str | None = None,
+                allow: Callable[[Session, int | None], str | None] | None = None) -> tuple[AgentRun, bool]:
     """Run Claude over a matched text, once. Returns the run and whether this call started it. A request id is answered once: a
     retry gets the same run, whatever `again` says. A run already going, or a finished run, is returned as it is, so a double click
     costs one model run; `again` asks for a new run on a text that has one. A text's runs are numbered and the database takes each
-    number once, so two requests that both find no run cannot both start the first."""
+    number once, so two requests that both find no run cannot both start the first. `allow` is asked just before a new run
+    would start, which is the one place a run is paid for, and again once the run is written, with that run's id so it can be left
+    out: the database serializes writers, so of two requests that both passed the first look, the second sees the first's run.
+    It returns why not, or None, and a refusal raises Refused. A request that only gets an existing run back costs nothing, so it
+    is never refused."""
     if inbound.match_state != "matched" or not inbound.customer_provider_id or inbound.facility_id is None:
         raise ValueError("this text is not matched to one tenant at a facility")
     request = _claim(session, inbound, request_id)
@@ -635,10 +653,17 @@ def investigate(session: Session, client, inbound: InboundMessage, request_id: s
     found = going or (None if again else last)
     if found is not None:
         return _reply(session, request_id, found), False
-    row = AgentRun(inbound_id=inbound.id, generation=last.generation + 1 if last else 1, model=MODEL, effort=EFFORT)
+    reason = allow(session, None) if allow is not None else None
+    if reason:
+        raise Refused(reason)
+    row = AgentRun(inbound_id=inbound.id, generation=last.generation + 1 if last else 1, visitor=visitor, model=MODEL, effort=EFFORT)
     session.add(row)
     try:
         session.flush()             # the unique constraints decide a race between two requests here
+        reason = allow(session, row.id) if allow is not None else None
+        if reason:
+            session.rollback()      # the run is not kept, and nothing was paid for
+            raise Refused(reason)
         if request_id and not _take(session, request_id, row.id):
             session.rollback()      # an earlier copy of this request was answered while this one was working out its run: no run is started
             return _answered(session, request_id), False

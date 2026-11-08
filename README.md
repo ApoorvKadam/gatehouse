@@ -72,6 +72,8 @@ docker compose up --build       # one container: Gatehouse and its worker on :80
 
 The hosted preview sets `DESK_DEMO_SEED=1` and `DESK_PUBLIC_VIEW=1`: on an empty database Gatehouse builds a synthetic world by running its own flows against the simulator (a payment whose answer was lost, a returned payment, a Florida lien file reopened by a payment, a New York file sent to counsel), and anyone may read it without a token. Every change still needs the operator token, and the public view refuses to start against anything but the local simulator.
 
+With `DESK_PUBLIC_INVESTIGATE=1` and a model key, any visitor of the preview can press Investigate on a seeded text at `/inbox` and watch a live Claude run. The limits are `DESK_DAILY_BUDGET_USD` (one dollar a day in all, counting the most each run still going could cost) and `DESK_VISITOR_CASES_PER_DAY` (ten per visitor, a visitor being a hash of where the request came from, never the address). Both count in New York time. A refused request is told why in plain words. The counts live in the desk's database, so a restart of the preview starts them again; a public link needs a guard that a restart cannot reset.
+
 There are no migrations yet: after pulling schema changes, start from fresh volumes (`docker compose down -v`). That includes moving from the earlier three-service compose file, whose `desk-data` and `fms-data` volumes the single container does not use.
 
 Every desk route expects `X-Desk-Token: <DESK_OPERATOR_TOKEN>`; resolving a payment held for staff also needs `X-Staff-Token: <DESK_STAFF_TOKEN>`. Taking a payment at the front desk:

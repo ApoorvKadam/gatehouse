@@ -17,7 +17,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from .access import CLOSED_BY, GATE_RULES, KIND_NAMES, MISSING, NOT_RESTORED, PHYSICAL, policy_for, facility_today
-from . import sales
+from . import sales, spend
+from .messaging import inbox as inbox_of
 from .liens import on
 from .models import (
     AccessPolicy, AccessView, CaseEvent, DelinquencyCase, DeskBinding, Facility, IdentityCheck, Lease, LedgerSnapshot,
@@ -200,6 +201,9 @@ class Pages:
     factory: sessionmaker[Session]
     trace: dict = field(default_factory=dict)   # simulator truth saved when the world was built, keyed by lease
     worker: object | None = None                 # the reconciliation worker in this process, for the operations page
+    live: bool = False                           # a visitor may prepare a case from the inbox (a model key and the switch are both there)
+    budget_usd: float = 1.0
+    cases_per_day: int = 10
 
     def facilities(self, s: Session) -> list[Facility]:
         binding = s.get(DeskBinding, 1)
@@ -420,6 +424,21 @@ def router(pages: Pages) -> APIRouter:
             items = pages.today(s, current)
             return templates.TemplateResponse(request, "today.html", {
                 "facilities": facilities, "facility": current, "items": items, "local": local, "nav": "today"})
+
+    @r.get("/inbox", response_class=HTMLResponse)
+    def inbox_page(request: Request, facility: str | None = None):
+        """The texts that reached a facility's number, who each is from, what the desk sent back, and the case notes."""
+        with session() as s:
+            facilities = pages.facilities(s)
+            if not facilities:
+                raise HTTPException(503, "No facility has been read from the FMS yet")
+            current = next((f for f in facilities if f.provider_id == facility), None) if facility is not None else facilities[0]
+            if current is None:
+                raise HTTPException(404, "No such facility")
+            left = spend.allowance(s, pages.budget_usd, pages.cases_per_day, spend.visitor_of(request)) if pages.live else None
+            return templates.TemplateResponse(request, "inbox.html", {
+                "facilities": facilities, "facility": current, "texts": inbox_of(s, current, limit=30), "local": local, "nav": "inbox",
+                "live": pages.live, "left": left, "cases_per_day": pages.cases_per_day})
 
     @r.get("/accounts/{case_id}", response_class=HTMLResponse)
     def account(request: Request, case_id: int):
