@@ -5,7 +5,8 @@ The count lives in the desk's own database, so a restart of the preview starts i
 private. The guard in front of a public link belongs in a service that a restart cannot reset."""
 from __future__ import annotations
 
-import hashlib
+import hmac
+import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -17,6 +18,9 @@ from .db import utcnow
 from .models import AgentRun
 
 DAY_ZONE = ZoneInfo("America/New_York")
+# The key of the visitor hash, made when the process starts. Without it anyone holding the database could hash every address and
+# read the visitors back. A restart gives every visitor a fresh value, which is what a restart does to the counts anyway.
+_VISITOR_KEY = secrets.token_bytes(16)
 # No run is let to cost more than this. The investigator stops before any call that could take it past, and counts a call that
 # ended with no answer as if it had been billed in full. A run still going is therefore reserved at this amount.
 WORST_RUN_USD = 0.03
@@ -77,12 +81,12 @@ def allowance(session: Session, budget_usd: float, cases_per_day: int, visitor: 
 
 
 def visitor_of(request) -> str:
-    """A short hash of where a request came from. Render's front door puts the visitor's address in a header; the hash keeps the
+    """A short keyed hash of where a request came from. Render's front door puts the visitor's address in a header; the hash keeps the
     address itself out of the database. A header can be forged by someone who reaches the app without the front door, so the count
     per visitor is a courtesy; what bounds the spend is the day's budget and the cap on runs going at once."""
     ip = request.headers.get("cf-connecting-ip") or (request.headers.get("x-forwarded-for", "").split(",")[0].strip()) \
         or (request.client.host if request.client else "unknown")
-    return hashlib.sha256(f"gatehouse-visitor:{ip}".encode()).hexdigest()[:16]
+    return hmac.new(_VISITOR_KEY, ip.encode(), "sha256").hexdigest()[:16]
 
 
 def refusal(session: Session, budget_usd: float, cases_per_day: int, visitor: str | None, exclude: int | None = None) -> str | None:

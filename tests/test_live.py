@@ -2,6 +2,7 @@
 The model is scripted here; the limits, the refusals and the page are the real ones."""
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime
 
 from fastapi.testclient import TestClient
@@ -63,6 +64,7 @@ def test_a_visitor_is_a_hash_of_where_the_request_came_from_and_never_the_addres
     assert spend.visitor_of(Request({"x-forwarded-for": "198.51.100.1, 10.1.1.1"})) == spend.visitor_of(Request({"x-forwarded-for": "198.51.100.1"}))
     assert spend.visitor_of(Request({}, host="192.0.2.5")) != spend.visitor_of(Request({}, host="192.0.2.6"))
     assert "203.0.113.7" not in behind_cloudflare and len(behind_cloudflare) == 16
+    assert behind_cloudflare != hashlib.sha256(b"gatehouse-visitor:203.0.113.7").hexdigest()[:16]      # not a hash anyone can compute from an address
 
 
 # ---------------------------------------------------------------- a visitor starts a run
