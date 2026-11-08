@@ -333,7 +333,7 @@ class InboundMessage(Base):
 
 class OutboundMessage(Base):
     """A text the desk means to send, written before Cubby is called, like a payment command. Cubby's send takes no
-    idempotency key and cannot be asked afterwards, so there is one call: `sent` only when Cubby answered 200, and a
+    idempotency key and no look-up afterwards, so there is one call: `sent` only when Cubby answered 200, and a
     call that got no usable answer stays outcome_unknown for a person to check, never sent again by the desk."""
 
     __tablename__ = "outbound_messages"

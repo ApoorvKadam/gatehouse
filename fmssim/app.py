@@ -122,10 +122,6 @@ def create_app(database_url: str | None = None, lose_response_seconds: float = 8
     @app.post("/v1/customers/search")
     def customers_search(body: dict, key: ApiKey = Depends(caller), session: Session = Depends(db)):
         where = body.get("where") or {}
-        if not key.pii and any(where.get(f) for f in ("name", "phone", "email")):
-            # Cubby documents no rule for this. Refusing keeps a key that may not read personal data from learning
-            # whose number or name it is by trying them one at a time.
-            raise ApiError(403, "This API key cannot search customers by name, phone or email")
         q = select(Customer).where(Customer.org_id == key.org_id)
         if where.get("customerId"):
             q = q.where(Customer.customer_id == where["customerId"])
@@ -133,7 +129,8 @@ def create_app(database_url: str | None = None, lose_response_seconds: float = 8
             q = q.where(Customer.customer_id.in_(select(Lease.customer_id).where(Lease.facility_id == where["facilityId"])))
         rows = session.scalars(q.order_by(Customer.customer_id)).all()
         if where.get("phone"):
-            # Cubby's phone filter is a partial match, so a short number finds every customer whose number contains it
+            # Cubby's changelog says the customer phone filter remains a partial match, so a short number finds every
+            # customer whose number contains it
             wanted = re.sub(r"\D", "", str(where["phone"]))
             rows = [c for c in rows if wanted and wanted in re.sub(r"\D", "", c.phone)]
         return ok({"customers": [customer_json(c, key) for c in rows]})

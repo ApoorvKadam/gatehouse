@@ -1,7 +1,7 @@
 """Texting as Cubby documents it. Tenants text a facility's Cubby number, and Cubby turns each text into an SMS Received
 webhook; here a /sim route hands back that payload, which a test or the seed delivers to Gatehouse's receiver.
-Sending is POST /v1/messages/sms/send: it takes a customer, not a phone number, has no idempotency key and no way to look
-a text up afterwards, and it does not look at the customer's preferences. A number that texted STOP is refused by the
+Sending is POST /v1/messages/sms/send: it takes a customer, not a phone number. Cubby documents no idempotency key and no
+way to look a text up afterwards, and the send does not look at the customer's preferences. A number that texted STOP is refused by the
 carrier, and the FMS's own flag learns of it only when a send is rejected, so it can lag a STOP by one message.
 The /sim routes are what a tenant does on their phone and what a test can read back; Gatehouse never calls them."""
 from __future__ import annotations
@@ -22,10 +22,11 @@ SMS_LIMIT = 320
 
 
 def e164(phone: str | None) -> str:
-    """A US or Canadian number as +1 and ten digits; any other number as + and its digits. Whole numbers only, so two
-    numbers that end the same way in different countries are two numbers."""
-    digits = re.sub(r"\D", "", phone or "")
-    return "+" + ("1" + digits if len(digits) == 10 else digits)
+    """The whole number with its country code. A number written with a plus already has one; ten digits without a plus are
+    a US or Canadian number. Two numbers that end the same way in different countries are two numbers."""
+    text = (phone or "").strip()
+    digits = re.sub(r"\D", "", text)
+    return "+" + digits if text.startswith("+") or len(digits) != 10 else "+1" + digits
 
 
 def register(app: FastAPI, db, caller, ok, iso, ApiError, customer_json) -> None:
@@ -59,8 +60,10 @@ def register(app: FastAPI, db, caller, ok, iso, ApiError, customer_json) -> None
         record = TextMessage(message_id=carrier_id(), facility_id=facility.facility_id, customer_id=customer.customer_id,
                              direction="OUTBOUND", phone=e164(customer.phone), body=text, status="SENT")
         if customer.sms_carrier_stop:
-            # the carrier refuses, and only now does the FMS learn that the customer opted out
-            customer.sms_suppressed, customer.sms_suppression_reason, customer.sms_marketing = True, "OPTED_OUT", False
+            # the carrier refuses, and only now does the FMS learn that the customer opted out. It keeps one reason per
+            # channel and does not replace it: a channel already suppressed as undeliverable stays undeliverable.
+            if not customer.sms_suppressed:
+                customer.sms_suppressed, customer.sms_suppression_reason, customer.sms_marketing = True, "OPTED_OUT", False
             record.status = "REJECTED"
             session.add(record)
             session.commit()

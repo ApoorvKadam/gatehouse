@@ -24,7 +24,7 @@ from .conversation import Conversation
 from .lien_files import ensure_append_only, evaluate_case, record_evidence, replay
 from .liens import FL_R1, ValidationError
 from .db import bind_to_fms, make_session_factory
-from .messaging import inbox, match_pending, outbound_view, receive_text, send_text
+from .messaging import inbox, match_pending, outbound_view, receive_text, send_text, unrouted
 from .models import (
     CaseEvent, DelinquencyCase, DeskBinding, Facility, InboundMessage, Lease, LedgerSnapshot, LienEvaluation, PaymentCommand,
 )
@@ -72,8 +72,8 @@ class ConfirmIn(BaseModel):
 class ReplyIn(BaseModel):
     text: str = Field(min_length=1, max_length=1600)
     staff: str = Field(min_length=2, description="the person at the desk who wrote the reply")
-    request_id: str | None = Field(default=None, min_length=8, max_length=64,
-                                   description="chosen by the screen for each reply; sending it twice sends one text")
+    request_id: str = Field(min_length=8, max_length=64,
+                            description="chosen by the screen for each reply and kept for its retries; sending it twice sends one text")
 
 
 class StaffResolutionIn(BaseModel):
@@ -255,7 +255,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         if text.facility_provider_id is not None:
             check_facility(session, text.facility_provider_id)
         try:
-            row = receive_text(session, text)
+            row = receive_text(session, text, settings.text_numbers)
         except LookupError as exc:
             # a non-200 makes Cubby try again, which is right: this facility will be read soon
             raise HTTPException(503, str(exc)) from exc
@@ -272,6 +272,11 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         """The texts people sent this facility, newest first, each matched to a tenant or marked as not matched."""
         facility = known_facility(session, facility_id)
         return {"messages": inbox(session, facility, min(max(limit, 1), 200)) if facility else []}
+
+    @app.get("/api/inbox/unrouted")
+    def unrouted_texts(limit: int = 50, session: Session = Depends(db), _: str = Depends(viewer)):
+        """Texts kept without a facility because no facility is set for the number that received them."""
+        return {"messages": unrouted(session, min(max(limit, 1), 200))}
 
     @app.post("/api/inbox/{message_id}/reply")
     def reply_to_text(message_id: int, body: ReplyIn, session: Session = Depends(db), _: str = Depends(operator)):

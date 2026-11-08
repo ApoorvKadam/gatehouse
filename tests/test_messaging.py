@@ -18,7 +18,8 @@ from desk.api import create_app
 from desk.cases import sync_facility
 from desk.config import Settings
 from desk.db import bind_to_fms, make_session_factory, utcnow
-from desk.messaging import SMS_LIMIT, can_text, decide, e164, inbox, match_pending, receive_text, send_text
+from desk.messaging import (SMS_LIMIT, can_text, decide, e164, hold_stranded, inbox, match_pending, receive_text, send_text,
+                            unrouted)
 from desk.models import Facility, InboundMessage, OutboundMessage
 from desk.worker import run_once
 
@@ -67,7 +68,7 @@ def stored(session, desk, phone: str, body: str, at: datetime) -> InboundMessage
     return m
 
 
-def person(customer_id: str, phone: str | None, sms: SmsPreference | None = None) -> ProviderCustomer:
+def person(customer_id: str, phone: str | None, sms: SmsPreference | None = SmsPreference(True, False, None)) -> ProviderCustomer:
     return ProviderCustomer(customer_id, "Pat", "Example", phone, sms)
 
 
@@ -131,10 +132,14 @@ def test_a_payload_dated_in_the_future_cannot_outrank_a_later_stop(sim, adapter,
 
 def test_a_payload_that_is_not_an_sms_received_webhook_is_refused(sim, adapter):
     good = texts_in(sim, DANA, "hello")
-    for broken in ({}, {**good, "body": ""}, {**good, "receivedAt": "yesterday"}, {**good, "messageId": None}, {**good, "facilityId": 7}):
+    without_facility = {k: v for k, v in good.items() if k != "facilityId"}
+    without_org = {k: v for k, v in good.items() if k != "orgId"}
+    for broken in ({}, {**good, "body": ""}, {**good, "receivedAt": "yesterday"}, {**good, "messageId": None}, {**good, "facilityId": 7},
+                   without_facility, without_org, {**good, "to": "5550100"}, {**good, "from": "hello"}):
         with pytest.raises(ValueError):
             adapter.inbound_text(broken)
     assert adapter.inbound_text({**good, "customer": {"name": "no id"}}).customer is None
+    assert adapter.inbound_text({**good, "facilityId": None}).facility_provider_id is None      # null is how Cubby says "several"
 
 
 def test_a_text_for_a_facility_the_desk_has_not_read_is_refused_so_cubby_tries_again(sim, adapter, session):
@@ -143,10 +148,17 @@ def test_a_text_for_a_facility_the_desk_has_not_read_is_refused_so_cubby_tries_a
     assert session.scalars(select(InboundMessage)).all() == []
 
 
-def test_a_text_from_a_number_shared_by_several_facilities_is_kept_and_filed_nowhere(sim, adapter, session, desk):
-    m = arrive(session, adapter, {**texts_in(sim, DANA, "hello"), "facilityId": None})
-    assert m is not None and m.facility_id is None and m.match_state == "unrouted" and "more than one facility" in m.match_note
+def test_a_text_from_a_number_shared_by_several_facilities_is_kept_unrouted_until_the_operator_says_which_is_which(sim, adapter, session, desk):
+    shared = {**texts_in(sim, DANA, "hello"), "facilityId": None}
+    text = adapter.inbound_text(shared)
+    m = receive_text(session, text)
+    assert m is not None and m.facility_id is None and m.match_state == "unrouted" and "DESK_TEXT_NUMBERS" in m.match_note
     assert match_pending(session, adapter, desk) == 0 and inbox(session, desk) == []
+    [listed] = unrouted(session)
+    assert listed["from"] == DANA and listed["to"] == "+14075550100" and "DESK_TEXT_NUMBERS" in listed["note"]
+    # with the number set to a facility, the next such text is filed under it
+    filed = receive_text(session, adapter.inbound_text({**shared, "messageId": "SM-other"}), {"(407) 555-0100": ORLANDO})
+    assert filed is not None and filed.facility_id == desk.id and filed.match_state == "pending"
 
 
 # ---------------------------------------------------------------- whose number it is
@@ -187,6 +199,9 @@ def test_a_partial_match_from_the_fms_and_a_number_from_another_country_are_not_
     assert decide(None, None, abroad, DANA).state == "unmatched"
     assert e164("(407) 555-0142") == e164("4075550142") == e164("+1 407 555 0142") == DANA
     assert e164("+44 4075550142") != DANA
+    # a number written with a plus keeps its own country code, even when it is ten digits long
+    assert e164("+4420712345") != e164("+14420712345") and e164("+4420712345") == "+4420712345"
+    assert decide(None, None, [person("cust_1", "+14420712345")], "+4420712345").state == "unmatched"
 
 
 def test_a_key_that_cannot_read_phone_numbers_can_only_trust_cubbys_webhook(fms_url, sim, session, desk):
@@ -196,8 +211,10 @@ def test_a_key_that_cannot_read_phone_numbers_can_only_trust_cubbys_webhook(fms_
     match_pending(session, blind, desk)
     blind.close()
     by_sender = {m.phone_key: m for m in session.scalars(select(InboundMessage))}
+    # the search answers with the customer but leaves out the number, as Cubby says it does without access to personal data
     assert by_sender[DANA].match_state == "matched" and "cannot search by phone" in by_sender[DANA].match_note
-    assert by_sender[STRANGER].match_state == "unmatched" and "cannot read" in by_sender[STRANGER].match_note
+    assert by_sender[STRANGER].match_state == "unmatched"
+    assert decide(None, None, None, DANA).state == "unmatched" and "cannot read" in decide(None, None, None, DANA).note
 
 
 def test_a_text_the_fms_could_not_be_asked_about_is_kept_and_matched_on_the_next_pass(sim, adapter, session, desk):
@@ -259,6 +276,16 @@ def test_a_sentence_that_contains_stop_is_not_the_keyword(session, desk):
     assert can_text(session, desk, person("cust_1", DANA), NOON, reply_to=asked).ok
 
 
+def test_only_a_whole_start_word_lifts_a_stop(session, desk):
+    known = person("cust_1", DANA)
+    stop = stored(session, desk, DANA, "STOP", NOON - timedelta(hours=3))
+    for not_a_keyword in ("YES2", "start 123", "yes please"):
+        stored(session, desk, DANA, not_a_keyword, NOON - timedelta(hours=2))
+        assert not can_text(session, desk, known, NOON, reply_to=stop).ok
+    stored(session, desk, DANA, "  yes!  ", NOON - timedelta(hours=1))
+    assert can_text(session, desk, known, NOON, reply_to=stop).ok
+
+
 def test_a_tenant_the_fms_has_switched_off_is_not_texted_even_in_reply(session, desk):
     asked = stored(session, desk, DANA, "Why is my gate code off?", NOON - timedelta(minutes=5))
     off = person("cust_1", DANA, SmsPreference(False, True, "OPTED_OUT"))
@@ -276,12 +303,19 @@ def test_a_reply_may_go_out_at_night_but_a_text_the_desk_starts_may_not(session,
     assert not night.ok and "Quiet hours" in night.reason
 
 
-def test_a_text_the_tenant_did_not_just_ask_for_needs_preferences_the_fms_shows(session, desk):
-    old = stored(session, desk, DANA, "Hello", NOON - timedelta(days=3))
-    assert can_text(session, desk, person("cust_1", DANA, SmsPreference(True, False, None)), NOON, reply_to=old).ok      # an old text opens nothing
-    assert not can_text(session, desk, person("cust_1", DANA), NOON, reply_to=old).ok
+def test_preferences_the_fms_does_not_show_block_a_reply_as_well(session, desk):
     asked = stored(session, desk, DANA, "Hello", NOON - timedelta(minutes=5))
-    assert can_text(session, desk, person("cust_1", DANA), NOON, reply_to=asked).ok          # but a reply to a fresh one does
+    unknown = person("cust_1", DANA, None)
+    verdict = can_text(session, desk, unknown, NOON, reply_to=asked)
+    assert not verdict.ok and "shows no text preferences" in verdict.reason
+    assert can_text(session, desk, person("cust_1", DANA), NOON, reply_to=asked).ok
+
+
+def test_an_old_text_opens_no_conversation(session, desk):
+    old = stored(session, desk, DANA, "Hello", NOON - timedelta(days=3))
+    known = person("cust_1", DANA, SmsPreference(True, False, None))
+    assert can_text(session, desk, known, NOON, reply_to=old).ok                        # a daytime text to a tenant who may be texted
+    assert not can_text(session, desk, known, NIGHT, reply_to=old).ok                   # but not at night: the old text is no reply
 
 
 # ---------------------------------------------------------------- sending, through Cubby
@@ -412,11 +446,11 @@ def test_the_api_refuses_a_reply_it_must_not_send_and_says_why(fms_url, sim, api
     webhook(api, texts_in(sim, MARCUS, "STOP"))
     webhook(api, texts_in(sim, STRANGER, "What time does the gate open?"))
     by_sender = {m["from"]: m for m in api.get(f"/api/facilities/{ORLANDO}/inbox").json()["messages"]}
-    stop = api.post(f"/api/inbox/{by_sender[MARCUS]['id']}/reply", json={"text": "Your payment came back.", "staff": "J. Ortiz"})
+    stop = api.post(f"/api/inbox/{by_sender[MARCUS]['id']}/reply", json={"text": "Your payment came back.", "staff": "J. Ortiz", "request_id": "reply-stop-1"})
     assert stop.status_code == 409 and "STOP" in stop.json()["detail"]
-    stranger = api.post(f"/api/inbox/{by_sender[STRANGER]['id']}/reply", json={"text": "At six.", "staff": "J. Ortiz"})
+    stranger = api.post(f"/api/inbox/{by_sender[STRANGER]['id']}/reply", json={"text": "At six.", "staff": "J. Ortiz", "request_id": "reply-stranger-1"})
     assert stranger.status_code == 409 and "only a customer on file" in stranger.json()["detail"]
-    too_long = api.post(f"/api/inbox/{by_sender[MARCUS]['id']}/reply", json={"text": "x" * (SMS_LIMIT + 1), "staff": "J. Ortiz"})
+    too_long = api.post(f"/api/inbox/{by_sender[MARCUS]['id']}/reply", json={"text": "x" * (SMS_LIMIT + 1), "staff": "J. Ortiz", "request_id": "reply-long-1"})
     assert too_long.status_code == 422
     assert went_out(fms_url) == []
 
@@ -424,9 +458,11 @@ def test_the_api_refuses_a_reply_it_must_not_send_and_says_why(fms_url, sim, api
 def test_replying_needs_the_operator_token_and_a_real_text(fms_url, sim, api):
     webhook(api, texts_in(sim, DANA, "hello"))
     [shown] = api.get(f"/api/facilities/{ORLANDO}/inbox").json()["messages"]
-    body = {"text": "Hi.", "staff": "J. Ortiz"}
+    body = {"text": "Hi.", "staff": "J. Ortiz", "request_id": "reply-0002"}
     assert api.post(f"/api/inbox/{shown['id']}/reply", json=body, headers={"X-Desk-Token": "wrong"}).status_code == 401
     assert api.post("/api/inbox/99999/reply", json=body).status_code == 404
+    # a reply with no request id is refused: a double click or a retry would otherwise send the text twice
+    assert api.post(f"/api/inbox/{shown['id']}/reply", json={"text": "Hi.", "staff": "J. Ortiz"}).status_code == 422
     assert went_out(fms_url) == []
 
 
@@ -444,6 +480,60 @@ def test_the_preview_opens_on_four_texts_and_what_the_desk_did_about_each(fms_ur
         assert marcus["stopped"] is True and marcus["replies"][0]["state"] == "blocked" and "STOP" in marcus["replies"][0]["reason"]
         stranger = by_name["stranger"]
         assert stranger["match"]["state"] == "unmatched" and "only a customer on file" in stranger["replies"][0]["reason"]
-        assert visitor.post(f"/api/inbox/{dana['id']}/reply", json={"text": "Hi.", "staff": "J. Ortiz"}).status_code == 401   # reading is open
+        assert visitor.post(f"/api/inbox/{dana['id']}/reply", json={"text": "Hi.", "staff": "J. Ortiz", "request_id": "reply-0003"}).status_code == 401   # reading is open
     [only] = went_out(fms_url)
     assert only["phone"] == PRIYA
+
+
+# ---------------------------------------------------------------- more of the documented behaviour, and what the review found
+
+
+def test_the_carrier_leaves_the_reason_the_fms_already_has(fms_url, sim, adapter):
+    assert sim.post("/sim/customers/sms", {"customerId": "cust_DanaWhit01", "suppressed": True, "reason": "UNDELIVERABLE"}).status_code == 200
+    texts_in(sim, DANA, "STOP")
+    assert adapter.send_sms(ORLANDO, "cust_DanaWhit01", "One more thing.").kind == "rejected"
+    assert adapter.customer("cust_DanaWhit01").sms == SmsPreference(False, True, "UNDELIVERABLE")      # not replaced by OPTED_OUT
+
+
+def test_a_send_cut_off_before_its_outcome_is_held_as_unknown_and_never_repeated(adapter, session, desk):
+    asked = stored(session, desk, DANA, "Is anyone there?", utcnow() - timedelta(minutes=10))
+    cut_off = OutboundMessage(facility_id=desk.id, inbound_id=asked.id, customer_provider_id="cust_DanaWhit01", phone=DANA, body="Yes.",
+                              author="front desk", state="intent", created_at=utcnow() - timedelta(minutes=5))
+    just_now = OutboundMessage(facility_id=desk.id, inbound_id=asked.id, customer_provider_id="cust_DanaWhit01", phone=DANA, body="Yes.",
+                               author="front desk", state="intent")
+    session.add_all([cut_off, just_now])
+    session.commit()
+    assert hold_stranded(session) == 1
+    assert (cut_off.state, just_now.state) == ("outcome_unknown", "intent")
+    assert "does not send it again" in cut_off.reason and hold_stranded(session) == 0
+
+
+def test_the_settings_read_which_facility_a_receiving_number_belongs_to(monkeypatch):
+    monkeypatch.setenv("DESK_TEXT_NUMBERS", '{"+14075550100": "fac_NSorlando01"}')
+    assert Settings.from_env().text_numbers == {"+14075550100": ORLANDO}
+    monkeypatch.delenv("DESK_TEXT_NUMBERS")
+    assert Settings.from_env().text_numbers == {}
+
+
+def test_a_shared_number_is_filed_by_the_receiving_number_or_listed_as_unrouted(fms_url, sim):
+    shared = {**texts_in(sim, DANA, "I paid, so why is B-1042 on the auction list?"), "facilityId": None}
+
+    def desk_with(numbers: dict) -> TestClient:
+        settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=5.0,
+                            reconcile_every_seconds=60, operator_token=TOKEN, webhook_token=WEBHOOK, text_numbers=numbers)
+        return TestClient(create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 5.0), start_worker=False), headers={"X-Desk-Token": TOKEN})
+
+    with desk_with({"+14075550100": ORLANDO}) as routed:
+        routed.post(f"/api/facilities/{ORLANDO}/sync")
+        assert webhook(routed, shared).json() == {"stored": True}
+        [shown] = routed.get(f"/api/facilities/{ORLANDO}/inbox").json()["messages"]
+        assert shown["match"]["state"] == "matched" and shown["match"]["customer_name"] == "Dana Whitfield"
+        assert routed.get("/api/inbox/unrouted").json() == {"messages": []}
+    with desk_with({}) as unset:
+        unset.post(f"/api/facilities/{ORLANDO}/sync")
+        assert webhook(unset, {**shared, "messageId": "SM-second"}).json() == {"stored": True}
+        assert unset.get(f"/api/facilities/{ORLANDO}/inbox").json() == {"messages": []}
+        [waiting] = unset.get("/api/inbox/unrouted").json()["messages"]
+        assert waiting["from"] == DANA and "DESK_TEXT_NUMBERS" in waiting["note"]
+        reply = unset.post(f"/api/inbox/{waiting['id']}/reply", json={"text": "Hi.", "staff": "J. Ortiz", "request_id": "reply-0004"})
+        assert reply.status_code == 404                                   # no facility to answer from

@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from .access import bound_facilities, reconcile_access
 from .adapter import FMSAdapter, FMSError
-from .messaging import match_pending
+from .messaging import hold_stranded, match_pending
 from .payments import PaymentService
 from .sales import reconcile_sales
 
@@ -46,6 +46,9 @@ def run_once(factory: sessionmaker[Session], adapter: FMSAdapter, run_id: str = 
             else:
                 if matched:
                     log.info("texts at %s: %d matched", facility.provider_id, matched)
+        stranded = hold_stranded(session)
+        if stranded:
+            log.warning("%d text(s) were cut off before their outcome was recorded and are held for a person", stranded)
         return checked, failures
 
 

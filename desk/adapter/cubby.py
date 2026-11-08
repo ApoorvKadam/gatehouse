@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 
 import httpx
@@ -236,25 +237,35 @@ class CubbyAdapter:
     # ------------------------------------------------------------------ texts
     @staticmethod
     def inbound_text(payload: dict) -> InboundText:
-        """Cubby's SMS Received webhook. Raises ValueError for anything that is not one."""
+        """Cubby's SMS Received webhook. Raises ValueError for anything that is not one: the documented fields must all be
+        there, the numbers must be phone numbers, and facilityId must be present (it is null when a number serves several
+        facilities)."""
         def need(field: str) -> str:
             value = payload.get(field)
             if not isinstance(value, str) or not value:
                 raise ValueError(f"the payload has no usable {field}")
             return value
 
-        facility = payload.get("facilityId")
-        customer = payload.get("customer")
+        def number(field: str) -> str:
+            value = need(field)
+            if len(re.sub(r"\D", "", value)) < 10:
+                raise ValueError(f"{field} is not a phone number")
+            return value
+
+        if "facilityId" not in payload or not (payload["facilityId"] is None or isinstance(payload["facilityId"], str)):
+            raise ValueError("the payload has no usable facilityId")
+        need("orgId")
         received = _parse_time(need("receivedAt"))
-        if received is None or (facility is not None and not isinstance(facility, str)):
-            raise ValueError("the payload has no usable receivedAt or facilityId")
+        if received is None:
+            raise ValueError("the payload has no usable receivedAt")
+        customer = payload.get("customer")
         named = isinstance(customer, dict) and isinstance(customer.get("customerId"), str)
-        return InboundText(message_id=need("messageId"), facility_provider_id=facility or None, to=str(payload.get("to") or ""),
-                           sender=need("from"), body=need("body"), received_at=received,
+        return InboundText(message_id=need("messageId"), facility_provider_id=payload["facilityId"] or None, to=number("to"),
+                           sender=number("from"), body=need("body"), received_at=received,
                            customer=CubbyAdapter._customer(customer) if named and isinstance(customer, dict) else None)
 
     def send_sms(self, facility_provider_id: str, customer_provider_id: str, body: str) -> SmsOutcome:
-        """Cubby texts the customer's number on file. The call takes no idempotency key and the API has no way to look a
+        """Cubby texts the customer's number on file. The call takes no idempotency key and Cubby documents no way to look a
         sent text up, so an answer that never arrives leaves the outcome unknown for good."""
         request = {"customerId": customer_provider_id, "facilityId": facility_provider_id, "body": body}
         try:

@@ -161,7 +161,7 @@ class InboundText:
 @dataclass(frozen=True)
 class SmsOutcome:
     """What sending a text told us. 'lost' means no usable answer came back: the text may or may not have gone out, and
-    the FMS offers no way to look it up afterwards."""
+    Cubby documents no way to look it up afterwards."""
 
     kind: Literal["sent", "rejected", "lost"]
     detail: str | None = None

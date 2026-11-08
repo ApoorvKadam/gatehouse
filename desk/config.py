@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,8 @@ class Settings:
     marketplace_url: str | None = None
     # the shared secret Cubby's SMS Received webhook must present; Cubby documents no signing. Unset, the receiver is closed
     webhook_token: str | None = None
+    # which facility a receiving number belongs to, for the numbers Cubby sends without a facility (a number shared by several)
+    text_numbers: dict[str, str] = field(default_factory=dict)
 
     @staticmethod
     def from_env() -> "Settings":
@@ -45,4 +48,5 @@ class Settings:
             run_id=os.environ.get("DESK_RUN_ID", "local"),
             marketplace_url=os.environ.get("DESK_MARKETPLACE_URL") or None,
             webhook_token=os.environ.get("DESK_WEBHOOK_TOKEN") or None,
+            text_numbers=json.loads(os.environ.get("DESK_TEXT_NUMBERS") or "{}"),
         )

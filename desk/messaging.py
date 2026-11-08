@@ -1,14 +1,14 @@
-"""Texts in and out of a facility, the way Cubby carries them.
+"""Texts in and out of a facility.
 
-Cubby delivers each text a tenant sends as an SMS Received webhook and may deliver one twice, so the desk keeps every text
-as received and deduplicates on the carrier's message id. A text goes out through messages/sms/send, which takes a customer
-rather than a number, has no idempotency key, cannot be looked up afterwards, and checks none of the customer's preferences:
-Cubby's documentation says nothing enforces them for an integrator, and that the FMS's opt-out flag can lag a STOP by one
-message. So the desk decides who may be texted (can_text), writes the intent before it calls, calls once, and holds a text
-whose answer never arrived for a person instead of sending it again."""
+Cubby sends each text a tenant writes to its SMS Received webhook, possibly more than once, so the desk keeps one copy per
+message id. A text goes out through messages/sms/send, which takes a customer, not a number. Cubby documents no idempotency
+key and no way to look a sent text up, and its documentation says nothing enforces a customer's preferences for an
+integrator. So the desk decides who may be texted, writes the intent before it calls, calls once, and holds a text whose
+answer never arrived for a person."""
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -31,13 +31,16 @@ QUIET_FROM, QUIET_UNTIL = time(21, 0), time(8, 0)
 REPLY_WINDOW = timedelta(hours=24)
 # what messages/sms/send accepts
 SMS_LIMIT = 320
+# a send still at the intent stage after this long was cut off before its outcome was written; the call itself times out sooner
+STRANDED_AFTER = timedelta(minutes=2)
 
 
 def e164(phone: str | None) -> str:
-    """A US or Canadian number as +1 and ten digits; any other number as + and its digits. Whole numbers only, so two
-    numbers that end the same way in different countries are two numbers."""
-    digits = re.sub(r"\D", "", phone or "")
-    return "+" + ("1" + digits if len(digits) == 10 else digits)
+    """The whole number with its country code. A number written with a plus already has one; ten digits without a plus are
+    a US or Canadian number. Two numbers that end the same way in different countries are two numbers."""
+    text = (phone or "").strip()
+    digits = re.sub(r"\D", "", text)
+    return "+" + digits if text.startswith("+") or len(digits) != 10 else "+1" + digits
 
 
 def last4(phone: str | None) -> str:
@@ -45,8 +48,10 @@ def last4(phone: str | None) -> str:
 
 
 def keyword(body: str) -> str:
-    """A whole message that is one word, however it was punctuated: 'Stop.' counts, 'stop charging me' does not."""
-    return re.sub(r"[^A-Za-z]+", "", body).upper()
+    """The one word a whole message consists of, ignoring case and the spaces and punctuation around it. 'Stop.' is STOP;
+    'stop charging me' and 'YES2' are not keywords."""
+    found = re.fullmatch(r"\W*([A-Za-z]+)\W*", body)
+    return found.group(1).upper() if found else ""
 
 
 def full_name(customer: ProviderCustomer | None) -> str | None:
@@ -58,16 +63,18 @@ def full_name(customer: ProviderCustomer | None) -> str | None:
 # ---------------------------------------------------------------- inbound
 
 
-def receive_text(session: Session, text: InboundText) -> InboundMessage | None:
-    """Keep one text from Cubby's webhook. None when it is already kept. Raises LookupError when its facility is not one
-    this desk has read yet, so the sender is told to try again later."""
+def receive_text(session: Session, text: InboundText, routes: Mapping[str, str] | None = None) -> InboundMessage | None:
+    """Keep one text from Cubby's webhook. None when it is already kept. The facility is the one the webhook names, or the one
+    `routes` gives for the receiving number (Cubby leaves it out when a number serves several facilities); with neither, the
+    text is kept as unrouted. Raises LookupError when the facility is not one this desk has read yet, so the sender tries again."""
     if session.scalar(select(InboundMessage.id).where(InboundMessage.provider_message_id == text.message_id)) is not None:
         return None
+    facility_id = text.facility_provider_id or {e164(k): v for k, v in (routes or {}).items()}.get(e164(text.to))
     facility = None
-    if text.facility_provider_id is not None:
-        facility = session.scalar(select(Facility).where(Facility.provider_id == text.facility_provider_id))
+    if facility_id is not None:
+        facility = session.scalar(select(Facility).where(Facility.provider_id == facility_id))
         if facility is None:
-            raise LookupError(f"facility {text.facility_provider_id} has not been read yet")
+            raise LookupError(f"facility {facility_id} has not been read yet")
     # a time in the future is not believable, and the order of texts decides who has asked to stop: the desk's own clock is
     # the limit, so a text dated tomorrow can never outrank a STOP that really came after it
     received_at = min(text.received_at, utcnow())
@@ -75,7 +82,7 @@ def receive_text(session: Session, text: InboundText) -> InboundMessage | None:
         facility_id=facility.id if facility else None, provider_message_id=text.message_id, phone=text.sender,
         phone_key=e164(text.sender), to_number=text.to or None, body=text.body, received_at=received_at,
         match_state="pending" if facility else "unrouted",
-        match_note=None if facility else "The receiving number serves more than one facility, so this text is not filed under one yet.",
+        match_note=None if facility else f"No facility is set for the receiving number {text.to or '(none given)'}; see DESK_TEXT_NUMBERS.",
         customer_provider_id=text.customer.provider_id if text.customer else None, customer_name=full_name(text.customer))
     session.add(row)
     try:
@@ -96,9 +103,10 @@ class Match:
 
 def decide(hint_id: str | None, hint_name: str | None, found: list[ProviderCustomer] | None, sender: str) -> Match:
     """Who sent a text. Cubby's webhook names a tenant only when the number belongs to a customer with a lease, and a
-    search of the facility by phone is the check on that. `found` is None when the key cannot search by phone. The FMS's
-    phone filter is a partial match, so only a customer whose whole number is the sender's counts."""
-    if found is None:
+    search of the facility by phone is the check on that. `found` is None when the search was refused; customers that come
+    back without a phone number mean the key cannot read them. The phone filter is a partial match, so only a customer whose
+    whole number is the sender's counts."""
+    if found is None or (found and all(c.phone is None for c in found)):
         if hint_id:
             return Match("matched", hint_id, hint_name, "Named by Cubby's webhook; this API key cannot search by phone to check it.")
         return Match("unmatched", note="This API key cannot read customers' phone numbers, so the sender cannot be matched.")
@@ -162,9 +170,10 @@ def stop_text(session: Session, phone: str) -> InboundMessage | None:
 
 def can_text(session: Session, facility: Facility, customer: ProviderCustomer | None, now: datetime, *,
              reply_to: InboundMessage | None = None) -> Verdict:
-    """May the desk text this customer now? Cubby texts the number it holds for the customer and looks at no preference,
-    so every check is here. `customer` is the tenant as the FMS shows them at this moment, or None when nobody is named.
-    Gatehouse sends account messages and never promotions, so the marketing flag is not consulted; suppression always is."""
+    """May the desk text this customer now? Cubby texts the number it holds for the customer and the desk has to look at
+    every preference, so the checks are here. `customer` is the tenant as the FMS shows them at this moment, or None when
+    nobody is named. Gatehouse sends account messages and never promotions, so the marketing flag is not consulted.
+    The carrier refuses a number that texted STOP; the desk's own record is a second layer, not the first."""
     if customer is None:
         return Verdict(False, "Cubby texts only a customer on file, so a person has to answer this number.")
     if not customer.phone:
@@ -174,9 +183,12 @@ def can_text(session: Session, facility: Facility, customer: ProviderCustomer | 
                               f"not the number that texted (ending {last4(reply_to.phone)}).")
     stop = stop_text(session, customer.phone)
     if stop is not None:
-        return Verdict(False, f"This number texted {keyword(stop.body)} on {stop.received_at:%b} {stop.received_at.day}. It stays off until they text START.")
+        return Verdict(False, f"This number texted {keyword(stop.body)} on {stop.received_at:%b} {stop.received_at.day}. "
+                              "It stays off until they text START.")
     sms = customer.sms
-    if sms is not None and sms.suppressed:
+    if sms is None:
+        return Verdict(False, "The FMS shows no text preferences for this tenant, so Gatehouse cannot tell whether texts are allowed.")
+    if sms.suppressed:
         if sms.reason == "UNDELIVERABLE":
             return Verdict(False, "The FMS marks this number undeliverable. Someone should check it before it is texted again.")
         if sms.reason == "OPTED_OUT":
@@ -185,8 +197,6 @@ def can_text(session: Session, facility: Facility, customer: ProviderCustomer | 
     if reply_to is not None and now - reply_to.received_at <= REPLY_WINDOW:
         return Verdict(True)
     # a text the tenant did not just ask for
-    if sms is None:
-        return Verdict(False, "A text the tenant did not just ask for needs text preferences the FMS shows, and it shows none.")
     local = now.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(facility.time_zone)).time()
     if local >= QUIET_FROM or local < QUIET_UNTIL:
         return Verdict(False, "Quiet hours at this facility: no text it starts goes out between 9 PM and 8 AM local time.")
@@ -248,6 +258,19 @@ def send_text(session: Session, adapter: FMSAdapter, facility: Facility, custome
     return row
 
 
+def hold_stranded(session: Session, now: datetime | None = None) -> int:
+    """A send cut off between its intent and its outcome (the process stopped) may or may not have gone out. It is held as
+    unknown, like a call that got no answer, so a person checks it instead of it staying an intent for good."""
+    cutoff = (now or utcnow()) - STRANDED_AFTER
+    rows = session.scalars(select(OutboundMessage).where(OutboundMessage.state == "intent", OutboundMessage.created_at < cutoff)).all()
+    for row in rows:
+        row.state = "outcome_unknown"
+        row.reason = ("The desk stopped before it recorded what Cubby answered. The text may have gone out, so Gatehouse does not "
+                      "send it again. Check the conversation with this tenant in Cubby.")
+    session.commit()
+    return len(rows)
+
+
 # ---------------------------------------------------------------- what a screen or an API shows
 
 
@@ -277,3 +300,11 @@ def inbox(session: Session, facility: Facility, limit: int = 50) -> list[dict]:
                     "stopped": stop_text(session, m.phone) is not None,
                     "replies": [outbound_view(r) for r in replies]})
     return out
+
+
+def unrouted(session: Session, limit: int = 50) -> list[dict]:
+    """Texts kept without a facility, so they are not lost while no facility is set for the number that received them."""
+    rows = session.scalars(select(InboundMessage).where(InboundMessage.facility_id.is_(None)).order_by(
+        InboundMessage.received_at.desc(), InboundMessage.id.desc()).limit(limit)).all()
+    return [{"id": m.id, "from": m.phone, "to": m.to_number, "body": m.body, "received_at": m.received_at, "note": m.match_note}
+            for m in rows]
