@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import timedelta
 from types import SimpleNamespace
 
@@ -101,6 +102,9 @@ def test_dana_is_investigated_and_the_desk_checks_the_packet_itself(factory):
         assert run.verified["lease_id"] == DANA_LEASE and run.verified["as_of"] and run.verified["payment_found"] is True
         assert "nothing owed on unit B-1042" in run.verified["says"] and "reports a payment" in run.verified["says"]
         assert "card payment attempt" in run.facts[dana_facts(s)["payment"]] and " took " not in run.facts[dana_facts(s)["payment"]]
+        # a time the model can copy is on the facility's own clock, never in UTC
+        assert re.search(r"attempt on [A-Z][a-z]{2} \d+, 20\d\d, \d{1,2}:\d\d [AP]M\.", run.facts[dana_facts(s)["payment"]])
+        assert " UTC" not in " ".join(run.facts.values()) and " UTC" not in run.verified["says"]
         view = run_view(run, trace=True)
         assert view["notes"]["intent"] == "sale_after_payment" and view["notes"]["needs_person"] is True
         assert view["notes"]["label"] == "Case notes" and view["notes"]["summary"] and view["notes"]["reason"]            # the notes carry their label

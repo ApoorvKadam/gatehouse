@@ -27,6 +27,7 @@ from .adapter.base import FMSError, ProviderAuctionEntry
 from .lien_files import current_evidence
 from .liens import dollars, on
 from .models import DelinquencyCase, Facility, Lease, WorkItem, utcnow
+from .wording import when
 
 LISTED_PAID = "sale_listed_nothing_owed"
 BALANCE_CHANGED = "sale_balance_changed"
@@ -212,7 +213,7 @@ def reconcile_sales(session: Session, adapter: FMSAdapter, facility: Facility, r
         entries = None
         for item in open_items:
             if item.kind != OUTSIDE:
-                item.note = f"Not freshly verified: auctions/search could not be read at {now:%b %-d, %H:%M} UTC."
+                item.note = f"Not freshly verified: auctions/search could not be read at {when(now)}."
         result.failures.append(f"auctions at {facility.provider_id}: {exc}")
     by_subject: dict[str, list[WorkItem]] = {}
     for item in open_items:
@@ -222,7 +223,7 @@ def reconcile_sales(session: Session, adapter: FMSAdapter, facility: Facility, r
         why = "could not be read" if feed_url else "is not configured"
         for item in open_items:
             if item.kind == OUTSIDE:
-                item.note = f"Not freshly verified: the outside site's feed {why} ({now:%b %-d, %H:%M} UTC)."
+                item.note = f"Not freshly verified: the outside site's feed {why} ({when(now)})."
         result.failures.append(f"outside listings at {facility.provider_id}: the feed {why}")
     decided: set[str] = set()
     for entry in entries or []:
@@ -242,7 +243,7 @@ def reconcile_sales(session: Session, adapter: FMSAdapter, facility: Facility, r
             except UNREADABLE as exc:
                 for item in mine:
                     if item.kind != OUTSIDE:
-                        item.note = f"Not freshly verified: the lease's ledger or payments could not be read at {now:%b %-d, %H:%M} UTC."
+                        item.note = f"Not freshly verified: the lease's ledger or payments could not be read at {when(now)}."
                 result.failures.append(f"ledger for {entry.lease_provider_id}: {exc}")
                 _outside(session, facility, run_id, entry, listings, result)   # the outside site's feed is its own evidence
                 continue
@@ -403,12 +404,12 @@ def _outside(session: Session, facility: Facility, run_id: str, entry: ProviderA
     if listing is not None and listing.get("status") not in FEED_STATUSES:
         if item is not None:
             item.note = (f"Not verified: the outside site's feed reported this listing with a status Gatehouse cannot read "
-                         f"({listing.get('status')!r}) at {now:%b %-d, %H:%M} UTC.")
+                         f"({listing.get('status')!r}) at {when(now)}.")
         return
     if listing is None:
         if item is not None:
             # a listing that drops out of the feed is not proof it was withdrawn
-            item.note = (f"Not verified: the outside site's feed did not list this sale at {now:%b %-d, %H:%M} UTC. A listing "
+            item.note = (f"Not verified: the outside site's feed did not list this sale at {when(now)}. A listing "
                          "missing from the feed is not proof it was withdrawn.")
         return
     if item is not None and (item.note or "").startswith(("Not freshly verified", "Not verified")):
