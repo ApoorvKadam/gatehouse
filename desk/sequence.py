@@ -1,11 +1,14 @@
 """The steps one text went through, for the Messages page: the message arriving, what the agent read, what the desk checked, the staff
-review and the reply. Every step is written from records the desk already holds, in the order they happened. Nothing here is timed or
-made up: a step the text has not reached yet is shown as waiting, and a step that did not happen is not shown at all."""
+review, the reply, and where the sale stands afterwards. Every step is written from records the desk already holds, in the order they
+happened. Nothing here is timed or made up: a step the text has not reached yet is shown as waiting, and a step that did not happen is not
+shown at all. The last two steps are the FMS cancellation and the outside listing. Each is read from its own work item and is done only on its
+own evidence; the FMS cancelling the sale does not take the outside listing down."""
 from __future__ import annotations
 
 import re
 from datetime import datetime
 
+from .sales import AFTER_NOTICE, BALANCE_CHANGED, CANCELLED_BY, LISTED_PAID, OUTSIDE_NOTE, SETTLED_REVIEW, STATUS_WORDS
 from .wording import plain
 
 # what the page shows for the steps a text has not reached yet: the key, the icon, the title, and one line on what happens there
@@ -15,15 +18,25 @@ AHEAD = (("read", "list-checks", "Our agent reads the case", "It reads the tenan
          ("reply", "send", "A short reply to the tenant", "The desk writes it from the records it confirmed and sends it once."))
 # a number that sent STOP is never texted, so its text shows that instead of a reply
 NO_REPLY = ("reply", "hand", "No reply will be sent", "This number asked to stop all texts, so the desk sends nothing to it.")
+# what the page says about a sale that is still open in the FMS, by the kind of item the desk holds for it
+FMS_OPEN = {
+    LISTED_PAID: "The FMS still lists the sale and shows nothing owed. This step is done when it shows the auction and lease cancelled. A completed task does not count.",
+    BALANCE_CHANGED: "The balance changed after this was opened, so a person reassesses the sale. The desk does not close it on its own.",
+    AFTER_NOTICE: "A payment came after the notice, so a person and counsel decide whether the sale stands. The desk does not close it on its own.",
+    SETTLED_REVIEW: "The sale settled, so a person and counsel review its timing against the payments. The desk does not close it on its own.",
+}
+OUTSIDE_CLOSED = "Confirmed by the outside site's feed"
 # how a reply's state reads, and the colour its chip takes
 REPLIES = {"sent": ("Sent", "done"), "blocked": ("Blocked", "act"), "rejected": ("Refused", "act"), "outcome_unknown": ("Not confirmed", "wait"),
            "intent": ("Sending", "wait")}
 
 
 def _step(key: str, icon: str, title: str, line: str, tone: str = "plain", chip: str | None = None, at: datetime | None = None, state: str = "done",
-          parts: list | None = None, dropped: list | None = None, bubble: tuple[str, str] | None = None) -> dict:
-    return {"key": key, "icon": icon, "title": title, "line": line, "tone": tone, "chip": chip, "at": at, "state": state,
-            "parts": parts or [], "dropped": dropped or [], "bubble": {"side": bubble[0], "text": bubble[1]} if bubble and bubble[1] else None}
+          parts: list | None = None, dropped: list | None = None, bubble: tuple[str, str] | None = None, link: tuple[str, str] | None = None,
+          at_label: str = "") -> dict:
+    return {"key": key, "icon": icon, "title": title, "line": line, "tone": tone, "chip": chip, "at": at, "at_label": at_label, "state": state,
+            "parts": parts or [], "dropped": dropped or [], "bubble": {"side": bubble[0], "text": bubble[1]} if bubble and bubble[1] else None,
+            "link": {"href": link[0], "label": link[1]} if link else None}
 
 
 def _first(text: str | None, limit: int = 220) -> str:
@@ -78,6 +91,39 @@ def _read(run: dict) -> list[dict]:
     return steps
 
 
+def _outcomes(outcome: dict | None) -> list[dict]:
+    """The sale in the FMS and the listing on the outside site, each as a step that is done only on its own evidence. An open one is waiting and
+    says when the desk last read it; a missing outside listing is not shown, because there is nothing to wait for."""
+    if not outcome:
+        return []
+    sale, outside = outcome["sale"], outcome.get("outside")
+    link = (f"/sales/{sale['id']}", "Open the sale")
+    if sale["state"] == "closed":
+        cancelled = sale["verification"] == CANCELLED_BY
+        steps = [_step("fms", "gavel", "FMS lien cancellation", "The FMS shows the auction and lease cancelled." if cancelled else plain(sale["verification"]) or "The item is closed.",
+                       "done" if cancelled else "plain", "Cancelled in the FMS" if cancelled else "Closed", sale["closed_at"], link=link)]
+    else:
+        status = STATUS_WORDS.get(sale.get("status") or "", "")
+        line = FMS_OPEN.get(sale["kind"], "A person decides what happens to the sale.")
+        if (sale.get("note") or "").startswith("Not freshly verified"):
+            line += " " + plain(sale["note"])
+        steps = [_step("fms", "gavel", "FMS lien cancellation", line, "wait", "Still listed in the FMS" if status == "listed" else f"In the FMS: {status or 'not cancelled'}",
+                       sale["updated_at"], "waiting", link=link, at_label="Last read")]
+    if outside is not None:
+        link = (f"/sales/{outside['id']}", "Open the listing")
+        if outside["state"] == "closed":
+            withdrawn = outside["verification"] == OUTSIDE_CLOSED
+            steps.append(_step("outside", "globe", "Outside listing", "The outside site's own feed reports the listing withdrawn." if withdrawn else plain(outside["verification"]) or "The item is closed.",
+                               "done" if withdrawn else "plain", "Withdrawn on the outside site" if withdrawn else "Closed", outside["closed_at"], link=link))
+        else:
+            line = OUTSIDE_NOTE + " This step is done when the site's own feed reports the listing withdrawn."
+            if (outside.get("note") or "").startswith("Not verified"):
+                line += " " + plain(outside["note"])
+            where = plain(outside.get("marketplace")) or "the outside site"
+            steps.append(_step("outside", "globe", "Outside listing", line, "wait", f"Still listed on {where}", outside["updated_at"], "waiting", link=link, at_label="Last read"))
+    return steps
+
+
 def _placed(steps: list[dict], step: dict) -> None:
     """Put a step with a time where it belongs among the steps that have one, after the message itself; one with no later neighbour goes last."""
     if step["at"] is not None:
@@ -113,5 +159,6 @@ def sequence(t: dict, explorable: bool = True) -> list[dict]:
         chip, tone = REPLIES.get(reply["state"], (reply["state"], "plain"))
         who = "The desk sent it after an earlier exploration." if reply["author"] == "agent" else "A person at the desk sent it."
         line = who if reply["state"] == "sent" else (reply.get("reason") or "It was not sent.")
-        _placed(steps, _step("reply", "send", "Reply to the tenant", line, tone, chip, at, bubble=("out", reply["body"])))
-    return steps
+        _placed(steps, _step("reply", "send", "Reply to the tenant", line, tone, chip, at, parts=reply.get("parts"), dropped=reply.get("dropped"),
+                             bubble=("out", reply["body"])))
+    return steps + _outcomes(t.get("outcome"))

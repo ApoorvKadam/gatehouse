@@ -50,9 +50,10 @@
                 <div class="step-head">
                   <h3>{{ s.title }}</h3>
                   {% if s.chip %}<span class="chip {{ s.tone }}">{{ s.chip }}</span>{% endif %}
-                  {% if s.at %}<time>{{ local(s.at) }}</time>{% endif %}
+                  {% if s.at %}<time>{{ s.at_label ~ ' ' if s.at_label }}{{ local(s.at) }}</time>{% endif %}
                 </div>
                 {% if s.line %}<p class="step-line">{{ s.line }}</p>{% endif %}
+                {% if s.link %}<p class="step-more"><a href="{{ s.link.href }}">{{ s.link.label }}</a></p>{% endif %}
                 {% if s.parts %}<ul class="parts">{% for p in s.parts %}<li><span class="rec-kind">{{ p.label }}</span><span>{{ p.text }}</span><span class="part-source">from {{ p.source }}</span></li>{% endfor %}</ul>{% endif %}
                 {% if s.dropped %}<ul class="parts">{% for d in s.dropped %}<li><span class="rec-kind">Left out</span><span>{{ d.label }}: {{ d.why }}.</span><span></span></li>{% endfor %}</ul>{% endif %}
                 {% if s.bubble %}<div class="bubble {{ s.bubble.side }}">{{ s.bubble.text }}</div>{% endif %}

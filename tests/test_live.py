@@ -172,6 +172,9 @@ def test_after_a_run_the_page_shows_the_case_notes_under_their_label_the_records
         assert "Our agent read the case" in html and "The desk checked the notes" in html and 'class="step pending' not in html     # the steps that happened, none waiting
         assert html.index("Our agent read the case") < html.index("The desk checked the notes") < html.index("Case notes")      # the sequence first, the long notes under it
         assert "<details class=\"records\" open" not in html                                                                  # the records stay closed until asked for
+        assert "FMS lien cancellation" in html and "Outside listing" in html and "Still listed in the FMS" in html and 'href="/sales/' in html   # the two outcomes, each its own step
+        for code in ("LISTED", "CANCELLED", "WITHDRAWN", "listing_", "auction_"):
+            assert code not in html, code
 
 
 # ---------------------------------------------------------------- the check, asked again once the run is written

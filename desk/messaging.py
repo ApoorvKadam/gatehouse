@@ -20,7 +20,8 @@ from sqlalchemy.orm import Session
 from .adapter import FMSAdapter, InboundText, NotFound, PermissionDenied, ProviderCustomer
 from .cases import current_case
 from .db import utcnow
-from .models import AgentRun, Facility, InboundMessage, Lease, OutboundMessage
+from .models import AgentRun, Facility, InboundMessage, Lease, OutboundMessage, WorkItem
+from .sales import OUTSIDE, SALE_KINDS
 
 # the words a carrier acts on; a number that sent one of these is not texted until it sends a START word
 STOP_WORDS = ("STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT")
@@ -321,6 +322,24 @@ def outbound_view(m: OutboundMessage) -> dict:
             "created_at": m.created_at, "sent_at": m.sent_at}
 
 
+def outcome_of(session: Session, run: AgentRun | None) -> dict | None:
+    """Where the sale the case notes rest on stands now, read from its own work item, and the outside listing of the same sale, read from its
+    own. Each is what the desk last read from its own source, and it closes on that source's evidence alone. Nothing here asks the FMS."""
+    item_id = (run.verified or {}).get("work_item_id") if run is not None and run.status == "done" else None
+    sale = session.get(WorkItem, item_id) if item_id else None
+    if sale is None or sale.kind not in SALE_KINDS:
+        return None
+    outside = session.scalar(select(WorkItem).where(WorkItem.facility_id == sale.facility_id, WorkItem.kind == OUTSIDE,
+                                                    WorkItem.subject_id == sale.subject_id).order_by(WorkItem.id.desc()))
+
+    def facts(w: WorkItem) -> dict:
+        listing = (w.observed or {}).get("listing") or {}
+        return {"id": w.id, "kind": w.kind, "state": w.state, "verification": w.verification, "note": w.note, "opened_at": w.opened_at,
+                "updated_at": w.updated_at, "closed_at": w.closed_at, "status": (w.observed or {}).get("status"),
+                "marketplace": listing.get("marketplace")}
+    return {"sale": facts(sale), "outside": facts(outside) if outside is not None else None}
+
+
 def inbox(session: Session, facility: Facility, limit: int = 50, offset: int = 0) -> list[dict]:
     """The facility's texts, newest first, each with the tenant it was matched to, that tenant's leases and open cases,
     and what the desk sent back."""
@@ -336,15 +355,19 @@ def inbox(session: Session, facility: Facility, limit: int = 50, offset: int = 0
                 leases.append({"lease_id": lease.provider_id, "unit": lease.unit_name,
                                "case_id": case.id if case else None, "case_state": case.state if case else None})
         replies = session.scalars(select(OutboundMessage).where(OutboundMessage.inbound_id == m.id).order_by(OutboundMessage.id)).all()
-        run = session.scalar(select(AgentRun).where(AgentRun.inbound_id == m.id).order_by(AgentRun.id.desc()))
+        runs = session.scalars(select(AgentRun).where(AgentRun.inbound_id == m.id).order_by(AgentRun.id.desc())).all()
+        run = runs[0] if runs else None
+        # the run that wrote a reply keeps its sentences, so a later exploration cannot take them off the page
+        written = {a["outbound_id"]: a for r in runs for a in r.actions or [] if a.get("kind") == "reply" and a.get("outbound_id")}
         out.append({"id": m.id, "from": m.phone, "body": m.body, "received_at": m.received_at,
                     "investigation": ({"id": run.id, "status": run.status, **run.reading(), "cost_usd": round(run.cost_usd, 6),
                                        "started_at": run.started_at, "finished_at": run.finished_at}
                                       if run is not None else None),
                     "match": {"state": m.match_state, "note": m.match_note, "customer_id": m.customer_provider_id,
                               "customer_name": m.customer_name, "leases": leases},
-                    "stopped": stop_text(session, m.phone) is not None,
-                    "replies": [outbound_view(r) for r in replies]})
+                    "stopped": stop_text(session, m.phone) is not None, "outcome": outcome_of(session, run),
+                    "replies": [outbound_view(r) | {"parts": written.get(r.id, {}).get("parts", []), "dropped": written.get(r.id, {}).get("dropped", [])}
+                                for r in replies]})
     return out
 
 

@@ -59,6 +59,28 @@ def test_the_desk_marks_reading_the_task_back_in_the_run_so_a_waiting_page_shows
         assert len(marked) == 1 and marked[0]["calls"] == []                                          # marked once, with no model call behind it
 
 
+def test_the_message_carries_where_the_sale_and_its_outside_listing_stand_each_from_its_own_item(factory, adapter):
+    from desk.db import utcnow
+    from desk.messaging import inbox
+    from desk.models import Facility
+    from desk.sales import CANCELLED_BY
+    with factory() as s:
+        dana = text_of(s, "Dana Whitfield")
+        facility = s.get(Facility, dana.facility_id)
+        shown = lambda: next(m for m in inbox(s, facility) if m["id"] == dana.id)["outcome"]        # noqa: E731
+        assert shown() is None                                                                       # nobody has explored it, so no sale is cited
+        investigate(s, asking(s), dana, "request-outcome-01", adapter=adapter)
+        outcome = shown()
+        sale = dana_facts(s)["sale"]
+        assert outcome["sale"]["id"] == sale.id and outcome["sale"]["state"] == "open" and outcome["sale"]["status"] == "LISTED"
+        assert outcome["outside"]["kind"] == "sale_outside_listing" and outcome["outside"]["state"] == "open" and outcome["outside"]["marketplace"]
+        # the FMS cancelling the sale closes its own item and leaves the outside listing open
+        sale.state, sale.verification, sale.closed_at = "closed", CANCELLED_BY, utcnow()
+        s.commit()
+        outcome = shown()
+        assert outcome["sale"]["state"] == "closed" and outcome["sale"]["verification"] == CANCELLED_BY and outcome["outside"]["state"] == "open"
+
+
 def test_a_sale_item_with_no_task_gets_one_asked_for_once_the_desk_has_confirmed_the_sale(factory, adapter):
     with factory() as s:
         item = dana_facts(s)["sale"]
