@@ -3,11 +3,13 @@ rather than a number, has no idempotency key, cannot be asked afterwards, and ch
 be texted and never sends a text twice. The simulator runs as a real server and is reached only over HTTP."""
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timedelta
 
 import httpx
 import pytest
+import sqlalchemy as sa
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -707,13 +709,60 @@ def test_the_worker_drops_a_facility_the_key_no_longer_sees(fms_url, sim, adapte
         assert sorted(s.get(DeskBinding, 1).facility_ids) == sorted(SERVED)
 
 
-def test_a_key_that_sees_no_facility_serves_none_and_keeps_the_organization(session):
-    class SeesNothing:
-        def facilities(self):
-            return []
+class SeesNothing:
+    """An FMS that answers the facility list with nothing, as a key does once everything has left its account."""
 
+    def facilities(self):
+        return []
+
+
+def test_a_key_that_sees_no_facility_serves_none_and_keeps_the_organization(session):
     session.add(DeskBinding(id=1, fms_base_url="http://fms", facility_ids=[ORLANDO], org_ids=["org_Northstar01"]))
     session.commit()
     refresh_binding(session, SeesNothing())
     binding = session.get(DeskBinding, 1)
     assert binding.facility_ids == [] and binding.org_ids == ["org_Northstar01"]
+
+
+def test_an_empty_answer_changes_nothing_when_no_organization_was_stored_to_come_back_to(session):
+    session.add(DeskBinding(id=1, fms_base_url="http://fms", facility_ids=[ORLANDO], org_ids=[]))
+    session.commit()
+    refresh_binding(session, SeesNothing())
+    assert session.get(DeskBinding, 1).facility_ids == [ORLANDO]            # unknown, so the old list stays
+
+
+def test_the_desk_restarts_while_the_key_sees_nothing_and_recovers_when_it_sees_facilities_again(fms_url, adapter):
+    factory = make_session_factory("sqlite:///:memory:")
+    with factory() as s:
+        s.add(DeskBinding(id=1, fms_base_url=fms_url, facility_ids=[ORLANDO], org_ids=["org_Northstar01"]))
+        s.commit()
+    bind_to_fms(factory, SeesNothing(), fms_url)                            # no refusal to start
+    with factory() as s:
+        binding = s.get(DeskBinding, 1)
+        assert binding.facility_ids == [] and binding.org_ids == ["org_Northstar01"]
+    bind_to_fms(factory, adapter, fms_url)                                  # the organization brings the facilities back
+    with factory() as s:
+        assert sorted(s.get(DeskBinding, 1).facility_ids) == sorted(SERVED)
+
+
+def test_a_database_kept_from_before_the_inbox_gets_its_new_columns(tmp_path, fms_url, adapter):
+    from fmssim.store import make_session_factory as sim_session_factory
+
+    old = sa.create_engine(f"sqlite:///{tmp_path / 'old-desk.db'}")
+    with old.begin() as c:
+        c.execute(sa.text("CREATE TABLE desk_binding (id INTEGER PRIMARY KEY, fms_base_url VARCHAR, facility_ids JSON, "
+                          "fms_fingerprint VARCHAR, bound_at DATETIME)"))
+        c.execute(sa.text("INSERT INTO desk_binding (id, fms_base_url, facility_ids, fms_fingerprint) VALUES (1, :u, :f, '')"),
+                  {"u": fms_url, "f": json.dumps(sorted(SERVED))})
+    factory = make_session_factory(f"sqlite:///{tmp_path / 'old-desk.db'}")
+    bind_to_fms(factory, adapter, fms_url)                                  # reads the old row and fills the new column
+    with factory() as s:
+        assert s.get(DeskBinding, 1).org_ids == ["org_Northstar01"]
+
+    older = sa.create_engine(f"sqlite:///{tmp_path / 'old-sim.db'}")
+    with older.begin() as c:
+        c.execute(sa.text("CREATE TABLE customers (customer_id VARCHAR PRIMARY KEY, org_id VARCHAR, first_name VARCHAR, "
+                          "last_name VARCHAR, phone VARCHAR, email VARCHAR)"))
+    sim_session_factory(f"sqlite:///{tmp_path / 'old-sim.db'}")
+    columns = {c["name"] for c in sa.inspect(older).get_columns("customers")}
+    assert {"sms_marketing", "sms_suppressed", "sms_suppression_reason", "sms_carrier_stop"} <= columns
