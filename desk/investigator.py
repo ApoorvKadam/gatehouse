@@ -21,7 +21,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .db import utcnow
-from .messaging import STOP_WORDS, stop_text
+from .messaging import STOP_WORDS, mine, stop_text
 from .models import (
     AgentRequest, AgentRun, DelinquencyCase, Facility, InboundMessage, Lease, LedgerSnapshot, LienEvaluation, ObservedPayment, OutboundMessage,
     PaymentCommand, WorkItem,
@@ -342,18 +342,20 @@ class Lookups:
                          "cannot confirm, and sends the text only after it has checked your packet. You will not see the text or whether it was sent."}
 
     def get_recent_texts(self) -> dict:
-        facility, customer = self.scope.facility.id, self.scope.customer_id
-        # a text that is not matched yet carries only the customer the webhook named, which nobody has checked
+        facility, customer, visitor = self.scope.facility.id, self.scope.customer_id, self.inbound.visitor
+        # a text that is not matched yet carries only the customer the webhook named, which nobody has checked. A text and a reply that a
+        # visitor typed are read only for that visitor's own message, so one visitor's words never reach another visitor's case.
         heard = self.session.scalars(select(InboundMessage).where(InboundMessage.facility_id == facility, InboundMessage.customer_provider_id == customer,
-                                                                  InboundMessage.match_state == "matched")
+                                                                  InboundMessage.match_state == "matched", mine(InboundMessage, visitor))
                                      .order_by(InboundMessage.received_at.desc(), InboundMessage.id.desc()).limit(5)).all()
-        sent = self.session.scalars(select(OutboundMessage).where(OutboundMessage.facility_id == facility, OutboundMessage.customer_provider_id == customer)
+        sent = self.session.scalars(select(OutboundMessage).where(OutboundMessage.facility_id == facility, OutboundMessage.customer_provider_id == customer,
+                                                                  mine(OutboundMessage, visitor))
                                     .order_by(OutboundMessage.id.desc()).limit(5)).all()
         rows = [(m.received_at, self.text_in(m)) for m in heard]
         rows += [(m.created_at, self._record(f"text:out:{m.id}", f"The desk's reply of {when(m.created_at)} ({m.state}): \"{m.body}\"")) for m in sent]
         records = [record for _, record in sorted(rows, key=lambda r: r[0])]
         # the desk's stop rule covers every facility it serves, so the answer is the state only: the message behind it is not shown
-        stopped = stop_text(self.session, self.inbound.phone)
+        stopped = stop_text(self.session, self.inbound.phone, visitor)
         texting = self._record("texting:now", ("Texting this number is stopped. It asked to stop texts, and no START has followed."
                                                if stopped is not None else "No STOP from this number is in effect."))
         return {"texting": texting, "texts": records}
@@ -825,7 +827,8 @@ def _review(session: Session, adapter, inv: Investigation) -> None:
         # what the tool checked when the request was made is checked again now: the worker may have closed the item since
         askable = (item.state == "open" and item.facility_id == inv.scope.facility.id and item.kind in SALE_KINDS
                    and lease_of_item(item, inv.scope.leases) is not None)
-        confirmed = bool(verified.get("sale_listed_nothing_owed")) and verified.get("work_item_id") == item.id
+        # a text a visitor typed never makes the desk ask the FMS for a new task: it may link the task that exists, and nothing more
+        confirmed = bool(verified.get("sale_listed_nothing_owed")) and verified.get("work_item_id") == item.id and inv.inbound.visitor is None
         if askable:
             mark_step(session, row, "read_task_back")
         try:

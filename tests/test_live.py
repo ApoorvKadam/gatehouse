@@ -55,8 +55,8 @@ def test_a_day_starts_at_midnight_in_new_york():
 
 def test_a_visitor_is_a_hash_of_where_the_request_came_from_and_never_the_address():
     class Request:
-        def __init__(self, headers, host="10.0.0.9"):
-            self.headers, self.client = headers, type("C", (), {"host": host})()
+        def __init__(self, headers, host="10.0.0.9", cookies=None):
+            self.headers, self.client, self.cookies = headers, type("C", (), {"host": host})(), cookies or {}
 
     behind_cloudflare = spend.visitor_of(Request({"cf-connecting-ip": "203.0.113.7", "x-forwarded-for": "198.51.100.1, 10.1.1.1"}))
     assert behind_cloudflare == spend.visitor_of(Request({"cf-connecting-ip": "203.0.113.7"}))
@@ -65,6 +65,11 @@ def test_a_visitor_is_a_hash_of_where_the_request_came_from_and_never_the_addres
     assert spend.visitor_of(Request({}, host="192.0.2.5")) != spend.visitor_of(Request({}, host="192.0.2.6"))
     assert "203.0.113.7" not in behind_cloudflare and len(behind_cloudflare) == 16
     assert behind_cloudflare != hashlib.sha256(b"gatehouse-visitor:203.0.113.7").hexdigest()[:16]      # not a hash anyone can compute from an address
+    # a browser that holds the desk's cookie is told apart by it, not by its address, and a cookie that is not the desk's own shape is ignored
+    token = spend.new_cookie()
+    held = spend.visitor_of(Request({"cf-connecting-ip": "203.0.113.7"}, cookies={spend.COOKIE: token}))
+    assert held == spend.visitor_of(Request({"cf-connecting-ip": "203.0.113.99"}, cookies={spend.COOKIE: token})) and held != behind_cloudflare
+    assert spend.visitor_of(Request({"cf-connecting-ip": "203.0.113.7"}, cookies={spend.COOKIE: "not-a-token"})) == behind_cloudflare
 
 
 # ---------------------------------------------------------------- a visitor starts a run

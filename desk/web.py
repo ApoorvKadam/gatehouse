@@ -522,11 +522,19 @@ def router(pages: Pages) -> APIRouter:
             current = next((f for f in facilities if f.provider_id == facility), None) if facility is not None else facilities[0]
             if current is None:
                 raise HTTPException(404, "No such facility")
-            texts = inbox_of(s, current, limit=30)
-            selected = next((t for t in texts if t["id"] == text), texts[0] if texts else None)
-            return templates.TemplateResponse(request, "inbox.html", {
+            # a visitor is shown the texts from the webhook and their own; a text of someone else's is answered as not found, never as another text
+            texts = inbox_of(s, current, limit=30, visitor=spend.visitor_of(request) if pages.live else None)
+            selected = next((t for t in texts if t["id"] == text), None) if text is not None else (texts[0] if texts else None)
+            if text is not None and selected is None:
+                raise HTTPException(404, "Message not found")
+            page = templates.TemplateResponse(request, "inbox.html", {
                 "facilities": facilities, "facility": current, "texts": texts, "selected": selected, "local": local, "sequence": sequence, "nav": "inbox",
                 "live": pages.live})
+            if pages.live and spend.COOKIE not in request.cookies:
+                # the cookie tells this browser from another, so texts typed here are seen here and counted here
+                page.set_cookie(spend.COOKIE, spend.new_cookie(), max_age=86400, httponly=True, samesite="lax",
+                                secure=request.headers.get("x-forwarded-proto") == "https")
+            return page
 
     @r.get("/accounts/{case_id}", response_class=HTMLResponse)
     def account(request: Request, case_id: int):

@@ -184,7 +184,7 @@ def test_an_item_the_worker_closed_before_the_desk_acted_gets_no_task(factory, a
         item.state = "closed"                                                              # the worker closed it after the request was made
         s.commit()
         before = tasks(adapter)
-        asked = SimpleNamespace(row=run, lookups=SimpleNamespace(requests=[item.id]), scope=scope_of(s, dana))
+        asked = SimpleNamespace(row=run, lookups=SimpleNamespace(requests=[item.id]), scope=scope_of(s, dana), inbound=dana)
         act(s, adapter, asked)
         assert run.actions[0]["outcome"] == "not_requested" and tasks(adapter) == before
 
