@@ -68,15 +68,14 @@ def dana_facts(s) -> dict:
             "sale": s.scalar(select(WorkItem).where(WorkItem.kind == LISTED_PAID))}
 
 
-def packet(intent="other", findings=(), needs_person=False, reason="", summary="Dana asks about her unit."):
-    return {"intent": intent, "summary": summary, "findings": list(findings), "needs_person": needs_person, "reason": reason}
+def packet(intent="other", records=(), needs_person=False, reason="", summary="Dana asks about her unit."):
+    return {"intent": intent, "summary": summary, "records": list(records), "needs_person": needs_person, "reason": reason}
 
 
 def dana_packet(s) -> dict:
     f = dana_facts(s)
-    return packet("sale_after_payment", [{"statement": "The desk took her $240.00 payment.", "fact_ids": [f["payment"]]},
-                                         {"statement": "The sale is still listed.", "fact_ids": [f"workitem:{f['sale'].id}"]}],
-                  True, "a person has to ask for the sale to be cancelled", "Dana says she paid, and her unit is still on the sale list.")
+    return packet("sale_after_payment", [f["payment"], f"workitem:{f['sale'].id}"],
+                  True, "a person has to ask for the sale to be cancelled", "Dana says she paid $240.00, and her unit is still on the sale list.")
 
 
 def lookups_then_packet(s) -> Scripted:
@@ -100,9 +99,10 @@ def test_dana_is_investigated_and_the_desk_checks_the_packet_itself(factory):
         assert run.verified["checked"] and run.verified["sale_listed_nothing_owed"] and run.verified["work_item_id"] == item.id
         assert run.verified["lease_id"] == DANA_LEASE and run.verified["as_of"] and run.verified["payment_found"] is True
         assert "nothing owed on unit B-1042" in run.verified["says"] and "reports a payment" in run.verified["says"]
+        assert "card payment attempt" in run.facts[dana_facts(s)["payment"]] and " took " not in run.facts[dana_facts(s)["payment"]]
         view = run_view(run, trace=True)
         assert view["intent"] == "sale_after_payment" and view["needs_person"] is True
-        assert view["findings"][1]["records"][0]["text"].startswith("Sale still listed, nothing owed (open).")
+        assert view["records"][1]["text"].startswith("Sale still listed, nothing owed (open).")                       # the record, word for word
         assert [c["tool"] for c in view["trace"][0]["calls"]] == ["get_account", "get_sale_status", "get_payments"]
         assert '"tenant": "Dana Whitfield"' in model.calls[1]["messages"][-1]["content"][0]["content"]       # the name arrives as data in a result
         assert f"workitem:{item.id}" in view["trace"][0]["calls"][1]["records"]
@@ -114,7 +114,7 @@ def test_dana_is_investigated_and_the_desk_checks_the_packet_itself(factory):
 
 def test_a_packet_that_cites_a_record_no_lookup_returned_is_not_accepted(factory):
     with factory() as s:
-        bad = packet("payment_status", [{"statement": "A refund of $240.00 was issued.", "fact_ids": ["payment:9999"]}])
+        bad = packet("payment_status", ["payment:9999"])
         model = Scripted([tool("get_account")], [tool("submit_case_packet", bad)], [tool("submit_case_packet", bad)])      # sent back once, then final
         run, _ = investigate(s, model, text_of(s, "Dana Whitfield"), "request-0002")
         assert run.status == "needs_person" and "payment:9999" in run.error and run.packet is None and run.verified is None
@@ -124,7 +124,7 @@ def test_a_claim_of_a_sale_after_payment_that_the_records_do_not_show_goes_to_a_
     with factory() as s:
         priya = text_of(s, "Priya Raman")
         lease = s.scalar(select(Lease).where(Lease.provider_customer_id == "cust_PriyaRmn01"))
-        claim = packet("sale_after_payment", [{"statement": "Her unit is on the sale list.", "fact_ids": [f"lease:{lease.id}"]}], False, "")
+        claim = packet("sale_after_payment", [f"lease:{lease.id}"], False, "")
         run, _ = investigate(s, Scripted([tool("get_account")], [tool("submit_case_packet", claim)]), priya, "request-0003")
         assert run.status == "needs_person" and "do not confirm it" in run.error
         assert run.verified["checked"] and run.verified["sale_listed_nothing_owed"] is False and run.verified["work_item_id"] is None
@@ -217,7 +217,7 @@ def test_a_lookup_that_finds_nothing_returns_a_record_that_says_so_and_it_can_be
         lease = s.scalar(select(Lease).where(Lease.provider_customer_id == "cust_PriyaRmn01", Lease.unit_name == "A-012"))
         ask = {"lease_id": lease.provider_id}
         none = [f"payment:none:{lease.id}", f"workitem:none:{lease.id}", f"lien:none:{lease.id}"]
-        nothing = packet("payment_status", [{"statement": "No payment, sale item or lien evaluation is recorded.", "fact_ids": none}], True, "no plan in the records")
+        nothing = packet("payment_status", none, True, "no plan in the records")
         model = Scripted([tool("get_account", id_="a1"), tool("get_payments", ask, id_="a2"), tool("get_sale_status", ask, id_="a3"),
                           tool("get_lien_file", ask, id_="a4")], [tool("submit_case_packet", nothing, id_="a5")])
         run, _ = investigate(s, model, text_of(s, "Priya Raman"), "request-0017")
@@ -239,20 +239,29 @@ def test_a_lease_can_be_named_by_the_record_id_get_account_wrote_but_only_for_th
 def test_a_packet_with_a_made_up_id_is_sent_back_once_and_the_corrected_one_is_used(factory):
     with factory() as s:
         dana = text_of(s, "Dana Whitfield")
-        made_up = packet("other", [{"statement": "Nothing is recorded.", "fact_ids": ["lien_file:none"]}], True, "x")
+        made_up = packet("other", ["lien_file:none"], True, "x")
         reads = [tool("get_account", id_="a1"), tool("get_sale_status", {"lease_id": DANA_LEASE}, id_="a2"), tool("get_payments", {"lease_id": DANA_LEASE}, id_="a3")]
         model = Scripted(reads, [tool("submit_case_packet", made_up, id_="a4")], [tool("submit_case_packet", dana_packet(s), id_="a5")])
         run, _ = investigate(s, model, dana, "request-0019")
         assert run.status == "done" and run.turns == 3 and run.packet["intent"] == "sale_after_payment" and run.verified["sale_listed_nothing_owed"] is True
         sent_back = model.calls[2]["messages"][-1]["content"]
         assert sent_back == [{"type": "tool_result", "tool_use_id": "a4", "is_error": True, "content": NOT_ACCEPTED}]    # the made-up id is not repeated to the model
-        assert run.trace[1]["calls"][0]["error"] == "a finding cites records no lookup returned in this run: lien_file:none"
+        assert run.trace[1]["calls"][0]["error"] == "the packet lists records that no earlier lookup of this run returned: lien_file:none"
         assert run.trace[2]["calls"][0]["error"] is None
+
+
+def test_a_packet_written_in_the_same_turn_as_a_lookup_cannot_list_what_that_lookup_returns(factory):
+    with factory() as s:
+        same_turn = packet("other", [dana_facts(s)["lease"]], True, "x")             # the model could not have read the record it lists
+        model = Scripted([tool("get_account", id_="a1"), tool("submit_case_packet", same_turn, id_="a2")], [tool("submit_case_packet", same_turn, id_="a3")])
+        run, _ = investigate(s, model, text_of(s, "Dana Whitfield"), "request-0042")
+        assert run.status == "done" and run.turns == 2
+        assert "no earlier lookup" in run.trace[0]["calls"][-1]["error"] and run.trace[1]["calls"][0]["error"] is None
 
 
 def test_a_packet_rejected_twice_ends_the_run_for_a_person(factory):
     with factory() as s:
-        made_up = packet("other", [{"statement": "x", "fact_ids": ["lien_file:none"]}], True, "x")
+        made_up = packet("other", ["lien_file:none"], True, "x")
         model = Scripted([tool("get_account", id_="a1")], [tool("submit_case_packet", made_up, id_="a2")], [tool("submit_case_packet", made_up, id_="a3")])
         run, _ = investigate(s, model, text_of(s, "Dana Whitfield"), "request-0020")
         assert run.status == "needs_person" and "lien_file:none" in run.error and run.packet is None and run.turns == 3 and model.turns == []
@@ -260,7 +269,7 @@ def test_a_packet_rejected_twice_ends_the_run_for_a_person(factory):
 
 def test_a_packet_rejected_on_the_last_turn_is_not_sent_back(factory):
     with factory() as s:
-        made_up = packet("other", [{"statement": "x", "fact_ids": ["lien_file:none"]}], True, "x")
+        made_up = packet("other", ["lien_file:none"], True, "x")
         model = Scripted(*[[tool("get_account", id_=f"a{n}")] for n in range(MAX_TURNS - 1)], [tool("submit_case_packet", made_up, id_="last")])
         run, _ = investigate(s, model, text_of(s, "Dana Whitfield"), "request-0021")
         assert run.status == "needs_person" and run.turns == MAX_TURNS and "lien_file:none" in run.error and model.turns == []
@@ -269,7 +278,7 @@ def test_a_packet_rejected_on_the_last_turn_is_not_sent_back(factory):
 def test_the_text_under_investigation_is_a_record_from_the_first_turn(factory):
     with factory() as s:
         marcus = text_of(s, "Marcus Bell")
-        said = packet("stop_request", [{"statement": "The tenant wrote only STOP.", "fact_ids": [f"text:in:{marcus.id}"]}], False, "")
+        said = packet("stop_request", [f"text:in:{marcus.id}"], False, "")
         model = Scripted([tool("submit_case_packet", said, id_="a1")])
         run, _ = investigate(s, model, marcus, "request-0022")
         assert run.status == "done" and run.turns == 1                      # cited without a single lookup
@@ -316,7 +325,7 @@ def test_a_sale_claim_is_confirmed_only_by_the_open_sale_item_the_packet_cites(f
         def ask(request_id, claim):
             return investigate(s, Scripted(reads, [tool("submit_case_packet", claim, id_="a4")]), dana, request_id, again=True)[0]
 
-        lease_only = packet("sale_after_payment", [{"statement": "She has a unit.", "fact_ids": [dana_facts(s)["lease"]]}], True, "x")
+        lease_only = packet("sale_after_payment", [dana_facts(s)["lease"]], True, "x")
         run = ask("request-0025", lease_only)
         assert run.status == "needs_person" and run.verified["sale_listed_nothing_owed"] is False and "cites no open sale item" in run.verified["says"]
         item.note = "Not freshly verified: the FMS could not be read on the last pass."          # a stale item confirms nothing
@@ -336,6 +345,24 @@ def test_a_sale_claim_is_confirmed_only_by_the_open_sale_item_the_packet_cites(f
         item.state = "open"
         s.commit()
         assert ask("request-0028b", cited).status == "done"                                        # and the unchanged item confirms it
+
+
+def test_an_item_that_stayed_open_under_its_kind_does_not_confirm_a_sale_its_latest_reading_no_longer_shows(factory):
+    with factory() as s:
+        dana = text_of(s, "Dana Whitfield")
+        item = dana_facts(s)["sale"]
+        cited = dana_packet(s)
+        reads = [tool("get_account", id_="a1"), tool("get_sale_status", {"lease_id": DANA_LEASE}, id_="a2"), tool("get_payments", {"lease_id": DANA_LEASE}, id_="a3")]
+        for n, changed in enumerate(({"owed": 5000}, {"status": "CANCELLED"})):
+            before = dict(item.observed)
+            item.observed = {**before, **changed}                                  # a later reading that no longer meets any sale condition
+            s.commit()
+            run, _ = investigate(s, Scripted(reads, [tool("submit_case_packet", cited)]), dana, f"request-0041-{n}", again=True)
+            assert run.status == "needs_person" and run.verified["sale_listed_nothing_owed"] is False and run.verified["work_item_id"] == item.id
+            assert "latest reading" in run.verified["says"] and "not a sale listed with nothing owed" in run.verified["says"]
+            item.observed = before
+            s.commit()
+        assert investigate(s, Scripted(reads, [tool("submit_case_packet", cited)]), dana, "request-0041-z", again=True)[0].status == "done"
 
 
 def test_a_packet_for_any_other_intent_says_the_desk_did_not_check_it(factory):
@@ -527,16 +554,18 @@ def test_a_failed_model_call_is_recorded_not_raised(factory):
 
 def test_what_makes_a_packet_acceptable():
     facts = {"lease:1": "Unit B-1042. The FMS ledger showed $240.00 owed on Nov 8, 2026, 03:05 UTC."}
-    good = packet("other", [{"statement": "A unit.", "fact_ids": ["lease:1"]}], False, "")
+    good = packet("other", ["lease:1"], False, "")
     assert packet_problem(good, facts) is None
     assert "intent" in packet_problem({**good, "intent": "refund_now"}, facts)
     assert "summary" in packet_problem({**good, "summary": "  "}, facts)
-    assert "cites no records" in packet_problem({**good, "findings": [{"statement": "A unit.", "fact_ids": []}]}, facts)
-    assert "no statement" in packet_problem({**good, "findings": [{"statement": "", "fact_ids": ["lease:1"]}]}, facts)
+    assert packet_problem({**good, "records": []}, facts) is None                        # a text no record answers lists none
+    assert "no list of record ids" in packet_problem({**good, "records": "lease:1"}, facts)
+    assert "no list of record ids" in packet_problem({**good, "records": [7]}, facts)
+    assert "no earlier lookup" in packet_problem({**good, "records": ["lease:1", "payment:9"]}, facts)
     assert "person is needed" in packet_problem({**good, "needs_person": "yes"}, facts)
     assert packet_problem("not a packet", facts) == "the packet is not an object"
-    assert "longer than" in packet_problem({**good, "summary": "x" * 301}, facts)
-    assert "more than" in packet_problem({**good, "findings": [{"statement": "A unit.", "fact_ids": ["lease:1"]}] * 9}, facts)
+    assert "longer than" in packet_problem({**good, "summary": "x" * 401}, facts)
+    assert "more than" in packet_problem({**good, "records": ["lease:1"] * 9}, facts)
     # figures and dates only as a record shows them
     assert packet_problem({**good, "summary": "She owes $240 since Nov 8 (November 8th is the ledger date)."}, facts) is None
     assert packet_problem({**good, "summary": "On 2026-11-08, 11/8/26 and 11/8 she owed 240.00 dollars."}, facts) is None      # the same figures in other forms
@@ -545,8 +574,8 @@ def test_what_makes_a_packet_acceptable():
     assert "Dec 25" in packet_problem({**good, "reason": "The sale is on December 25."}, facts)
     assert "Dec 25, 2030" in packet_problem({**good, "reason": "The sale is on 12/25/2030."}, facts)
     assert "Nov 8, 2031" in packet_problem({**good, "reason": "She has owed it since Nov 8, 2031."}, facts)       # the same day of another year
-    assert "$1,200.50" in packet_problem({**good, "findings": [{"statement": "She paid $1,200.50.", "fact_ids": ["lease:1"]}]}, facts)
-    assert len(packet_problem(packet("other", [{"statement": "A unit.", "fact_ids": ["x" * 500]}]), facts)) < 150
+    assert "$1,200.50" in packet_problem({**good, "reason": "She paid $1,200.50."}, facts)
+    assert len(packet_problem(packet("other", ["x" * 500]), facts)) < 150
 
 
 def test_the_cost_is_haiku_5_5s_price_and_nothing_else_is_priced():
@@ -593,6 +622,19 @@ def test_the_route_runs_claude_once_and_shows_the_run(fms_url, sim):
         assert run["trace"][0]["calls"][0]["tool"] == "get_account" and run["cost_usd"] > 0
         listed = client.get(f"/api/facilities/{ORLANDO}/inbox").json()["messages"]
         assert next(m for m in listed if m["id"] == ids["Dana Whitfield"])["investigation"]["status"] == "done"
+
+
+def test_a_retry_of_a_request_whose_run_is_still_going_gets_that_run_to_poll(fms_url, sim):
+    with TestClient(preview(fms_url, Scripted())) as client:
+        ids = message_ids(client)
+        operator = {"X-Desk-Token": TOKEN}
+        with client.app.state.session_factory() as s:
+            s.add(AgentRun(inbound_id=ids["Dana Whitfield"], request_id="request-api-06", model="claude-haiku-5-5", effort="medium", status="running"))
+            s.commit()
+        same = client.post(f"/api/inbox/{ids['Dana Whitfield']}/investigate", json={"request_id": "request-api-06"}, headers=operator)
+        other = client.post(f"/api/inbox/{ids['Dana Whitfield']}/investigate", json={"request_id": "request-api-07"}, headers=operator)
+        assert same.status_code == other.status_code == 202
+        assert same.json()["status"] == "running" and same.json()["id"] == other.json()["id"]
 
 
 def test_the_route_refuses_without_a_key_and_for_a_text_that_is_not_matched(fms_url, sim):

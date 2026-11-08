@@ -9,7 +9,7 @@ import tempfile
 from contextlib import asynccontextmanager
 from urllib.parse import urlsplit
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm.exc import StaleDataError
 from pydantic import BaseModel, Field
@@ -322,7 +322,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         return outbound_view(row)
 
     @app.post("/api/inbox/{message_id}/investigate")
-    def investigate_text(message_id: int, body: InvestigateIn, session: Session = Depends(db), _: str = Depends(operator)):
+    def investigate_text(message_id: int, body: InvestigateIn, response: Response, session: Session = Depends(db), _: str = Depends(operator)):
         """Claude reads a matched text, looks up the desk's records and prepares the case. The desk checks the packet against
         its own records. Needs a model key. A text has one run unless `again` is set, and a double click is one run."""
         if chat_client is None:
@@ -339,7 +339,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         if run.status == "running":
-            raise HTTPException(409, f"a run on this text is already going (run {run.id})")
+            response.status_code = 202          # a retry gets the run that is going, so the screen can poll it by its id
         return run_view(run)
 
     @app.get("/api/agent-runs/{run_id}")
