@@ -113,8 +113,9 @@ def resolve(session: Session, inv, kind: str, record_id: str) -> tuple[Part | No
     return None, "the desk cannot write that part"
 
 
-def _mark(session: Session, run: AgentRun, name: str) -> None:
-    """Show a step of the reply in the run's own record, so a page waiting for the run can show it as it happens."""
+def mark_step(session: Session, run: AgentRun, name: str) -> None:
+    """Show a step the desk takes after the packet (reading a task back, checking and sending a reply) in the run's own record, so a page
+    waiting for the run can show it as it happens."""
     run.trace = deepcopy((run.trace or []) + [{"turn": len(run.trace or []) + 1, "asked": [name], "calls": []}])
     session.commit()
 
@@ -152,7 +153,7 @@ def answer(session: Session, adapter, inv) -> dict | None:
     if earlier is not None:
         return _not_sent("this message was answered already" if earlier.state in ("sent", "outcome_unknown")
                          else f"an earlier reply was blocked: {earlier.reason or 'the rule said no'}", proposed=proposal)
-    _mark(session, inv.row, "check_reply")
+    mark_step(session, inv.row, "check_reply")
     chosen, dropped = [], []
     for kind, record_id in [(OPENER, "")] + [p for p in proposal if p[0] != OPENER]:
         part, why = resolve(session, inv, kind, record_id)
@@ -167,7 +168,7 @@ def answer(session: Session, adapter, inv) -> dict | None:
     body = " ".join(p.text for p in ordered)
     if len(body) > SMS_LIMIT:
         return _not_sent(f"the text would be {len(body)} characters, and a text may be {SMS_LIMIT}", ordered, dropped, proposal)
-    _mark(session, inv.row, "send_reply")
+    mark_step(session, inv.row, "send_reply")
     try:
         sent = send_text(session, adapter, inv.scope.facility, inv.scope.customer_id, body, "agent", reply_to=inbound,
                          request_id=f"agent-reply:{inbound.id}")

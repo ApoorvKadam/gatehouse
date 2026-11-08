@@ -116,7 +116,7 @@ def test_without_the_switch_a_visitor_still_cannot_start_a_run(fms_url, sim):
 # ---------------------------------------------------------------- the Messages page
 
 
-def test_the_messages_page_lists_each_message_and_shows_the_chosen_one_beside_what_our_agent_did(fms_url, sim):
+def test_the_messages_page_lists_each_message_and_shows_the_chosen_one_as_a_sequence(fms_url, sim):
     with TestClient(live_app(fms_url, Scripted(), visitor_cases_per_day=10)) as client:
         ids = message_ids(client)
         page = client.get("/inbox")
@@ -124,21 +124,25 @@ def test_the_messages_page_lists_each_message_and_shows_the_chosen_one_beside_wh
         assert page.status_code == 200 and 'href="/inbox"' in html and "Messages at " in html and ">Messages</a>" in html
         assert all(name in html for name in ("Dana Whitfield", "Priya Raman", "Marcus Bell", "Unknown number"))      # every message is in the list
         assert "Texting stopped" in html                                                                           # Marcus's chip, in the list
-        assert "of 10 explorations left today" in html and html.count('<i class="left">') == 10
+        assert "explorations left" not in html and 'class="meter' not in html            # no allowance counter: the server stops a visitor at the limit and says so then
         assert html.count("data-explore=") == 1 and "Explore with our agent" in html                             # one button, for the chosen matched message
         assert no_vendor_name(html)                                                                              # the page never names the model
+        dana = client.get(f"/inbox?text={ids['Dana Whitfield']}").text                                           # nobody has explored her message yet
+        assert 'class="seq"' in dana and "Message received" in dana and "Our agent reads the case" in dana       # the steps, the first done and the rest waiting
+        assert dana.count('class="step pending after"') == 4 and 'id="progress" hidden' in dana
         priya = client.get(f"/inbox?text={ids['Priya Raman']}").text
         assert "Hi Priya, yes. Your payment plan" in priya and ">Sent<" in priya.replace("</svg>", "")
         marcus = client.get(f"/inbox?text={ids['Marcus Bell']}").text
         assert "Blocked" in marcus and "This number texted STOP" in marcus
         stranger = client.get(f"/inbox?text={ids['stranger']}").text
-        assert "There is no tenant to look up" in stranger and "data-explore=" not in stranger
+        assert "No tenant was found for this number" in stranger and "data-explore=" not in stranger and 'class="step pending' not in stranger
 
 
 def test_the_messages_page_says_so_when_live_runs_are_off(fms_url, sim):
     with TestClient(preview(fms_url, None)) as client:
         html = client.get("/inbox").text
         assert "Our agent is switched off on this copy" in html and "Explore with our agent" not in html and "data-explore=" not in html
+        assert 'class="step pending' not in html and 'id="progress"' not in html         # nothing waits for an agent that is off
         assert no_vendor_name(html)
 
 
@@ -165,6 +169,9 @@ def test_after_a_run_the_page_shows_the_case_notes_under_their_label_the_records
         for code in ("workitem:", "payment:", "observed:", "lease:", "lease_", "payment_", "NEEDS_STAFF", "sale_listed"):          # no raw id or code on the page
             assert code not in html, code
         assert "The desk confirms the sale" in html and "Explore again" in html and "Written by our agent from the desk" in html
+        assert "Our agent read the case" in html and "The desk checked the notes" in html and 'class="step pending' not in html     # the steps that happened, none waiting
+        assert html.index("Our agent read the case") < html.index("The desk checked the notes") < html.index("Case notes")      # the sequence first, the long notes under it
+        assert "<details class=\"records\" open" not in html                                                                  # the records stay closed until asked for
 
 
 # ---------------------------------------------------------------- the check, asked again once the run is written
