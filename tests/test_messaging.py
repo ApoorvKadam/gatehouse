@@ -170,6 +170,17 @@ def test_a_text_from_a_number_shared_by_several_facilities_is_kept_unrouted_unti
     assert (m.facility_id, m.match_state) == (desk.id, "pending")
 
 
+def test_a_wrong_number_setting_can_be_corrected_and_the_waiting_text_is_filed(sim, adapter, session, desk):
+    shared = {**texts_in(sim, DANA, "hello"), "facilityId": None}
+    m = receive_text(session, adapter.inbound_text(shared), {"+14075550100": "fac_WRONG"})
+    assert m is not None and m.match_state == "unrouted" and "fac_WRONG" in m.match_note
+    assert m.facility_provider_id is None                                      # the setting's answer is not kept as the webhook's
+    assert file_unrouted(session, {"+14075550100": "fac_WRONG"}) == 0
+    assert file_unrouted(session, {"+14075550100": ORLANDO}) == 1               # corrected: filed
+    session.refresh(m)
+    assert (m.facility_id, m.match_state) == (desk.id, "pending")
+
+
 # ---------------------------------------------------------------- whose number it is
 
 
@@ -424,16 +435,18 @@ def test_the_webhook_receiver_needs_the_shared_secret_and_a_real_payload(fms_url
     assert webhook(api, payload).json() == {"stored": False}                  # Cubby delivered it twice
     assert len(api.get(f"/api/facilities/{ORLANDO}/inbox").json()["messages"]) == 1
 
-    # a facility of another operator is not this desk's; one this desk has not read yet is kept and filed once it is
-    assert webhook(api, {**texts_in(sim, DANA, "hi"), "facilityId": "fac_HBtampa0001"}).status_code == 404
-    assert webhook(api, {**texts_in(sim, DANA, "hi"), "facilityId": "fac_NSalbany001"}).json() == {"stored": True}
-    [waiting] = api.get("/api/inbox/unrouted").json()["messages"]
-    assert "has not been read yet" in waiting["note"]
+    # a facility the desk does not serve yet (another operator's, or one added to the account after the desk started) is never
+    # refused: the text is kept as unrouted. One the desk serves but has not read yet is filed as soon as it is read.
+    assert webhook(api, {**texts_in(sim, DANA, "hi"), "facilityId": "fac_HBtampa0001"}).json() == {"stored": True}
+    assert webhook(api, {**texts_in(sim, DANA, "hi again"), "facilityId": "fac_NSalbany001"}).json() == {"stored": True}
+    waiting = api.get("/api/inbox/unrouted").json()["messages"]
+    assert len(waiting) == 2 and all("has not been read yet" in w["note"] for w in waiting)
     assert api.post("/api/facilities/fac_NSalbany001/sync").status_code == 200
     with api.app.state.session_factory() as s:
         assert file_unrouted(s) == 1
-    assert api.get("/api/inbox/unrouted").json() == {"messages": []}
-    assert [m["from"] for m in api.get("/api/facilities/fac_NSalbany001/inbox").json()["messages"]] == [DANA]
+    [still] = api.get("/api/inbox/unrouted").json()["messages"]              # the other operator's facility is never filed here
+    assert still["body"] == "hi"
+    assert [m["body"] for m in api.get("/api/facilities/fac_NSalbany001/inbox").json()["messages"]] == ["hi again"]
 
 
 def test_a_desk_without_a_webhook_token_refuses_every_webhook(fms_url, sim):

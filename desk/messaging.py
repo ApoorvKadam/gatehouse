@@ -80,8 +80,10 @@ def receive_text(session: Session, text: InboundText, routes: Mapping[str, str] 
     # a time in the future is not believable, and the order of texts decides who has asked to stop: the desk's own clock is
     # the limit, so a text dated tomorrow can never outrank a STOP that really came after it
     received_at = min(text.received_at, utcnow())
+    # only a facility the webhook itself names is kept for later. One that came from DESK_TEXT_NUMBERS is worked out again
+    # each time, so correcting the setting can still file the text.
     row = InboundMessage(
-        facility_id=facility.id if facility else None, facility_provider_id=named, provider_message_id=text.message_id,
+        facility_id=facility.id if facility else None, facility_provider_id=text.facility_provider_id, provider_message_id=text.message_id,
         phone=text.sender, phone_key=e164(text.sender), to_number=text.to, body=text.body, received_at=received_at,
         match_state="pending" if facility else "unrouted", match_note=note,
         customer_provider_id=text.customer.provider_id if text.customer else None, customer_name=full_name(text.customer))

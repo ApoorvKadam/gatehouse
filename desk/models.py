@@ -316,7 +316,7 @@ class InboundMessage(Base):
     # none until the text can be filed: the receiving number serves several facilities and none is set, or the desk has not
     # read the named facility yet. The text is kept either way.
     facility_id: Mapped[int | None] = mapped_column(ForeignKey("facilities.id"), nullable=True)
-    # the facility the webhook named, or the one the receiving number is set to, kept while the desk has no row for it
+    # the facility the webhook named, kept while the desk has no row for it
     facility_provider_id: Mapped[str | None] = mapped_column(String, nullable=True)
     provider_message_id: Mapped[str] = mapped_column(String, unique=True)
     phone: Mapped[str] = mapped_column(String)

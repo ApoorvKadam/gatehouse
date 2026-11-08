@@ -253,8 +253,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
             text = adapter.inbound_text(payload)
         except ValueError as exc:
             raise HTTPException(422, f"not an SMS Received payload: {exc}") from exc
-        if text.facility_provider_id is not None:
-            check_facility(session, text.facility_provider_id)
+        # a facility added to the account after the desk started is not in its binding yet; the text is kept for it anyway
         row = receive_text(session, text, settings.text_numbers)
         if row is not None and row.facility_id is not None:
             try:
