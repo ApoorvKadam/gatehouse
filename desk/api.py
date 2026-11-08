@@ -28,7 +28,7 @@ from .investigator import progress as run_progress
 from .lien_files import ensure_append_only, evaluate_case, record_evidence, replay
 from .liens import FL_R1, ValidationError
 from .db import bind_to_fms, make_session_factory, refresh_binding
-from .messaging import inbox, match_pending, outbound_view, receive_text, send_text, unrouted
+from .messaging import inbox, match_pending, outbound_view, play_tenant, receive_text, send_text, unrouted
 from .models import (
     AgentRun, CaseEvent, DelinquencyCase, DeskBinding, Facility, InboundMessage, Lease, LedgerSnapshot, LienEvaluation, PaymentCommand,
 )
@@ -84,6 +84,13 @@ class InvestigateIn(BaseModel):
     request_id: str = Field(min_length=8, max_length=64,
                             description="chosen by the screen for each request and kept for its retries; sending it twice is one run")
     again: bool = Field(default=False, description="prepare the case again on a text that already has notes")
+
+
+class PlayIn(BaseModel):
+    sender: str = Field(min_length=1, max_length=16, description="who is texting: dana, priya or unknown; the number comes from the desk")
+    body: str = Field(max_length=2000, description="what the tenant types: 1 to 320 characters once control characters are removed")
+    request_id: str = Field(min_length=8, max_length=64,
+                            description="chosen by the screen for each press and kept for its retries; sending it twice is one text")
 
 
 class StaffResolutionIn(BaseModel):
@@ -193,6 +200,10 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         binding = session.get(DeskBinding, 1)
         if binding is not None and facility_id not in binding.facility_ids:
             raise HTTPException(404, "facility not found")
+
+    def seen_by(message: InboundMessage, who: str, request: Request) -> bool:
+        """A text a visitor typed is seen by that visitor and by the operator; a text from the webhook by anyone who may read."""
+        return message.visitor is None or who != "visitor" or message.visitor == spend.visitor_of(request)
 
     def get_case(session: Session, case_id: int) -> DelinquencyCase:
         """A case on a facility the current FMS key can see; anything else is answered as not found."""
@@ -332,6 +343,28 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
             raise HTTPException(409, f"not sent: {row.reason}")
         return outbound_view(row)
 
+    @app.post("/api/inbox/texts")
+    def play_text(body: PlayIn, request: Request, session: Session = Depends(db), _: str = Depends(actor)):
+        """A visitor plays the tenant: types a text as one of the tenants they may play. The desk keeps it the way it keeps a text from the
+        webhook, matches it to a tenant by the number, and it belongs to this visitor alone. The visitor supplies only the words."""
+        if chat_client is None or not settings.public_investigate:
+            raise HTTPException(503, "texts can be typed only where the agent is switched on")
+        origin = request.headers.get("origin")
+        if origin and urlsplit(origin).netloc != (request.headers.get("x-forwarded-host") or request.headers.get("host", "")):
+            raise HTTPException(403, "this request came from another site")
+        visitor = spend.visitor_of(request)
+        reason = spend.text_refusal(session, visitor)
+        if reason:
+            raise HTTPException(429, reason)
+        binding = session.get(DeskBinding, 1)
+        try:
+            row = play_tenant(session, adapter, body.sender, body.body, visitor, body.request_id, set(binding.facility_ids) if binding else set())
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        facility = session.get(Facility, row.facility_id) if row.facility_id is not None else None
+        log.info("a visitor typed a text: visitor %s, sender %s, %d characters, %s", visitor[:6], body.sender, len(body.body), row.match_state)
+        return {"id": row.id, "facility": facility.provider_id if facility is not None else None, "match": row.match_state}
+
     @app.post("/api/inbox/{message_id}/investigate")
     def investigate_text(message_id: int, body: InvestigateIn, request: Request, response: Response, session: Session = Depends(db),
                          who: str = Depends(actor)):
@@ -341,7 +374,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
             raise HTTPException(503, "the desk has no model key configured")
         message = session.get(InboundMessage, message_id)
         facility = session.get(Facility, message.facility_id) if message is not None and message.facility_id is not None else None
-        if message is None or facility is None:
+        if message is None or facility is None or not seen_by(message, who, request):
             raise HTTPException(404, "text not found")
         check_facility(session, facility.provider_id)
         if message.match_state != "matched" or not message.customer_provider_id:
@@ -362,22 +395,22 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         return {**run_view(run), "limits": {"cases_left": left.cases_left, "budget_left_usd": round(left.budget_left_usd, 4)}}
 
     @app.get("/api/inbox/{message_id}/progress")
-    def inbox_progress(message_id: int, session: Session = Depends(db), _: str = Depends(viewer)):
+    def inbox_progress(message_id: int, request: Request, session: Session = Depends(db), who: str = Depends(viewer)):
         """The steps the latest run on a text has taken so far, in plain words, for a page that is waiting for the run to finish."""
         message = session.get(InboundMessage, message_id)
         facility = session.get(Facility, message.facility_id) if message is not None and message.facility_id is not None else None
-        if message is None or facility is None:
+        if message is None or facility is None or not seen_by(message, who, request):
             raise HTTPException(404, "text not found")
         check_facility(session, facility.provider_id)
         return run_progress(session, message_id)
 
     @app.get("/api/agent-runs/{run_id}")
-    def agent_run(run_id: int, session: Session = Depends(db), _: str = Depends(viewer)):
+    def agent_run(run_id: int, request: Request, session: Session = Depends(db), who: str = Depends(viewer)):
         """One run with its trace: every model turn and lookup, and the records each lookup returned."""
         run = session.get(AgentRun, run_id)
         message = session.get(InboundMessage, run.inbound_id) if run is not None else None
         facility = session.get(Facility, message.facility_id) if message is not None and message.facility_id is not None else None
-        if run is None or facility is None:
+        if run is None or facility is None or not seen_by(message, who, request):
             raise HTTPException(404, "run not found")
         check_facility(session, facility.provider_id)
         return run_view(run, trace=True)

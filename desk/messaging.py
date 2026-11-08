@@ -7,6 +7,7 @@ integrator. So the desk decides who may be texted, writes the intent before it c
 answer never arrived for a person."""
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
@@ -17,11 +18,13 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .adapter import FMSAdapter, InboundText, NotFound, PermissionDenied, ProviderCustomer
+from .adapter import FMSAdapter, FMSError, InboundText, NotFound, PermissionDenied, ProviderCustomer
 from .cases import current_case
 from .db import utcnow
 from .models import AgentRun, Facility, InboundMessage, Lease, OutboundMessage, WorkItem
 from .sales import OUTSIDE, SALE_KINDS
+
+log = logging.getLogger("desk.messaging")
 
 # the words a carrier acts on; a number that sent one of these is not texted until it sends a START word
 STOP_WORDS = ("STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT")
@@ -34,6 +37,12 @@ REPLY_WINDOW = timedelta(hours=24)
 SMS_LIMIT = 320
 # a send still at the intent stage after this long was cut off before its outcome was written; the call itself times out sooner
 STRANDED_AFTER = timedelta(minutes=2)
+
+
+def mine(model, visitor: str | None):
+    """The rows a visitor may see and be answered about: what came from the webhook, and their own. A visitor of None is the desk itself,
+    which sees only what came from the webhook, so nothing a visitor typed can reach a text, a count or a send of the real kind."""
+    return model.visitor.is_(None) if visitor is None else or_(model.visitor.is_(None), model.visitor == visitor)
 
 
 def e164(phone: str | None) -> str:
@@ -64,11 +73,13 @@ def full_name(customer: ProviderCustomer | None) -> str | None:
 # ---------------------------------------------------------------- inbound
 
 
-def receive_text(session: Session, text: InboundText, routes: Mapping[str, str] | None, served: Collection[str]) -> InboundMessage | None:
+def receive_text(session: Session, text: InboundText, routes: Mapping[str, str] | None, served: Collection[str],
+                 visitor: str | None = None) -> InboundMessage | None:
     """Keep one text from Cubby's webhook. None when it is already kept. The facility is the one the webhook names, or the one
     `routes` gives for the receiving number (Cubby leaves it out when a number serves several facilities). A text is filed only
     under a facility in `served`. With no such facility, or one the desk has not read yet, the text is still kept, as unrouted,
-    and filed later by file_unrouted. The caller has already checked the text belongs to this operator."""
+    and filed later by file_unrouted. The caller has already checked the text belongs to this operator. `visitor` is set only for a text
+    a visitor typed to play the tenant; the webhook never sets it."""
     if session.scalar(select(InboundMessage.id).where(InboundMessage.provider_message_id == text.message_id)) is not None:
         return None
     named = text.facility_provider_id or {e164(k): v for k, v in (routes or {}).items()}.get(e164(text.to))
@@ -90,7 +101,7 @@ def receive_text(session: Session, text: InboundText, routes: Mapping[str, str] 
         facility_id=facility.id if facility else None, facility_provider_id=text.facility_provider_id, provider_message_id=text.message_id,
         phone=text.sender, phone_key=e164(text.sender), to_number=text.to, body=text.body, received_at=received_at,
         match_state="pending" if facility else "unrouted", match_note=note,
-        customer_provider_id=text.customer.provider_id if text.customer else None, customer_name=full_name(text.customer))
+        customer_provider_id=text.customer.provider_id if text.customer else None, customer_name=full_name(text.customer), visitor=visitor)
     session.add(row)
     try:
         session.commit()
@@ -113,6 +124,45 @@ def file_unrouted(session: Session, routes: Mapping[str, str] | None, served: Co
             filed += 1
     session.commit()
     return filed
+
+
+# ---------------------------------------------------------------- a visitor plays the tenant
+
+# Who a visitor may play: the key the form sends and the number that text comes from. The numbers are seeded tenants', so the FMS
+# matches the text to a tenant by its number, as it matches any text; what the text says decides nothing about who sent it.
+PLAYERS = {"dana": "+14075550142", "priya": "+14075550119", "unknown": "+13215550177"}
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def play_tenant(session: Session, adapter: FMSAdapter, who: str, body: str, visitor: str, request_id: str, served: Collection[str]) -> InboundMessage:
+    """Keep a text a visitor typed as one of the tenants they may play, the way a text from the webhook is kept, and match it to a tenant
+    by its number. The visitor supplies only the words: the number, the facility and the receiving number come from the desk. The text
+    belongs to the visitor, so it is seen, answered and stopped only inside their own space. A failed FMS read leaves it pending, as it
+    would a webhook text. The screen's request id makes a double press one text. Raises ValueError, in plain words, for a sender or a text
+    the desk will not take."""
+    phone = PLAYERS.get(who)
+    if phone is None:
+        raise ValueError("Choose who is texting.")
+    text = _CONTROL.sub("", body).strip()
+    if not text or len(text) > SMS_LIMIT:
+        raise ValueError(f"A text is 1 to {SMS_LIMIT} characters; this one is {len(text)}.")
+    seen = session.scalar(select(InboundMessage).where(InboundMessage.phone_key == e164(phone), InboundMessage.visitor.is_(None),
+                                                       InboundMessage.facility_id.is_not(None)).order_by(InboundMessage.id))
+    facility = session.get(Facility, seen.facility_id) if seen is not None else None
+    if seen is None or facility is None:
+        raise ValueError("That number is not one this facility can play.")
+    message_id = f"sandbox:{visitor}:{request_id}"
+    row = receive_text(session, InboundText(message_id=message_id, org_id="", facility_provider_id=facility.provider_id,
+                                            to=seen.to_number or "", sender=phone, body=text, received_at=utcnow(), customer=None),
+                       None, served, visitor)
+    if row is None:
+        # the same press arrived again: it is the text kept the first time, and it is not matched twice
+        return session.scalars(select(InboundMessage).where(InboundMessage.provider_message_id == message_id)).one()
+    try:
+        match_pending(session, adapter, facility)
+    except FMSError:
+        log.warning("a visitor's text stays pending: the FMS could not be read")
+    return row
 
 
 @dataclass(frozen=True)
@@ -185,12 +235,8 @@ class Verdict:
     reason: str = ""
 
 
-def stop_text(session: Session, phone: str) -> InboundMessage | None:
-    """The text in which this number asked to stop, unless a later one asked to start again. It covers every facility
-    this desk serves: a tenant who told one office to stop has told the operator. A STOP counts from any kept text, because
-    refusing to text is the safe mistake. A START counts only from a text filed under a facility, so one that is waiting
-    unrouted cannot lift a STOP."""
-    newest_first = select(InboundMessage).where(InboundMessage.phone_key == e164(phone)).order_by(
+def _stop_among(session: Session, phone: str, scope) -> InboundMessage | None:
+    newest_first = select(InboundMessage).where(InboundMessage.phone_key == e164(phone), scope).order_by(
         InboundMessage.received_at.desc(), InboundMessage.id.desc())
     for m in session.scalars(newest_first):
         word = keyword(m.body)
@@ -199,6 +245,19 @@ def stop_text(session: Session, phone: str) -> InboundMessage | None:
         if word in STOP_WORDS:
             return m
     return None
+
+
+def stop_text(session: Session, phone: str, visitor: str | None = None) -> InboundMessage | None:
+    """The text in which this number asked to stop, unless a later one asked to start again. It covers every facility
+    this desk serves: a tenant who told one office to stop has told the operator. A STOP counts from any kept text, because
+    refusing to text is the safe mistake. A START counts only from a text filed under a facility, so one that is waiting
+    unrouted cannot lift a STOP. The texts that came from the webhook are read first and are the only ones read for the desk itself.
+    A visitor playing the tenant is stopped by their own STOP as well, and their own START lifts only their own STOP: a STOP the
+    webhook kept stays in force for them, and their STOP is in force for nobody else."""
+    stopped = _stop_among(session, phone, InboundMessage.visitor.is_(None))
+    if stopped is not None or visitor is None:
+        return stopped
+    return _stop_among(session, phone, InboundMessage.visitor == visitor)
 
 
 def can_text(session: Session, facility: Facility, customer: ProviderCustomer | None, now: datetime, *,
@@ -214,7 +273,7 @@ def can_text(session: Session, facility: Facility, customer: ProviderCustomer | 
     if reply_to is not None and reply_to.phone_key != e164(customer.phone):
         return Verdict(False, f"Cubby would text the number on file (ending {last4(customer.phone)}), "
                               f"not the number that texted (ending {last4(reply_to.phone)}).")
-    stop = stop_text(session, customer.phone)
+    stop = stop_text(session, customer.phone, reply_to.visitor if reply_to is not None else None)
     if stop is not None:
         return Verdict(False, f"This number texted {keyword(stop.body)} on {stop.received_at:%b} {stop.received_at.day}. "
                               "It stays off until they text START.")
@@ -271,7 +330,7 @@ def send_text(session: Session, adapter: FMSAdapter, facility: Facility, custome
         facility_id=facility.id, inbound_id=reply_to.id if reply_to is not None else None, customer_provider_id=customer_provider_id,
         phone=customer.phone if customer is not None and customer.phone else (reply_to.phone if reply_to is not None else ""),
         body=body, author=author, request_id=request_id, state="intent" if verdict.ok else "blocked",
-        reason=None if verdict.ok else verdict.reason)
+        reason=None if verdict.ok else verdict.reason, visitor=reply_to.visitor if reply_to is not None else None)
     session.add(row)
     try:
         session.commit()
@@ -340,10 +399,10 @@ def outcome_of(session: Session, run: AgentRun | None) -> dict | None:
     return {"sale": facts(sale), "outside": facts(outside) if outside is not None else None}
 
 
-def inbox(session: Session, facility: Facility, limit: int = 50, offset: int = 0) -> list[dict]:
+def inbox(session: Session, facility: Facility, limit: int = 50, offset: int = 0, visitor: str | None = None) -> list[dict]:
     """The facility's texts, newest first, each with the tenant it was matched to, that tenant's leases and open cases,
-    and what the desk sent back."""
-    rows = session.scalars(select(InboundMessage).where(InboundMessage.facility_id == facility.id).order_by(
+    and what the desk sent back. A visitor is shown the texts from the webhook and their own, and no one else's."""
+    rows = session.scalars(select(InboundMessage).where(InboundMessage.facility_id == facility.id, mine(InboundMessage, visitor)).order_by(
         InboundMessage.received_at.desc(), InboundMessage.id.desc()).limit(limit).offset(offset)).all()
     out = []
     for m in rows:
@@ -365,7 +424,7 @@ def inbox(session: Session, facility: Facility, limit: int = 50, offset: int = 0
                                       if run is not None else None),
                     "match": {"state": m.match_state, "note": m.match_note, "customer_id": m.customer_provider_id,
                               "customer_name": m.customer_name, "leases": leases},
-                    "stopped": stop_text(session, m.phone) is not None, "outcome": outcome_of(session, run),
+                    "stopped": stop_text(session, m.phone, m.visitor) is not None, "outcome": outcome_of(session, run), "own": m.visitor is not None,
                     "replies": [outbound_view(r) | {"parts": written.get(r.id, {}).get("parts", []), "dropped": written.get(r.id, {}).get("dropped", [])}
                                 for r in replies]})
     return out
