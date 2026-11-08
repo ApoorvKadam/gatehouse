@@ -6,6 +6,7 @@ import hmac
 import logging
 import os
 import tempfile
+import threading
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from urllib.parse import urlsplit
@@ -343,24 +344,29 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
             raise HTTPException(409, f"not sent: {row.reason}")
         return outbound_view(row)
 
+    # the count of a visitor's texts and the new text are one step: presses that arrive together cannot each find a free place
+    text_lock = threading.Lock()
+
     @app.post("/api/inbox/texts")
     def play_text(body: PlayIn, request: Request, session: Session = Depends(db), _: str = Depends(actor)):
         """A visitor plays the tenant: types a text as one of the tenants they may play. The desk keeps it the way it keeps a text from the
         webhook, matches it to a tenant by the number, and it belongs to this visitor alone. The visitor supplies only the words."""
-        if chat_client is None or not settings.public_investigate:
-            raise HTTPException(503, "texts can be typed only where the agent is switched on")
+        # the desk answers a typed text through the FMS it is attached to, so it keeps one only where that FMS is the synthetic one
+        if not settings.public_view or chat_client is None or not settings.public_investigate:
+            raise HTTPException(503, "texts can be typed only on the synthetic preview, where the agent is switched on")
         origin = request.headers.get("origin")
         if origin and urlsplit(origin).netloc != (request.headers.get("x-forwarded-host") or request.headers.get("host", "")):
             raise HTTPException(403, "this request came from another site")
         visitor = spend.visitor_of(request)
-        reason = spend.text_refusal(session, visitor)
-        if reason:
-            raise HTTPException(429, reason)
         binding = session.get(DeskBinding, 1)
-        try:
-            row = play_tenant(session, adapter, body.sender, body.body, visitor, body.request_id, set(binding.facility_ids) if binding else set())
-        except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
+        with text_lock:
+            reason = spend.text_refusal(session, visitor)
+            if reason:
+                raise HTTPException(429, reason)
+            try:
+                row = play_tenant(session, adapter, body.sender, body.body, visitor, body.request_id, set(binding.facility_ids) if binding else set())
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
         facility = session.get(Facility, row.facility_id) if row.facility_id is not None else None
         log.info("a visitor typed a text: visitor %s, sender %s, %d characters, %s", visitor[:6], body.sender, len(body.body), row.match_state)
         return {"id": row.id, "facility": facility.provider_id if facility is not None else None, "match": row.match_state}

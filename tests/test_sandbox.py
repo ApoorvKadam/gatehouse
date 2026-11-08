@@ -6,13 +6,17 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
+from desk import spend
+from desk.adapter.cubby import CubbyAdapter
+from desk.api import create_app
+from desk.config import Settings
 from desk.db import utcnow
 from desk.investigator import Lookups, investigate, scope_of
 from desk.messaging import PLAYERS, play_tenant, send_text, stop_text
 from desk.models import AgentRun, Facility, InboundMessage, OutboundMessage
 
-from .conftest import ORLANDO
-from .test_investigator import MARCUS_LEASE, Scripted, dana_facts, factory, packet, text_of, tool  # noqa: F401
+from .conftest import FULL_KEY, ORLANDO
+from .test_investigator import MARCUS_LEASE, TOKEN, Scripted, dana_facts, factory, packet, text_of, tool  # noqa: F401
 from .test_live import live_app, no_vendor_name
 from .test_reply import for_dana, part
 from .test_staff_review import asking, tasks, without_a_task
@@ -90,6 +94,38 @@ def test_a_text_from_another_site_a_switched_off_copy_and_the_eleventh_text_are_
         eleventh = type_as(visitor, "dana", "One more", "press-0011")
         assert eleventh.status_code == 429 and "10 texts for today" in eleventh.json()["detail"]
         assert type_as(other, "dana", "Hello", "press-0001").status_code == 200                           # another visitor has a count of their own
+
+
+def test_presses_that_arrive_together_cannot_take_a_visitor_past_ten_texts(fms_url, sim):
+    from concurrent.futures import ThreadPoolExecutor
+    app = live_app(fms_url, Scripted())
+    with TestClient(app) as visitor:
+        visitor.get("/inbox")
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            codes = list(pool.map(lambda n: type_as(visitor, "dana", f"Hello {n}", f"press-{n:04d}").status_code, range(1, 17)))
+        assert sorted(codes) == [200] * 10 + [429] * 6
+        with app.state.session_factory() as s:
+            assert s.scalar(select(func.count()).select_from(InboundMessage).where(InboundMessage.visitor.is_not(None))) == 10
+
+
+def test_the_texts_of_all_visitors_together_are_capped_so_a_dropped_cookie_does_not_start_over(fms_url, sim, monkeypatch):
+    monkeypatch.setattr(spend, "TEXTS_PER_DAY_ALL", 3)
+    app = live_app(fms_url, Scripted())
+    with TestClient(app) as first, TestClient(app) as second:
+        first.get("/inbox")
+        second.get("/inbox")
+        assert type_as(first, "dana", "One", "press-0001").status_code == 200 and type_as(first, "dana", "Two", "press-0002").status_code == 200
+        assert type_as(second, "dana", "Three", "press-0001").status_code == 200
+        capped = type_as(first, "dana", "Four", "press-0003")
+        assert capped.status_code == 429 and "typed today" in capped.json()["detail"]
+
+
+def test_a_desk_that_is_not_the_synthetic_preview_keeps_no_text_a_visitor_types(fms_url, sim):
+    settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=5.0, reconcile_every_seconds=60,
+                        operator_token=TOKEN, public_view=False, demo_seed=True, public_investigate=True)
+    with TestClient(create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 5.0), start_worker=False, chat_client=Scripted())) as client:
+        refused = type_as(client, "dana", "Hello", "press-0001", headers={"X-Desk-Token": TOKEN})
+        assert refused.status_code == 503 and "synthetic preview" in refused.json()["detail"]
 
 
 def test_without_the_switch_no_one_can_type_a_text(fms_url, sim):

@@ -25,6 +25,8 @@ _VISITOR_KEY = secrets.token_bytes(16)
 # The name of the cookie that tells one browser from another, and how many texts a visitor may type as a tenant in a day.
 COOKIE = "gh_visitor"
 TEXTS_PER_DAY = 10
+# A visitor can drop the cookie and start over, so the texts typed by all visitors together are capped as well.
+TEXTS_PER_DAY_ALL = 200
 # No run is let to cost more than this. The investigator stops before any call that could take it past, and counts a call that
 # ended with no answer as if it had been billed in full. A run still going is therefore reserved at this amount.
 WORST_RUN_USD = 0.03
@@ -115,6 +117,10 @@ def text_refusal(session: Session, visitor: str, now: datetime | None = None) ->
     """Why one more text may not be typed now, in plain words, or None."""
     if texts_today(session, visitor, now) >= TEXTS_PER_DAY:
         return f"You have sent your {TEXTS_PER_DAY} texts for today. They come back at midnight, New York time."
+    everyone = session.scalar(select(func.count()).select_from(InboundMessage).where(InboundMessage.visitor.is_not(None),
+                                                                                      InboundMessage.received_at >= day_start(now))) or 0
+    if everyone >= TEXTS_PER_DAY_ALL:
+        return "The texts typed today have reached the day's total. Try again after midnight, New York time."
     return None
 
 
