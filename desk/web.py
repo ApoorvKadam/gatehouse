@@ -4,6 +4,7 @@ Every page reads Gatehouse's own records and the simulator trace saved when the 
 FMS or writes anything, so a visitor can read freely without moving the world."""
 from __future__ import annotations
 
+import json
 import re
 from collections import Counter
 from dataclasses import dataclass, field
@@ -27,7 +28,7 @@ from .models import (
     LienEvaluation, LienEvidence, PaymentCommand, PaymentProposal, WorkItem,
 )
 from .payments import tenant_message
-from .wording import plain
+from .wording import TROUBLES, plain
 
 HERE = Path(__file__).parent
 templates = Jinja2Templates(directory=HERE / "templates")
@@ -103,7 +104,6 @@ def changed_findings(previous: list[dict], current: list[dict]) -> list[tuple[di
 
 def evaluation_report() -> dict | None:
     """The report the image build wrote (desk/evaluate.py), or None when this build has none."""
-    import json
     path = Path(__file__).parent / "static" / "evaluation.json"
     try:
         report = json.loads(path.read_text())
@@ -111,6 +111,59 @@ def evaluation_report() -> dict | None:
         return None
     report["generated"] = datetime.fromisoformat(report["generated_at"]).replace(tzinfo=None)
     return report
+
+
+def _upper(text: str) -> str:
+    return text[:1].upper() + text[1:]
+
+
+def _mark(row_id: str, ok: bool, text: str, tip: dict, key: str | None = None, shown: str = "", count: bool = False) -> dict:
+    """One mark on the Evaluation page: the row it links to, its kind of trouble (which sets its colour), the words inside it, what a
+    screen reader says, and the card the page shows when the mark is hovered or focused."""
+    return {"href": f"#{row_id}", "ok": ok, "key": key, "shown": shown, "count": count, "text": text, "tip": json.dumps(tip, ensure_ascii=False)}
+
+
+def evaluation_view(report: dict) -> dict:
+    """What the Evaluation page draws, written from the report the build made. Every result gets an id, so its mark links to its row, and a
+    card shown on hover. The parts keep the order the report gave them. Inside a part the marks are sorted by kind of trouble, so the
+    colours that meet are the ones the palette was checked for."""
+    rank: dict[str | None, int] = {key: n for n, key in enumerate(TROUBLES)}
+    scenarios: dict[str, list[dict]] = {}
+    for n, row in enumerate(report["rows"], 1):
+        key = row.get("trouble") if row.get("trouble") in TROUBLES else None
+        scenarios.setdefault(row["module"], []).append({**row, "id": f"scn-{n}", "key": key, "kind": TROUBLES.get(key, ""),
+                                                        "fms": plain(row["fms"]), "gatehouse": plain(row["gatehouse"]), "told": plain(row["told"])})
+    red_lines: dict[str, list[dict]] = {}
+    for n, line in enumerate(report["red_lines"], 1):
+        red_lines.setdefault(line["module"], []).append({**line, "id": f"rl-{n}"})
+    controls = [{**c, "id": f"ctl-{n}"} for n, c in enumerate(report["controls"], 1)]
+
+    def scenario_mark(r: dict) -> dict:
+        result = "Passed" if r["passed"] else "Failed"
+        tip = {"name": r["name"], "key": r["key"], "kind": r["kind"], "ok": r["passed"], "result": result,
+               "lines": [["The FMS did", r["fms"]], ["Gatehouse did", r["gatehouse"]], ["Who hears what", r["told"]]]}
+        return _mark(r["id"], r["passed"], f"{r['name']}: {result.lower()}" + (f". {r['kind']}" if r["kind"] else ""), tip, key=r["key"])
+
+    def line_mark(part: str, line: dict) -> dict:
+        ok, said = line["count"] == 0, _upper(line["line"])
+        tip = {"name": said, "ok": ok, "result": "At zero" if ok else f"{line['count']} found, so the build stops", "lines": [["Counted in", part]]}
+        return _mark(line["id"], ok, f"{said}: {line['count']}", tip, shown=str(line["count"]), count=True)
+
+    def control_mark(c: dict) -> dict:
+        tip = {"name": c["name"], "ok": c["caught"], "result": "Caught by the checks" if c["caught"] else "Missed by the checks",
+               "lines": [["What it does wrong", _upper(c["broken"])]]}
+        return _mark(c["id"], c["caught"], f"{c['name']}: {'caught' if c['caught'] else 'missed'}", tip, shown=c.get("short", ""))
+
+    sizes = Counter(r["key"] for rows in scenarios.values() for r in rows)
+    return {
+        "scenarios": list(scenarios.items()), "red_lines": list(red_lines.items()), "controls": controls,
+        "kinds": [(key, label, sizes[key]) for key, label in TROUBLES.items() if sizes[key]],
+        "scenario_marks": [(part, [scenario_mark(r) for r in sorted(rows, key=lambda r: rank.get(r["key"], len(rank)))]) for part, rows in scenarios.items()],
+        "line_marks": [(part, [line_mark(part, l) for l in lines]) for part, lines in red_lines.items()],
+        "control_marks": [("Wrong builds", [control_mark(c) for c in controls])],
+        "passed": sum(1 for r in report["rows"] if r["passed"]), "total": len(report["rows"]),
+        "at_zero": sum(1 for l in report["red_lines"] if l["count"] == 0), "lines_total": len(report["red_lines"]),
+        "caught": sum(1 for c in controls if c["caught"]), "controls_total": len(controls)}
 
 
 def ago(when: datetime | None, now: datetime) -> str:
@@ -574,24 +627,7 @@ def router(pages: Pages) -> APIRouter:
     @r.get("/evaluation", response_class=HTMLResponse)
     def evaluation(request: Request):
         report = evaluation_report()
-        view: dict = {}
-        if report is not None:
-            # the parts in the order the report lists them; the state codes in what Gatehouse did are written as words
-            scenarios: dict[str, list[dict]] = {}
-            for row in report["rows"]:
-                scenarios.setdefault(row["module"], []).append({**row, "fms": plain(row["fms"]), "gatehouse": plain(row["gatehouse"]), "told": plain(row["told"])})
-            red_lines: dict[str, list[dict]] = {}
-            for line in report["red_lines"]:
-                red_lines.setdefault(line["module"], []).append(line)
-            controls = report["controls"]
-            view = {
-                "scenarios": list(scenarios.items()), "red_lines": list(red_lines.items()),
-                "scenario_marks": [(part, [(f"{r['name']}: {'pass' if r['passed'] else 'fail'}", r["passed"]) for r in rows]) for part, rows in scenarios.items()],
-                "line_marks": [(part, [(f"{l['line'].capitalize()}: {l['count']}", l["count"] == 0) for l in lines]) for part, lines in red_lines.items()],
-                "control_marks": [("Wrong builds", [(f"{c['name']}: {'caught' if c['caught'] else 'missed'}", c["caught"]) for c in controls])],
-                "passed": sum(1 for r in report["rows"] if r["passed"]), "total": len(report["rows"]),
-                "at_zero": sum(1 for l in report["red_lines"] if l["count"] == 0), "lines_total": len(report["red_lines"]),
-                "caught": sum(1 for c in controls if c["caught"]), "controls_total": len(controls)}
+        view = evaluation_view(report) if report is not None else {}
         with session() as s:
             return templates.TemplateResponse(request, "evaluation.html", {
                 "report": report, **view, "nav": "evaluation", "facilities": pages.facilities(s), "local": local})

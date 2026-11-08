@@ -2,14 +2,14 @@
 {% block title %}Evaluation | Gatehouse{% endblock %}
 {% macro bar(groups, label) %}
   <div class="segbar" role="group" aria-label="{{ label }}">
-    {% for name, items in groups %}
-    <div class="seggroup" style="flex: {{ items|length }} 1 0">
-      {% for tip, ok in items %}<i class="seg {{ '' if ok else 'fail' }}" tabindex="0" role="img" aria-label="{{ tip }}" data-tip="{{ tip }}"></i>{% endfor %}
+    {% for name, marks in groups %}
+    <div class="seggroup" style="flex: {{ marks|length }} 1 0">
+      {% for m in marks %}<a class="seg{{ ' k-' ~ m.key if m.key else '' }}{{ '' if m.ok else ' fail' }}{{ ' count' if m.count else '' }}" href="{{ m.href }}" aria-label="{{ m.text }}" data-tip="{{ m.tip }}">{% if m.shown %}<span>{{ m.shown }}</span>{% endif %}</a>{% endfor %}
     </div>
     {% endfor %}
   </div>
   <div class="segkey" aria-hidden="true">
-    {% for name, items in groups %}<span style="flex: {{ items|length }} 1 0">{{ name }} <b>{{ items|length }}</b></span>{% endfor %}
+    {% for name, marks in groups %}<span style="flex: {{ marks|length }} 1 0">{{ name }} <b>{{ marks|length }}</b></span>{% endfor %}
   </div>
 {% endmacro %}
 {% block main %}
@@ -24,7 +24,14 @@
 <section class="panel glance" aria-label="Result at a glance">
   <div class="meter-row">
     <div class="meter-name"><b>Scenarios</b><span>{{ passed }} of {{ total }} behave as they should</span></div>
-    <div>{{ bar(scenario_marks, passed ~ ' of ' ~ total ~ ' scenarios behave as they should') }}</div>
+    <div>
+      {{ bar(scenario_marks, passed ~ ' of ' ~ total ~ ' scenarios behave as they should') }}
+      {% if kinds %}
+      <ul class="kinds" aria-label="What went wrong at the FMS, by colour. Point at one to find its scenarios.">
+        {% for key, label, n in kinds %}<li class="k-{{ key }}" tabindex="0"><i aria-hidden="true"></i>{{ label }} <b>{{ n }}</b></li>{% endfor %}
+      </ul>
+      {% endif %}
+    </div>
   </div>
   <div class="meter-row">
     <div class="meter-name"><b>Red lines</b><span>{{ at_zero }} of {{ lines_total }} at zero</span></div>
@@ -47,8 +54,11 @@
     <span></span>
   </div>
   {% for r in rows %}
-  <div class="flow">
-    <b class="flow-name">{{ r.name }}</b>
+  <div class="flow" id="{{ r.id }}">
+    <div class="flow-who">
+      <b class="flow-name">{{ r.name }}</b>
+      {% if r.kind %}<span class="flow-kind k-{{ r.key }}"><i aria-hidden="true"></i>{{ r.kind }}</span>{% endif %}
+    </div>
     <p class="node">{{ r.fms }}</p>
     <span class="arrow" aria-hidden="true">{% include "icons/arrow-right.svg" %}</span>
     <p class="node">{{ r.gatehouse }}</p>
@@ -66,7 +76,7 @@
     {% for part, lines in red_lines %}
     <div class="board-col">
       <h3>{{ part }}</h3>
-      <ul>{% for l in lines %}<li class="{{ 'ok' if l.count == 0 else 'bad' }}"><i class="dot" aria-hidden="true"></i><span>{{ l.line[:1]|upper }}{{ l.line[1:] }}</span><b>{{ l.count }}</b></li>{% endfor %}</ul>
+      <ul>{% for l in lines %}<li id="{{ l.id }}" class="{{ 'ok' if l.count == 0 else 'bad' }}"><i class="dot" aria-hidden="true"></i><span>{{ l.line[:1]|upper }}{{ l.line[1:] }}</span><b>{{ l.count }}</b></li>{% endfor %}</ul>
     </div>
     {% endfor %}
   </div>
@@ -77,8 +87,8 @@
   <div class="flow flow-head control" aria-hidden="true">
     <span>Broken build</span><span><i class="lane-dot lane-decided"></i>What it does wrong</span><span></span><span><i class="lane-dot lane-concluded"></i>The checks</span>
   </div>
-  {% for c in report.controls %}
-  <div class="flow control">
+  {% for c in controls %}
+  <div class="flow control" id="{{ c.id }}">
     <b class="flow-name">{{ c.name }}</b>
     <p class="node">{{ c.broken[:1]|upper }}{{ c.broken[1:] }}</p>
     <span class="arrow" aria-hidden="true">{% include "icons/arrow-right.svg" %}</span>
@@ -90,8 +100,8 @@
 <details class="table-view">
   <summary>Table view of every result</summary>
   <table>
-    <thead><tr><th>Part</th><th>Scenario</th><th>What the FMS did</th><th>What Gatehouse did</th><th>Who hears what</th><th class="num">Result</th></tr></thead>
-    <tbody>{% for part, rows in scenarios %}{% for r in rows %}<tr><td class="small">{{ part }}</td><td><b>{{ r.name }}</b></td><td class="small">{{ r.fms }}</td><td class="small">{{ r.gatehouse }}</td><td class="small muted">{{ r.told }}</td><td class="num"><span class="status {{ 'met' if r.passed else 'review' }}">{{ 'Pass' if r.passed else 'Fail' }}</span></td></tr>{% endfor %}{% endfor %}</tbody>
+    <thead><tr><th>Part</th><th>Scenario</th><th>Kind of trouble</th><th>What the FMS did</th><th>What Gatehouse did</th><th>Who hears what</th><th class="num">Result</th></tr></thead>
+    <tbody>{% for part, rows in scenarios %}{% for r in rows %}<tr><td class="small">{{ part }}</td><td><b>{{ r.name }}</b></td><td class="small">{{ r.kind }}</td><td class="small">{{ r.fms }}</td><td class="small">{{ r.gatehouse }}</td><td class="small muted">{{ r.told }}</td><td class="num"><span class="status {{ 'met' if r.passed else 'review' }}">{{ 'Pass' if r.passed else 'Fail' }}</span></td></tr>{% endfor %}{% endfor %}</tbody>
   </table>
   <table>
     <thead><tr><th>Part</th><th>Red line</th><th class="num">Count</th></tr></thead>
@@ -99,10 +109,46 @@
   </table>
   <table>
     <thead><tr><th>Broken build</th><th>What it does wrong</th><th class="num">Caught</th></tr></thead>
-    <tbody>{% for c in report.controls %}<tr><td>{{ c.name }}</td><td>{{ c.broken[:1]|upper }}{{ c.broken[1:] }}</td><td class="num"><span class="status {{ 'met' if c.caught else 'review' }}">{{ 'Yes' if c.caught else 'No' }}</span></td></tr>{% endfor %}</tbody>
+    <tbody>{% for c in controls %}<tr><td>{{ c.name }}</td><td>{{ c.broken[:1]|upper }}{{ c.broken[1:] }}</td><td class="num"><span class="status {{ 'met' if c.caught else 'review' }}">{{ 'Yes' if c.caught else 'No' }}</span></td></tr>{% endfor %}</tbody>
   </table>
   <p class="note">The scenarios run in desk/scenarios.py and desk/evaluate.py. The simulator follows Cubby's public Operator API. A real FMS, gate system, auction site or processor is not part of this run.</p>
 </details>
+
+<div class="tip" id="tip" aria-hidden="true" hidden></div>
+<script>
+(function () {
+  var tip = document.getElementById("tip");
+  if (!tip) return;
+  function el(tag, cls, text) { var n = document.createElement(tag); if (cls) n.className = cls; if (text) n.textContent = text; return n; }
+  function build(d) {
+    tip.textContent = "";
+    tip.appendChild(el("p", "tip-name", d.name));
+    if (d.kind) { var k = el("p", "tip-kind k-" + d.key); k.appendChild(el("i")); k.appendChild(document.createTextNode(d.kind)); tip.appendChild(k); }
+    (d.lines || []).forEach(function (l) { var row = el("p", "tip-line"); row.appendChild(el("span", "", l[0])); row.appendChild(el("span", "", l[1])); tip.appendChild(row); });
+    tip.appendChild(el("p", "tip-result " + (d.ok ? "ok" : "bad"), d.result));
+  }
+  function place(mark) {
+    var box = mark.getBoundingClientRect(), size = tip.getBoundingClientRect();
+    var left = Math.min(Math.max(8, box.left + box.width / 2 - size.width / 2), window.innerWidth - size.width - 8);
+    var top = box.top - size.height - 10;
+    if (top < 8) top = box.bottom + 10;
+    tip.style.left = left + "px"; tip.style.top = top + "px";
+  }
+  function show(mark) {
+    try { build(JSON.parse(mark.getAttribute("data-tip"))); } catch (e) { return; }
+    tip.hidden = false; place(mark);
+  }
+  function hide() { tip.hidden = true; }
+  document.querySelectorAll(".seg[data-tip]").forEach(function (mark) {
+    mark.addEventListener("pointerenter", function () { show(mark); });
+    mark.addEventListener("pointerleave", hide);
+    mark.addEventListener("focus", function () { show(mark); });
+    mark.addEventListener("blur", hide);
+  });
+  window.addEventListener("scroll", hide, { passive: true });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") hide(); });
+})();
+</script>
 {% else %}
 <p class="lede">This build has no evaluation report. The image build writes one with <code>python -m desk.evaluate</code>.</p>
 {% endif %}
