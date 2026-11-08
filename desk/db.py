@@ -87,8 +87,15 @@ def refresh_binding(session, adapter) -> None:
     seen = adapter.facilities()
     facilities = sorted(f["facilityId"] for f in seen)
     binding = session.get(DeskBinding, 1)
+    if binding is None:
+        return
+    if not facilities:
+        # the same key sees nothing now: no facility is served, and the account's organizations stay as they were
+        binding.facility_ids = []
+        session.commit()
+        return
     orgs = sorted({f["organizationId"] for f in seen if f.get("organizationId")})
-    if binding is None or not same_account(binding.facility_ids, facilities, binding.org_ids or [], orgs):
+    if not same_account(binding.facility_ids, facilities, binding.org_ids or [], orgs):
         return
     binding.facility_ids, binding.org_ids = facilities, orgs
     session.commit()

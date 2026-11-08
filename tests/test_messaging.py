@@ -705,3 +705,15 @@ def test_the_worker_drops_a_facility_the_key_no_longer_sees(fms_url, sim, adapte
     run_once(factory, adapter)
     with factory() as s:
         assert sorted(s.get(DeskBinding, 1).facility_ids) == sorted(SERVED)
+
+
+def test_a_key_that_sees_no_facility_serves_none_and_keeps_the_organization(session):
+    class SeesNothing:
+        def facilities(self):
+            return []
+
+    session.add(DeskBinding(id=1, fms_base_url="http://fms", facility_ids=[ORLANDO], org_ids=["org_Northstar01"]))
+    session.commit()
+    refresh_binding(session, SeesNothing())
+    binding = session.get(DeskBinding, 1)
+    assert binding.facility_ids == [] and binding.org_ids == ["org_Northstar01"]

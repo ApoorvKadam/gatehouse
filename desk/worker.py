@@ -28,15 +28,16 @@ def run_once(factory: sessionmaker[Session], adapter: FMSAdapter, run_id: str = 
     """One pass: how many payments were checked, and how many FMS reads failed along the way (the facility list, payments,
     access, sales, and matching texts that arrived while the FMS could not be asked)."""
     with factory() as session:
-        service = PaymentService(session, adapter)
-        checked = service.reconcile_all()
-        failures = service.read_failures
+        failures = 0
         try:
-            # a facility that joined or left the account is served or dropped on this pass, not at the next restart
+            # first, so a facility that joined or left the account is served or dropped on this pass, not at the next restart
             refresh_binding(session, adapter)
         except FMSError as exc:
             failures += 1
             log.warning("could not read which facilities this key sees: %s", exc)
+        service = PaymentService(session, adapter)
+        checked = service.reconcile_all()
+        failures += service.read_failures
         facilities = bound_facilities(session)
         file_unrouted(session, text_numbers, {f.provider_id for f in facilities})
         for facility in facilities:
