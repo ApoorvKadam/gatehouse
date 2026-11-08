@@ -120,6 +120,15 @@ def test_a_text_is_kept_once_even_when_cubby_delivers_it_twice(sim, adapter, ses
     assert (m.customer_provider_id, m.customer_name) == ("cust_DanaWhit01", "Dana Whitfield")      # what Cubby's payload named
 
 
+def test_a_payload_dated_in_the_future_cannot_outrank_a_later_stop(sim, adapter, session, desk):
+    ahead = {**texts_in(sim, DANA, "Start"), "receivedAt": (utcnow() + timedelta(days=1)).isoformat() + "Z"}
+    kept = arrive(session, adapter, ahead)
+    assert kept is not None and kept.received_at <= utcnow()          # held to the desk's own clock
+    arrive(session, adapter, texts_in(sim, DANA, "STOP", minutes_ago=0))
+    verdict = can_text(session, desk, person("cust_1", DANA), utcnow(), reply_to=kept)
+    assert not verdict.ok and "STOP" in verdict.reason
+
+
 def test_a_payload_that_is_not_an_sms_received_webhook_is_refused(sim, adapter):
     good = texts_in(sim, DANA, "hello")
     for broken in ({}, {**good, "body": ""}, {**good, "receivedAt": "yesterday"}, {**good, "messageId": None}, {**good, "facilityId": 7}):

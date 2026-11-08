@@ -68,9 +68,12 @@ def receive_text(session: Session, text: InboundText) -> InboundMessage | None:
         facility = session.scalar(select(Facility).where(Facility.provider_id == text.facility_provider_id))
         if facility is None:
             raise LookupError(f"facility {text.facility_provider_id} has not been read yet")
+    # a time in the future is not believable, and the order of texts decides who has asked to stop: the desk's own clock is
+    # the limit, so a text dated tomorrow can never outrank a STOP that really came after it
+    received_at = min(text.received_at, utcnow())
     row = InboundMessage(
         facility_id=facility.id if facility else None, provider_message_id=text.message_id, phone=text.sender,
-        phone_key=e164(text.sender), to_number=text.to or None, body=text.body, received_at=text.received_at,
+        phone_key=e164(text.sender), to_number=text.to or None, body=text.body, received_at=received_at,
         match_state="pending" if facility else "unrouted",
         match_note=None if facility else "The receiving number serves more than one facility, so this text is not filed under one yet.",
         customer_provider_id=text.customer.provider_id if text.customer else None, customer_name=full_name(text.customer))
@@ -171,7 +174,7 @@ def can_text(session: Session, facility: Facility, customer: ProviderCustomer | 
                               f"not the number that texted (ending {last4(reply_to.phone)}).")
     stop = stop_text(session, customer.phone)
     if stop is not None:
-        return Verdict(False, f"This number texted {keyword(stop.body)} on {stop.received_at:%b %-d}. It stays off until they text START.")
+        return Verdict(False, f"This number texted {keyword(stop.body)} on {stop.received_at:%b} {stop.received_at.day}. It stays off until they text START.")
     sms = customer.sms
     if sms is not None and sms.suppressed:
         if sms.reason == "UNDELIVERABLE":
