@@ -87,7 +87,7 @@ def review_view(action: dict) -> dict:
 REPLY_PHRASES = {
     "message_received": "Hi {first}, we got your message from {when}.",
     "payment_applied": "Your payment of {amount} has been applied to your account.",
-    "balance_as_of": "The FMS shows {balance} owed on unit {unit} as of {when}.",
+    "balance_as_of": "Your account shows {balance} owed on unit {unit} as of {when}.",
     "sale_status": "Unit {unit} is listed for a lien sale on {when}.",
     "staff_review": "A staff member has an open task to review this.",
     "acknowledgment": "Call the office if anything changes.",

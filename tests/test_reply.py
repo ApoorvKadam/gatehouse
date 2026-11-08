@@ -54,7 +54,7 @@ def test_the_acknowledgement_is_written_from_the_parts_the_agent_proposed_and_se
         reply = reply_of(run)
         body = reply["body"]
         assert reply["outcome"] == "sent" and body.startswith("Hi Dana, we got your message from ") and body.endswith("Call the office if anything changes.")
-        assert "The FMS shows $0.00 owed on unit B-1042 as of " in body and "Unit B-1042 is listed for a lien sale on " in body
+        assert "Your account shows $0.00 owed on unit B-1042 as of " in body and "Unit B-1042 is listed for a lien sale on " in body
         assert "A staff member has an open task to review this." in body
         assert [p["kind"] for p in reply["parts"]] == ["message_received", "balance_as_of", "sale_status", "staff_review", "acknowledgment"]
         [sent] = texts_to(s, "Dana Whitfield")                                        # one text, through send_text, with its own checks
