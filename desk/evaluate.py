@@ -51,6 +51,7 @@ class Row:
 class RedLine:
     module: str
     line: str
+    trouble: str
     count: int
 
 
@@ -58,6 +59,7 @@ class RedLine:
 class Control:
     name: str
     short: str
+    trouble: str
     broken: str
     caught: bool
 
@@ -490,7 +492,7 @@ def control_sale_task_closes(url: str) -> Control:
     item.state, item.verification = "closed", sales.CANCELLED_BY            # what the wrong build would do
     session.commit()
     caught = sales_red_lines(session, url)["a sale item closed while the FMS does not show that auction and lease cancelled"] > 0
-    return Control("A build that closes a sale item when its task is marked done", "Closes a sale item",
+    return Control("A build that closes a sale item when its task is marked done", "Closes a sale item", "disagree",
                    "calls the lien cancelled while the FMS still lists the sale", caught)
 
 
@@ -511,7 +513,7 @@ def control_sale_cancelled_by_gatehouse(url: str) -> Control:
         tally.reconcile(session, adapter, facility)
     finally:
         sales.reconcile_sales = real
-    return Control("A build that cancels a sale itself", "Cancels a sale itself", "sends cancel-lien to the FMS through its own client", tally.sale_writes > 0)
+    return Control("A build that cancels a sale itself", "Cancels a sale itself", "disagree", "sends cancel-lien to the FMS through its own client", tally.sale_writes > 0)
 
 
 def control_outside_from_fms(url: str) -> Control:
@@ -527,7 +529,7 @@ def control_outside_from_fms(url: str) -> Control:
     item.state, item.verification = "closed", FEED_CONFIRMED                 # what the wrong build would do
     session.commit()
     caught = sales_red_lines(session, url)["an outside listing closed without that site's own feed reporting it withdrawn"] > 0
-    return Control("A build that takes the FMS cancellation as the outside listing's withdrawal", "Closes the outside listing",
+    return Control("A build that takes the FMS cancellation as the outside listing's withdrawal", "Closes the outside listing", "disagree",
                    "closes the outside listing when the FMS shows the lien cancelled", caught)
 
 
@@ -586,7 +588,7 @@ def control_retry(url: str) -> Control:
     PaymentService(session, adapter).take_payment(case.id, scenarios.DANA_CARD, Authorization.new(True, 24000, 24000))
     adapter.make_payment(scenarios.DANA, scenarios.DANA_CARD, 24000)          # what the wrong build would do
     caught = card_charges(url, scenarios.DANA) - EXPECTED_CARD_CHARGES["Response lost after charging"] > 0
-    return Control("A build that resends a payment whose answer was lost", "Resends a payment",
+    return Control("A build that resends a payment whose answer was lost", "Resends a payment", "late",
                    "sends the same $240.00 again after the first answer was lost", caught)
 
 
@@ -602,8 +604,29 @@ def control_task_closes(url: str) -> Control:
     item.state, item.verification = "closed", CLOSED_BY                       # what the wrong build would do
     session.commit()
     caught = access_red_lines(session, adapter)["an access item closed while Locks Search still shows the operator lock"] > 0
-    return Control("A build that closes an access item when its task is marked done", "Closes an access item",
+    return Control("A build that closes an access item when its task is marked done", "Closes an access item", "disagree",
                    "closes the item as reconciled while the FMS still records the lock", caught)
+
+
+# What each red line guards against, as a kind of trouble (desk/wording.py TROUBLES). The two lines about requests Gatehouse could make
+# belong to "disagree": when the records disagree, the tempting fix is to change the FMS directly, and the desk only reads and asks for tasks.
+GUARDS = {
+    "a duplicate charge": "twice",
+    "a tenant told a payment was applied without FMS proof": "late",
+    "an access item closed while Locks Search still shows the operator lock": "disagree",
+    "a physical outcome labeled verified": "disagree",
+    "a mismatch (lock, missing lock or gate code) left without a work item after a pass": "disagree",
+    "a request from Gatehouse that could change access (anything but a read or a task)": "disagree",
+    "a sale item closed while the FMS does not show that auction and lease cancelled": "disagree",
+    "an outside listing closed without that site's own feed reporting it withdrawn": "disagree",
+    "a zero balance with no payment since the notice described as a tenant payment": "money",
+    "a settled sale shown with an order between the sale and the payments": "disagree",
+    "a request from Gatehouse that could change a sale (cancel, settle or complete)": "disagree",
+}
+
+
+def red_line(module: str, line: str, count: int) -> RedLine:
+    return RedLine(module, line, GUARDS[line], count)
 
 
 def evaluate(url: str) -> Report:
@@ -612,15 +635,15 @@ def evaluate(url: str) -> Report:
     report.rows.extend(rows)
     access_rows, access_totals, access_writes = access_scenarios(url)
     report.rows.extend(access_rows)
-    report.red_lines += [RedLine("Payments", "a duplicate charge", duplicates),
-                         RedLine("Payments", "a tenant told a payment was applied without FMS proof", applied_without_proof)]
-    report.red_lines += [RedLine("Access", line, n) for line, n in access_totals.items()]
-    report.red_lines.append(RedLine("Access", "a request from Gatehouse that could change access (anything but a read or a task)",
+    report.red_lines += [red_line("Payments", "a duplicate charge", duplicates),
+                         red_line("Payments", "a tenant told a payment was applied without FMS proof", applied_without_proof)]
+    report.red_lines += [red_line("Access", line, n) for line, n in access_totals.items()]
+    report.red_lines.append(red_line("Access", "a request from Gatehouse that could change access (anything but a read or a task)",
                                     access_writes))
     sale_rows, sale_totals, sale_writes = sales_scenarios(url)
     report.rows.extend(sale_rows)
-    report.red_lines += [RedLine("Lien sales", line, n) for line, n in sale_totals.items()]
-    report.red_lines.append(RedLine("Lien sales", "a request from Gatehouse that could change a sale (cancel, settle or complete)",
+    report.red_lines += [red_line("Lien sales", line, n) for line, n in sale_totals.items()]
+    report.red_lines.append(red_line("Lien sales", "a request from Gatehouse that could change a sale (cancel, settle or complete)",
                                     sale_writes))
     report.controls += [control_retry(url), control_task_closes(url), control_sale_task_closes(url), control_outside_from_fms(url),
                         control_sale_cancelled_by_gatehouse(url)]

@@ -131,12 +131,19 @@ def evaluation_view(report: dict) -> dict:
     scenarios: dict[str, list[dict]] = {}
     for n, row in enumerate(report["rows"], 1):
         key = row.get("trouble") if row.get("trouble") in TROUBLES else None
-        scenarios.setdefault(row["module"], []).append({**row, "id": f"scn-{n}", "key": key, "kind": TROUBLES.get(key, ""),
+        scenarios.setdefault(row["module"], []).append({**row, "id": f"scn-{n}", "key": key, "kind": TROUBLES.get(key or "", ""),
                                                         "fms": plain(row["fms"]), "gatehouse": plain(row["gatehouse"]), "told": plain(row["told"])})
     red_lines: dict[str, list[dict]] = {}
     for n, line in enumerate(report["red_lines"], 1):
-        red_lines.setdefault(line["module"], []).append({**line, "id": f"rl-{n}"})
-    controls = [{**c, "id": f"ctl-{n}"} for n, c in enumerate(report["controls"], 1)]
+        key = line.get("trouble") if line.get("trouble") in TROUBLES else None
+        red_lines.setdefault(line["module"], []).append({**line, "id": f"rl-{n}", "key": key, "kind": TROUBLES.get(key or "", "")})
+    controls = []
+    for n, c in enumerate(report["controls"], 1):
+        key = c.get("trouble") if c.get("trouble") in TROUBLES else None
+        controls.append({**c, "id": f"ctl-{n}", "key": key, "kind": TROUBLES.get(key or "", "")})
+
+    def by_kind(items: list[dict]) -> list[dict]:
+        return sorted(items, key=lambda i: rank.get(i["key"], len(rank)))
 
     def scenario_mark(r: dict) -> dict:
         result = "Passed" if r["passed"] else "Failed"
@@ -146,21 +153,23 @@ def evaluation_view(report: dict) -> dict:
 
     def line_mark(part: str, line: dict) -> dict:
         ok, said = line["count"] == 0, _upper(line["line"])
-        tip = {"name": said, "ok": ok, "result": "At zero" if ok else f"{line['count']} found, so the build stops", "lines": [["Counted in", part]]}
-        return _mark(line["id"], ok, f"{said}: {line['count']}", tip, shown=str(line["count"]), count=True)
+        tip = {"name": said, "key": line["key"], "kind": line["kind"], "ok": ok, "result": "At zero" if ok else f"{line['count']} found, so the build stops",
+               "lines": [["Counted in", part]]}
+        return _mark(line["id"], ok, f"{said}: {line['count']}" + (f". {line['kind']}" if line["kind"] else ""), tip, key=line["key"], shown=str(line["count"]), count=True)
 
     def control_mark(c: dict) -> dict:
-        tip = {"name": c["name"], "ok": c["caught"], "result": "Caught by the checks" if c["caught"] else "Missed by the checks",
+        tip = {"name": c["name"], "key": c["key"], "kind": c["kind"], "ok": c["caught"], "result": "Caught by the checks" if c["caught"] else "Missed by the checks",
                "lines": [["What it does wrong", _upper(c["broken"])]]}
-        return _mark(c["id"], c["caught"], f"{c['name']}: {'caught' if c['caught'] else 'missed'}", tip, shown=c.get("short", ""))
+        return _mark(c["id"], c["caught"], f"{c['name']}: {'caught' if c['caught'] else 'missed'}" + (f". {c['kind']}" if c["kind"] else ""), tip,
+                     key=c["key"], shown=c.get("short", ""))
 
-    sizes = Counter(r["key"] for rows in scenarios.values() for r in rows)
+    used = {r["key"] for rows in scenarios.values() for r in rows} | {l["key"] for lines in red_lines.values() for l in lines} | {c["key"] for c in controls}
     return {
         "scenarios": list(scenarios.items()), "red_lines": list(red_lines.items()), "controls": controls,
-        "kinds": [(key, label, sizes[key]) for key, label in TROUBLES.items() if sizes[key]],
-        "scenario_marks": [(part, [scenario_mark(r) for r in sorted(rows, key=lambda r: rank.get(r["key"], len(rank)))]) for part, rows in scenarios.items()],
-        "line_marks": [(part, [line_mark(part, l) for l in lines]) for part, lines in red_lines.items()],
-        "control_marks": [("Wrong builds", [control_mark(c) for c in controls])],
+        "kinds": [(key, label) for key, label in TROUBLES.items() if key in used],
+        "scenario_marks": [(part, [scenario_mark(r) for r in by_kind(rows)]) for part, rows in scenarios.items()],
+        "line_marks": [(part, [line_mark(part, l) for l in by_kind(lines)]) for part, lines in red_lines.items()],
+        "control_marks": [("Wrong builds", [control_mark(c) for c in by_kind(controls)])],
         "passed": sum(1 for r in report["rows"] if r["passed"]), "total": len(report["rows"]),
         "at_zero": sum(1 for l in report["red_lines"] if l["count"] == 0), "lines_total": len(report["red_lines"]),
         "caught": sum(1 for c in controls if c["caught"]), "controls_total": len(controls)}

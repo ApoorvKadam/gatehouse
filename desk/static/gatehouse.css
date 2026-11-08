@@ -562,12 +562,12 @@ html { scrollbar-color: var(--frame) var(--paper); }
 .seg.fail::before { -webkit-mask-image: var(--glyph-cross); mask-image: var(--glyph-cross); }
 .seg span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .seg:hover, .seg:focus-visible { transform: translateY(-2px); outline: 2px solid var(--ink); outline-offset: 2px; }
-/* the legend: what each colour means, with how many scenarios it holds. Pointing at one dims every other mark. */
-.kinds { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s5); list-style: none; margin: var(--s4) 0 0; padding: 0; font-size: var(--t-xs); color: var(--ink-2); }
+/* the legend: what each colour means, for all three rows. Pointing at one dims every other mark. */
+.kinds { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s5); list-style: none; margin: 0; padding: 0; font-size: var(--t-sm); color: var(--ink-2); }
 .kinds li { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; margin: 0 -8px; border-radius: 6px; cursor: default; }
 .kinds li:hover, .kinds li:focus-visible { background: var(--band); }
 .kinds li:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
-.kinds b { color: var(--ink); font-weight: 600; }
+.key-note { margin: var(--s2) 0 0; font-size: var(--t-xs); color: var(--ink-3); }
 .kinds i, .flow-kind i, .tip-kind i { display: inline-block; flex: none; width: 10px; height: 10px; border-radius: 3px; background: var(--k); }
 .glance:has(.kinds .k-normal:is(:hover, :focus-visible)) .seg:not(.k-normal),
 .glance:has(.kinds .k-no:is(:hover, :focus-visible)) .seg:not(.k-no),
@@ -615,7 +615,7 @@ html { scrollbar-color: var(--frame) var(--paper); }
 .board-col h3 { font-size: var(--t-sm); font-weight: 600; margin-bottom: var(--s2); }
 .board-col ul { list-style: none; margin: 0; padding: 0; }
 .board-col li { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; gap: var(--s3); align-items: baseline; padding: var(--s2) 0; border-top: 1px solid var(--rule); font-size: var(--t-sm); }
-.board-col .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--teal); align-self: center; }
+.board-col .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--k, var(--teal)); align-self: center; }
 .board-col li.bad .dot { background: var(--brick); }
 .board-col li b { font-weight: 600; color: var(--teal); }
 .board-col li.bad b { color: var(--brick); }

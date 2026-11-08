@@ -22,16 +22,20 @@
 <p class="lede">Every build runs each scenario against its own throwaway simulator and counts the red lines. A red line above zero stops the build.</p>
 
 <section class="panel glance" aria-label="Result at a glance">
+  {% if kinds %}
+  <div class="meter-row">
+    <div class="meter-name"><b>Colour</b><span>The kind of trouble</span></div>
+    <div>
+      <ul class="kinds" aria-label="Each colour and the kind of trouble it stands for. Point at one to find its marks.">
+        {% for key, label in kinds %}<li class="k-{{ key }}" tabindex="0"><i aria-hidden="true"></i>{{ label }}</li>{% endfor %}
+      </ul>
+      <p class="key-note">A scenario throws it at Gatehouse, a red line guards against it, and a wrong build gets it wrong.</p>
+    </div>
+  </div>
+  {% endif %}
   <div class="meter-row">
     <div class="meter-name"><b>Scenarios</b><span>{{ passed }} of {{ total }} behave as they should</span></div>
-    <div>
-      {{ bar(scenario_marks, passed ~ ' of ' ~ total ~ ' scenarios behave as they should') }}
-      {% if kinds %}
-      <ul class="kinds" aria-label="What went wrong at the FMS, by colour. Point at one to find its scenarios.">
-        {% for key, label, n in kinds %}<li class="k-{{ key }}" tabindex="0"><i aria-hidden="true"></i>{{ label }} <b>{{ n }}</b></li>{% endfor %}
-      </ul>
-      {% endif %}
-    </div>
+    <div>{{ bar(scenario_marks, passed ~ ' of ' ~ total ~ ' scenarios behave as they should') }}</div>
   </div>
   <div class="meter-row">
     <div class="meter-name"><b>Red lines</b><span>{{ at_zero }} of {{ lines_total }} at zero</span></div>
@@ -76,7 +80,7 @@
     {% for part, lines in red_lines %}
     <div class="board-col">
       <h3>{{ part }}</h3>
-      <ul>{% for l in lines %}<li id="{{ l.id }}" class="{{ 'ok' if l.count == 0 else 'bad' }}"><i class="dot" aria-hidden="true"></i><span>{{ l.line[:1]|upper }}{{ l.line[1:] }}</span><b>{{ l.count }}</b></li>{% endfor %}</ul>
+      <ul>{% for l in lines %}<li id="{{ l.id }}" class="{{ 'ok' if l.count == 0 else 'bad' }}{{ ' k-' ~ l.key if l.key else '' }}"><i class="dot" aria-hidden="true"></i><span>{{ l.line[:1]|upper }}{{ l.line[1:] }}</span><b>{{ l.count }}</b></li>{% endfor %}</ul>
     </div>
     {% endfor %}
   </div>
@@ -89,7 +93,10 @@
   </div>
   {% for c in controls %}
   <div class="flow control" id="{{ c.id }}">
-    <b class="flow-name">{{ c.name }}</b>
+    <div class="flow-who">
+      <b class="flow-name">{{ c.name }}</b>
+      {% if c.kind %}<span class="flow-kind k-{{ c.key }}"><i aria-hidden="true"></i>{{ c.kind }}</span>{% endif %}
+    </div>
     <p class="node">{{ c.broken[:1]|upper }}{{ c.broken[1:] }}</p>
     <span class="arrow" aria-hidden="true">{% include "icons/arrow-right.svg" %}</span>
     <span class="flow-result left"><span class="chip {{ 'done' if c.caught else 'act' }}">{% include "icons/circle-check.svg" %}{{ 'Caught' if c.caught else 'Missed' }}</span></span>
