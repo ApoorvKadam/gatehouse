@@ -31,7 +31,7 @@ from .sales import KIND_NAMES, LISTED_KINDS, LISTED_PAID, OUTSIDE, SALE_KINDS
 from .staff_review import staff_review
 from .spend import WORST_RUN_USD, Refused
 from .usage import PRICES, cost_usd
-from .wording import REPLY_KINDS, plain, when, words
+from .wording import REPLY_KINDS, clock, plain, when, words
 
 log = logging.getLogger("desk.investigator")
 
@@ -199,6 +199,7 @@ class Lookups:
 
     def __init__(self, session: Session, scope: Scope, inbound: InboundMessage):
         self.session, self.scope, self.inbound = session, scope, inbound
+        self.zone = scope.facility.time_zone      # every time a record writes is on this facility's clock
         self.facts: dict[str, str] = {}
         self._seen: dict[str, dict] = {}
         self.requests: list[int] = []         # sale items the model asked for a staff review of; the desk acts on them after it has checked the packet
@@ -208,7 +209,7 @@ class Lookups:
         """A record as this run first read it. A run is one reading of the desk's records: if the same record is looked up again
         and has changed since, the run still sees the first version, so what the packet was checked against is what staff are shown."""
         if not fact_id.startswith("text:"):
-            text = plain(text)              # a record is written for people; a text keeps the words it was sent with
+            text = plain(text, zone=self.zone)              # a record is written for people; a text keeps the words it was sent with
         if fact_id not in self._seen:
             self.facts[fact_id] = text
             self._seen[fact_id] = {"record_id": fact_id, "text": text, **more}
@@ -216,7 +217,7 @@ class Lookups:
 
     def text_in(self, m: InboundMessage) -> dict:
         """What the tenant wrote, as a record. The text under investigation is registered before the first turn."""
-        return self._record(f"text:in:{m.id}", f"The tenant wrote on {when(m.received_at)}: \"{m.body}\"" + (" (the text being investigated)" if m.id == self.inbound.id else ""))
+        return self._record(f"text:in:{m.id}", f"The tenant wrote on {when(m.received_at, self.zone)}: \"{m.body}\"" + (" (the text being investigated)" if m.id == self.inbound.id else ""))
 
     def _lease(self, given: str) -> Lease | None:
         """One of this tenant's leases here, named by its FMS id or by the record id get_account gave it. Nothing else."""
@@ -248,7 +249,7 @@ class Lookups:
             case = self._case(lease)
             snap = self.session.get(LedgerSnapshot, case.last_snapshot_id) if case is not None and case.last_snapshot_id else None
             text = f"Unit {lease.unit_name}."
-            text += (f" The FMS ledger, read on {when(snap.observed_at)}, showed {money(snap.total_due)} owed and {money(snap.prepaid)} prepaid."
+            text += (f" The FMS ledger, read on {when(snap.observed_at, self.zone)}, showed {money(snap.total_due)} owed and {money(snap.prepaid)} prepaid."
                      if snap is not None else " No ledger reading is recorded.")
             if case is not None:
                 text += f" The account's case is {case.state}" + (f", held for: {', '.join(case.hold_reasons)}" if case.hold_reasons else "") + "."
@@ -260,22 +261,22 @@ class Lookups:
     def get_payments(self, lease: Lease) -> dict:
         records = []
         for c in self.session.scalars(select(PaymentCommand).where(PaymentCommand.lease_id == lease.id).order_by(PaymentCommand.id)):
-            text = f"The desk recorded a {money(c.amount)} card payment attempt on {when(c.created_at)}. Its state is {words(c.state)}."
+            text = f"The desk recorded a {money(c.amount)} card payment attempt on {when(c.created_at, self.zone)}. Its state is {words(c.state)}."
             if c.provider_status:
                 text += f" The FMS reports it as {words(c.provider_status)}."
             if c.suggested_payment_id:
                 text += " A payment at the FMS may be this attempt; staff have not confirmed that."
             if c.confirmed_at:
-                text += f" The desk confirmed it on {when(c.confirmed_at)}."
+                text += f" The desk confirmed it on {when(c.confirmed_at, self.zone)}."
             records.append(self._record(f"payment:{c.id}", text, amount_cents=c.amount))
         # the table has no lease column to filter on, so this reads every observed payment; one operator's volume is small, and an
         # index of payment to lease is the change to make if that grows
         for op in self.session.scalars(select(ObservedPayment).order_by(ObservedPayment.id)):
             if lease.provider_id in (op.lease_provider_ids or []):
                 text = (f"The FMS reports a {money(op.amount)} payment with status {words(op.status)}. "
-                        f"The desk first saw it on {when(op.first_seen_at)}.")
+                        f"The desk first saw it on {when(op.first_seen_at, self.zone)}.")
                 if op.status_changed_at:
-                    text += f" Its status last changed on {when(op.status_changed_at)}."
+                    text += f" Its status last changed on {when(op.status_changed_at, self.zone)}."
                 records.append(self._record(f"observed:{op.id}", text, amount_cents=op.amount))
         return {"lease_id": lease.provider_id, "payments": records or [self._record(
             f"payment:none:{lease.id}", f"The desk has no payment recorded on unit {lease.unit_name}. That does not show that none was made.")]}
@@ -301,7 +302,7 @@ class Lookups:
         evaluation = self.session.scalar(select(LienEvaluation).where(LienEvaluation.case_id == case.id).order_by(LienEvaluation.id.desc())) if case else None
         if evaluation is None:
             return {"lease_id": lease.provider_id, "evaluation": self._record(f"lien:none:{lease.id}", f"No lien evaluation is recorded for unit {lease.unit_name}.")}
-        text = f"The lien file was evaluated on {when(evaluation.evaluated_at)}: {words(evaluation.state)}. {evaluation.summary}".strip()
+        text = f"The lien file was evaluated on {when(evaluation.evaluated_at, self.zone)}: {words(evaluation.state)}. {evaluation.summary}".strip()
         return {"lease_id": lease.provider_id, "evaluation": self._record(f"lien:{evaluation.id}", text)}
 
     def request_staff_review(self, record_id: str) -> dict:
@@ -352,7 +353,7 @@ class Lookups:
                                                                   mine(OutboundMessage, visitor))
                                     .order_by(OutboundMessage.id.desc()).limit(5)).all()
         rows = [(m.received_at, self.text_in(m)) for m in heard]
-        rows += [(m.created_at, self._record(f"text:out:{m.id}", f"The desk's reply of {when(m.created_at)} ({m.state}): \"{m.body}\"")) for m in sent]
+        rows += [(m.created_at, self._record(f"text:out:{m.id}", f"The desk's reply of {when(m.created_at, self.zone)} ({m.state}): \"{m.body}\"")) for m in sent]
         records = [record for _, record in sorted(rows, key=lambda r: r[0])]
         # the desk's stop rule covers every facility it serves, so the answer is the state only: the message behind it is not shown
         stopped = stop_text(self.session, self.inbound.phone, visitor)
@@ -489,7 +490,7 @@ def verify(session: Session, scope: Scope, packet: dict, fresh_for: timedelta = 
     stale = utcnow() - item.updated_at > fresh_for
     holds = holds_now(item)
     if stale:
-        says = f"The desk last read the sale of unit {lease.unit_name} on {when(item.updated_at)}, which is too long ago to confirm it now."
+        says = f"The desk last read the sale of unit {lease.unit_name} on {when(item.updated_at, scope.facility.time_zone)}, which is too long ago to confirm it now."
     elif item.kind != LISTED_PAID:
         says = f"The desk's sale item for unit {lease.unit_name} is: {KIND_NAMES.get(item.kind, item.kind)}. That is not a sale listed with nothing owed."
     elif not holds:
@@ -497,7 +498,7 @@ def verify(session: Session, scope: Scope, packet: dict, fresh_for: timedelta = 
         says = (f"The desk's latest reading of unit {lease.unit_name} shows the sale as {seen.get('status') or 'unknown'} with {owed} owed. "
                 "That is not a sale listed with nothing owed.")
     else:
-        says = (f"The FMS ledger shows nothing owed on unit {lease.unit_name} and the sale is still listed, as the desk last read it on {when(item.updated_at)}. "
+        says = (f"The FMS ledger shows nothing owed on unit {lease.unit_name} and the sale is still listed, as the desk last read it on {when(item.updated_at, scope.facility.time_zone)}. "
                 + ("No notice date is known, so the desk does not say whether a payment came after the notice." if paid is None else
                    "The FMS reports a payment since the notice." if paid else
                    "The desk found no payment since the notice, so it does not call this a tenant payment."))
@@ -515,7 +516,7 @@ class Investigation:
 
     def run(self) -> None:
         facility = self.scope.facility
-        system = SYSTEM.format(facility=facility.name, today=utcnow().strftime("%Y-%m-%d"), stop_words=", ".join(STOP_WORDS))
+        system = SYSTEM.format(facility=facility.name, today=clock(utcnow(), facility.time_zone).strftime("%Y-%m-%d"), stop_words=", ".join(STOP_WORDS))
         self.lookups.text_in(self.inbound)
         body = self.inbound.body.replace("<", "&lt;")                       # the tenant's words cannot close the block they sit in
         messages: list = [{"role": "user", "content": f'<untrusted_input record_id="text:in:{self.inbound.id}">\n{body}\n</untrusted_input>'}]

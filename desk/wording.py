@@ -3,7 +3,11 @@ goes through `plain` first."""
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+# the zone the console reads a clock in when nothing says otherwise (the one the page times start from)
+CLOCK_ZONE = "America/New_York"
 
 # the codes the FMS and the desk use for a payment or a sale, as words a person reads; the model reads the same words
 STATE_WORDS = {"NEEDS_STAFF": "needs staff", "CONFIRMED": "confirmed", "AWAITING_APPLICATION": "accepted but not yet on the ledger",
@@ -22,14 +26,22 @@ _IN_BRACKETS = re.compile(rf"\s*\({_PROVIDER_ID}\)")
 _BARE_ID = re.compile(rf"\b{_PROVIDER_ID}\b")
 # a record id the desk gave a record: workitem:4, payment:12, text:in:3
 _RECORD_ID = re.compile(r"\b(?:workitem|payment|observed|lease|lien|text|texting)(?::[A-Za-z0-9]+)+")
-# a time as the FMS or a feed wrote it, 2026-11-08T17:53:15.573390, which the desk keeps in UTC
+# a time as the FMS or a feed wrote it, 2026-11-08T17:53:15.573390, which the desk keeps in UTC and a screen reads on the facility clock
 _STAMP = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|\+00:00)?")
 _CODE = re.compile(r"\b(?:" + "|".join(sorted(STATE_WORDS, key=len, reverse=True)) + r")\b")
 
 
-def when(t: datetime | None) -> str:
-    """A time the desk keeps in UTC, as a person reads it."""
-    return f"{t:%b} {t.day}, {t.year}, {t:%H:%M} UTC" if t else "an unknown time"
+def clock(t: datetime, zone: str | None = None) -> datetime:
+    """A time the desk keeps in UTC, on the clock of a facility's zone."""
+    return t.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(zone or CLOCK_ZONE))
+
+
+def when(t: datetime | None, zone: str | None = None) -> str:
+    """A time the desk keeps in UTC, as the facility reads its clock: Nov 8, 2026, 6:18 PM."""
+    if not t:
+        return "an unknown time"
+    t = clock(t, zone)
+    return f"{t:%b} {t.day}, {t.year}, {t.hour % 12 or 12}:{t:%M} {t:%p}"
 
 
 def words(code: str | None) -> str:
@@ -37,22 +49,22 @@ def words(code: str | None) -> str:
     return STATE_WORDS.get(code or "", (code or "").replace("_", " ").lower())
 
 
-def _when(found: re.Match) -> str:
+def _when(found: re.Match, zone: str | None = None) -> str:
     try:
         at = datetime(*(int(part) for part in found.groups()))
     except ValueError:
         return found.group(0)
-    return f"{at:%b} {at.day}, {at:%Y}, {at:%H:%M} UTC"
+    return when(at, zone)
 
 
-def plain(text: str | None, ids: bool = True) -> str | None:
+def plain(text: str | None, ids: bool = True, zone: str | None = None) -> str | None:
     """Text for a screen: provider ids and record ids taken out, payment state codes written as words, times written as a person
     reads them. An evidence page keeps its ids (`ids=False`), because there a person compares them with the FMS character by character."""
     if text is None:
         return None
     if ids:
         text = _RECORD_ID.sub("", _BARE_ID.sub("", _IN_BRACKETS.sub("", text)))
-    text = _STAMP.sub(_when, text)
+    text = _STAMP.sub(lambda found: _when(found, zone), text)
     text = _CODE.sub(lambda m: STATE_WORDS[m.group(0)], text)
     text = re.sub(r"\s*\(\s*\)", "", text)                  # the brackets an id leaves behind
     return re.sub(r"\s+([.,;:])", r"\1", re.sub(r"[ \t]{2,}", " ", text)).strip()
