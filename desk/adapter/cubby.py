@@ -254,13 +254,12 @@ class CubbyAdapter:
 
         if "facilityId" not in payload or not (payload["facilityId"] is None or isinstance(payload["facilityId"], str)):
             raise ValueError("the payload has no usable facilityId")
-        need("orgId")
         received = _parse_time(need("receivedAt"))
         if received is None:
             raise ValueError("the payload has no usable receivedAt")
         customer = payload.get("customer")
         named = isinstance(customer, dict) and isinstance(customer.get("customerId"), str)
-        return InboundText(message_id=need("messageId"), facility_provider_id=payload["facilityId"] or None, to=number("to"),
+        return InboundText(message_id=need("messageId"), org_id=need("orgId"), facility_provider_id=payload["facilityId"] or None, to=number("to"),
                            sender=number("from"), body=need("body"), received_at=received,
                            customer=CubbyAdapter._customer(customer) if named and isinstance(customer, dict) else None)
 

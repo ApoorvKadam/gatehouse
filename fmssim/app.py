@@ -107,7 +107,7 @@ def create_app(database_url: str | None = None, lose_response_seconds: float = 8
     @app.post("/v1/facilities/search")
     def facilities_search(body: dict, key: ApiKey = Depends(caller), session: Session = Depends(db)):
         rows = session.scalars(select(Facility).where(Facility.org_id == key.org_id)).all()
-        return ok({"facilities": [{"facilityId": f.facility_id, "name": f.name, "state": f.state,
+        return ok({"facilities": [{"facilityId": f.facility_id, "organizationId": f.org_id, "name": f.name, "state": f.state,
                                    "timeZone": f.time_zone, "billingCycle": f.billing_cycle} for f in rows]})
 
     def customer_json(c: Customer, key: ApiKey | None = None) -> dict:

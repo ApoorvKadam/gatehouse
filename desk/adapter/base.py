@@ -150,6 +150,7 @@ class InboundText:
     several facilities."""
 
     message_id: str
+    org_id: str
     facility_provider_id: str | None
     to: str
     sender: str

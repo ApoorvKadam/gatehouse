@@ -17,15 +17,17 @@ from desk.adapter.cubby import CubbyAdapter
 from desk.api import create_app
 from desk.cases import sync_facility
 from desk.config import Settings
-from desk.db import bind_to_fms, make_session_factory, utcnow
+from desk.db import bind_to_fms, make_session_factory, refresh_binding, utcnow
 from desk.messaging import (SMS_LIMIT, can_text, decide, e164, file_unrouted, hold_stranded, inbox, match_pending, receive_text,
                             send_text, unrouted)
-from desk.models import Facility, InboundMessage, OutboundMessage
+from desk.models import DeskBinding, Facility, InboundMessage, OutboundMessage
 from desk.worker import run_once
 
 from .conftest import FULL_KEY, ORLANDO
 
 TOKEN, WEBHOOK = "front-desk-token", "webhook-shared-secret"
+ALBANY = "fac_NSalbany001"
+SERVED = {ORLANDO, ALBANY}          # the two facilities of the Northstar key
 DANA, MARCUS, PRIYA, STRANGER = "+14075550142", "+14075550187", "+14075550119", "+13215550177"
 # 12:00 and 22:00 on an ordinary November day in Orlando (Eastern standard time, five hours behind UTC)
 NOON, NIGHT = datetime(2026, 11, 9, 17, 0), datetime(2026, 11, 10, 3, 0)
@@ -48,7 +50,7 @@ def texts_in(sim, sender: str, body: str, minutes_ago: int = 1) -> dict:
 
 def arrive(session, adapter, payload: dict) -> InboundMessage | None:
     """What the webhook receiver does with a payload."""
-    return receive_text(session, adapter.inbound_text(payload))
+    return receive_text(session, adapter.inbound_text(payload), None, SERVED)
 
 
 def service_truth(fms_url: str) -> dict:
@@ -145,9 +147,9 @@ def test_a_payload_that_is_not_an_sms_received_webhook_is_refused(sim, adapter):
 def test_a_text_for_a_facility_the_desk_has_not_read_yet_is_kept_and_filed_when_it_is(sim, adapter, session):
     m = arrive(session, adapter, texts_in(sim, DANA, "hello"))
     assert m is not None and m.facility_id is None and m.match_state == "unrouted" and "has not been read yet" in m.match_note
-    assert file_unrouted(session) == 0                                    # still not read
+    assert file_unrouted(session, None, SERVED) == 0                      # still not read
     sync_facility(session, adapter, ORLANDO)
-    assert file_unrouted(session) == 1
+    assert file_unrouted(session, None, SERVED) == 1
     desk = session.scalar(select(Facility).where(Facility.provider_id == ORLANDO))
     session.refresh(m)
     assert (m.facility_id, m.match_state, m.match_note) == (desk.id, "pending", None)
@@ -157,26 +159,26 @@ def test_a_text_for_a_facility_the_desk_has_not_read_yet_is_kept_and_filed_when_
 def test_a_text_from_a_number_shared_by_several_facilities_is_kept_unrouted_until_the_operator_says_which_is_which(sim, adapter, session, desk):
     shared = {**texts_in(sim, DANA, "hello"), "facilityId": None}
     text = adapter.inbound_text(shared)
-    m = receive_text(session, text)
+    m = receive_text(session, text, None, SERVED)
     assert m is not None and m.facility_id is None and m.match_state == "unrouted" and "DESK_TEXT_NUMBERS" in m.match_note
     assert match_pending(session, adapter, desk) == 0 and inbox(session, desk) == []
     [listed] = unrouted(session)
     assert listed["from"] == DANA and listed["to"] == "+14075550100" and "DESK_TEXT_NUMBERS" in listed["note"]
     # with the number set to a facility, the next such text is filed under it, and so is the one that was waiting
-    filed = receive_text(session, adapter.inbound_text({**shared, "messageId": "SM-other"}), {"(407) 555-0100": ORLANDO})
+    filed = receive_text(session, adapter.inbound_text({**shared, "messageId": "SM-other"}), {"(407) 555-0100": ORLANDO}, SERVED)
     assert filed is not None and filed.facility_id == desk.id and filed.match_state == "pending"
-    assert file_unrouted(session, {"(407) 555-0100": ORLANDO}) == 1 and unrouted(session) == []
+    assert file_unrouted(session, {"(407) 555-0100": ORLANDO}, SERVED) == 1 and unrouted(session) == []
     session.refresh(m)
     assert (m.facility_id, m.match_state) == (desk.id, "pending")
 
 
 def test_a_wrong_number_setting_can_be_corrected_and_the_waiting_text_is_filed(sim, adapter, session, desk):
     shared = {**texts_in(sim, DANA, "hello"), "facilityId": None}
-    m = receive_text(session, adapter.inbound_text(shared), {"+14075550100": "fac_WRONG"})
+    m = receive_text(session, adapter.inbound_text(shared), {"+14075550100": "fac_WRONG"}, SERVED)
     assert m is not None and m.match_state == "unrouted" and "fac_WRONG" in m.match_note
     assert m.facility_provider_id is None                                      # the setting's answer is not kept as the webhook's
-    assert file_unrouted(session, {"+14075550100": "fac_WRONG"}) == 0
-    assert file_unrouted(session, {"+14075550100": ORLANDO}) == 1               # corrected: filed
+    assert file_unrouted(session, {"+14075550100": "fac_WRONG"}, SERVED) == 0
+    assert file_unrouted(session, {"+14075550100": ORLANDO}, SERVED) == 1       # corrected: filed
     session.refresh(m)
     assert (m.facility_id, m.match_state) == (desk.id, "pending")
 
@@ -435,18 +437,52 @@ def test_the_webhook_receiver_needs_the_shared_secret_and_a_real_payload(fms_url
     assert webhook(api, payload).json() == {"stored": False}                  # Cubby delivered it twice
     assert len(api.get(f"/api/facilities/{ORLANDO}/inbox").json()["messages"]) == 1
 
-    # a facility the desk does not serve yet (another operator's, or one added to the account after the desk started) is never
-    # refused: the text is kept as unrouted. One the desk serves but has not read yet is filed as soon as it is read.
-    assert webhook(api, {**texts_in(sim, DANA, "hi"), "facilityId": "fac_HBtampa0001"}).json() == {"stored": True}
-    assert webhook(api, {**texts_in(sim, DANA, "hi again"), "facilityId": "fac_NSalbany001"}).json() == {"stored": True}
-    waiting = api.get("/api/inbox/unrouted").json()["messages"]
-    assert len(waiting) == 2 and all("has not been read yet" in w["note"] for w in waiting)
-    assert api.post("/api/facilities/fac_NSalbany001/sync").status_code == 200
+
+def test_the_receiver_keeps_only_texts_that_belong_to_this_operator(fms_url, sim, api):
+    # another operator's facility, and a text with no facility from another organization, are refused and nothing is kept
+    assert webhook(api, {**texts_in(sim, DANA, "hi"), "facilityId": "fac_HBtampa0001"}).status_code == 404
+    assert webhook(api, {**texts_in(sim, DANA, "hi"), "facilityId": None, "orgId": "org_HarborSS001"}).status_code == 404
+    assert api.get("/api/inbox/unrouted").json() == {"messages": []}
+    # a number this operator's facilities share has no facility in the webhook; its organization is this operator's
+    assert webhook(api, {**texts_in(sim, DANA, "shared"), "facilityId": None}).json() == {"stored": True}
+    # a facility the desk serves but has not read yet is kept and filed once it is read
+    assert webhook(api, {**texts_in(sim, DANA, "hi again"), "facilityId": ALBANY}).json() == {"stored": True}
+    assert sorted(m["body"] for m in api.get("/api/inbox/unrouted").json()["messages"]) == ["hi again", "shared"]
+    assert api.post(f"/api/facilities/{ALBANY}/sync").status_code == 200
     with api.app.state.session_factory() as s:
-        assert file_unrouted(s) == 1
-    [still] = api.get("/api/inbox/unrouted").json()["messages"]              # the other operator's facility is never filed here
-    assert still["body"] == "hi"
-    assert [m["body"] for m in api.get("/api/facilities/fac_NSalbany001/inbox").json()["messages"]] == ["hi again"]
+        assert file_unrouted(s, None, SERVED) == 1
+    assert [m["body"] for m in api.get("/api/inbox/unrouted").json()["messages"]] == ["shared"]
+    assert [m["body"] for m in api.get(f"/api/facilities/{ALBANY}/inbox").json()["messages"]] == ["hi again"]
+
+
+def test_a_facility_added_after_the_desk_started_is_served_once_the_fms_shows_it(fms_url, sim, api):
+    with api.app.state.session_factory() as s:
+        binding = s.get(DeskBinding, 1)
+        assert binding.org_ids == ["org_Northstar01"]
+        binding.facility_ids = [ORLANDO]                              # as it was before ALBANY was added to the account
+        s.commit()
+    assert webhook(api, {**texts_in(sim, DANA, "hello"), "facilityId": ALBANY}).json() == {"stored": True}
+    with api.app.state.session_factory() as s:
+        assert sorted(s.get(DeskBinding, 1).facility_ids) == sorted(SERVED)          # the binding followed the FMS
+
+
+def test_when_the_fms_cannot_be_asked_a_text_for_an_unknown_facility_is_not_stored(fms_url, sim):
+    class Flaky(CubbyAdapter):
+        down = False
+
+        def facilities(self):
+            if self.down:
+                raise FMSError("the FMS did not answer")
+            return super().facilities()
+
+    flaky = Flaky(fms_url, FULL_KEY, 5.0)
+    settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=5.0,
+                        reconcile_every_seconds=60, operator_token=TOKEN, webhook_token=WEBHOOK)
+    with TestClient(create_app(settings, flaky, start_worker=False), headers={"X-Desk-Token": TOKEN}) as c:
+        flaky.down = True
+        refused = webhook(c, {**texts_in(sim, DANA, "hello"), "facilityId": "fac_NewlyAdded1"})
+        assert refused.status_code == 503 and c.get("/api/inbox/unrouted").json() == {"messages": []}
+        assert webhook(c, {**texts_in(sim, DANA, "known"), "facilityId": ORLANDO}).json() == {"stored": True}      # no FMS call needed
 
 
 def test_a_desk_without_a_webhook_token_refuses_every_webhook(fms_url, sim):
@@ -593,3 +629,42 @@ def test_the_worker_files_a_waiting_text_once_the_operator_has_set_its_number(fm
     run_once(factory, adapter, text_numbers={"+14075550100": ORLANDO})
     with factory() as s:
         assert s.scalar(select(InboundMessage.match_state)) == "matched"
+
+
+def test_a_facility_the_desk_no_longer_serves_takes_no_text(sim, adapter, session, desk):
+    sync_facility(session, adapter, ALBANY)                                           # the desk has a row for it
+    payload = {**texts_in(sim, DANA, "hello"), "facilityId": ALBANY}
+    m = receive_text(session, adapter.inbound_text(payload), None, {ORLANDO})        # but the key no longer sees it
+    assert m is not None and m.facility_id is None and "not one this desk serves" in m.match_note
+    assert file_unrouted(session, None, {ORLANDO}) == 0
+    assert file_unrouted(session, None, SERVED) == 1                                  # served again: filed
+
+
+def test_a_start_that_is_waiting_unrouted_cannot_lift_a_stop(session, desk):
+    known = person("cust_1", DANA)
+    stop = stored(session, desk, DANA, "STOP", NOON - timedelta(hours=3))
+    waiting = InboundMessage(facility_id=None, provider_message_id="SM-waiting", phone=DANA, phone_key=DANA, to_number="+14075550100",
+                             body="START", received_at=NOON - timedelta(hours=2), match_state="unrouted")
+    session.add(waiting)
+    session.commit()
+    assert not can_text(session, desk, known, NOON, reply_to=stop).ok               # a START nobody has filed does not count
+    stored(session, desk, DANA, "START", NOON - timedelta(hours=1))                  # one filed under a facility does
+    assert can_text(session, desk, known, NOON, reply_to=stop).ok
+
+
+def test_the_unrouted_list_can_be_paged(sim, adapter, session):
+    for n in range(3):
+        arrive(session, adapter, {**texts_in(sim, DANA, f"text {n}"), "facilityId": None})
+    assert [m["body"] for m in unrouted(session, 2, 0)] == ["text 2", "text 1"]          # newest first
+    assert [m["body"] for m in unrouted(session, 2, 2)] == ["text 0"]
+
+
+def test_a_refresh_never_moves_the_desk_to_another_account(adapter, session):
+    session.add(DeskBinding(id=1, fms_base_url="http://fms", facility_ids=["fac_gone", ORLANDO], org_ids=["org_Northstar01"]))
+    session.commit()
+    refresh_binding(session, adapter)                    # the key sees ORLANDO and ALBANY: some old, some new, so a person decides
+    assert sorted(session.get(DeskBinding, 1).facility_ids) == sorted(["fac_gone", ORLANDO])
+    session.get(DeskBinding, 1).facility_ids = [ORLANDO]
+    session.commit()
+    refresh_binding(session, adapter)                    # one more facility than before: the same account
+    assert sorted(session.get(DeskBinding, 1).facility_ids) == sorted(SERVED)

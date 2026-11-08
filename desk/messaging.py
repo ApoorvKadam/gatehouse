@@ -8,7 +8,7 @@ answer never arrived for a person."""
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -63,18 +63,21 @@ def full_name(customer: ProviderCustomer | None) -> str | None:
 # ---------------------------------------------------------------- inbound
 
 
-def receive_text(session: Session, text: InboundText, routes: Mapping[str, str] | None = None) -> InboundMessage | None:
+def receive_text(session: Session, text: InboundText, routes: Mapping[str, str] | None, served: Collection[str]) -> InboundMessage | None:
     """Keep one text from Cubby's webhook. None when it is already kept. The facility is the one the webhook names, or the one
-    `routes` gives for the receiving number (Cubby leaves it out when a number serves several facilities). With no facility, or
-    one the desk has not read yet, the text is still kept, as unrouted, and filed later by file_unrouted."""
+    `routes` gives for the receiving number (Cubby leaves it out when a number serves several facilities). A text is filed only
+    under a facility in `served`. With no such facility, or one the desk has not read yet, the text is still kept, as unrouted,
+    and filed later by file_unrouted. The caller has already checked the text belongs to this operator."""
     if session.scalar(select(InboundMessage.id).where(InboundMessage.provider_message_id == text.message_id)) is not None:
         return None
     named = text.facility_provider_id or {e164(k): v for k, v in (routes or {}).items()}.get(e164(text.to))
-    facility = session.scalar(select(Facility).where(Facility.provider_id == named)) if named else None
+    facility = session.scalar(select(Facility).where(Facility.provider_id == named)) if named and named in served else None
     if facility is not None:
         note = None
-    elif named:
+    elif named and named in served:
         note = f"Facility {named} has not been read yet. The text is filed when it is."
+    elif named:
+        note = f"Facility {named} is not one this desk serves."
     else:
         note = f"No facility is set for the receiving number {text.to}; see DESK_TEXT_NUMBERS."
     # a time in the future is not believable, and the order of texts decides who has asked to stop: the desk's own clock is
@@ -96,14 +99,14 @@ def receive_text(session: Session, text: InboundText, routes: Mapping[str, str] 
     return row
 
 
-def file_unrouted(session: Session, routes: Mapping[str, str] | None = None) -> int:
+def file_unrouted(session: Session, routes: Mapping[str, str] | None, served: Collection[str]) -> int:
     """File the kept texts that have no facility yet: the desk has read the facility since, or the operator has since set
-    a facility for the receiving number. A filed text is then matched like any other."""
+    a facility for the receiving number. Only a facility in `served` takes a text. A filed text is then matched like any other."""
     mapped = {e164(k): v for k, v in (routes or {}).items()}
     filed = 0
     for m in session.scalars(select(InboundMessage).where(InboundMessage.facility_id.is_(None), InboundMessage.match_state == "unrouted")):
         named = m.facility_provider_id or mapped.get(e164(m.to_number))
-        facility = session.scalar(select(Facility).where(Facility.provider_id == named)) if named else None
+        facility = session.scalar(select(Facility).where(Facility.provider_id == named)) if named and named in served else None
         if facility is not None:
             m.facility_id, m.facility_provider_id, m.match_state, m.match_note = facility.id, facility.provider_id, "pending", None
             filed += 1
@@ -174,12 +177,14 @@ class Verdict:
 
 def stop_text(session: Session, phone: str) -> InboundMessage | None:
     """The text in which this number asked to stop, unless a later one asked to start again. It covers every facility
-    this desk serves: a tenant who told one office to stop has told the operator."""
+    this desk serves: a tenant who told one office to stop has told the operator. A STOP counts from any kept text, because
+    refusing to text is the safe mistake. A START counts only from a text filed under a facility, so one that is waiting
+    unrouted cannot lift a STOP."""
     newest_first = select(InboundMessage).where(InboundMessage.phone_key == e164(phone)).order_by(
         InboundMessage.received_at.desc(), InboundMessage.id.desc())
     for m in session.scalars(newest_first):
         word = keyword(m.body)
-        if word in START_WORDS:
+        if word in START_WORDS and m.facility_id is not None:
             return None
         if word in STOP_WORDS:
             return m
@@ -323,9 +328,9 @@ def inbox(session: Session, facility: Facility, limit: int = 50) -> list[dict]:
     return out
 
 
-def unrouted(session: Session, limit: int = 50) -> list[dict]:
+def unrouted(session: Session, limit: int = 50, offset: int = 0) -> list[dict]:
     """Texts kept without a facility, so they are not lost while no facility is set for the number that received them."""
     rows = session.scalars(select(InboundMessage).where(InboundMessage.facility_id.is_(None)).order_by(
-        InboundMessage.received_at.desc(), InboundMessage.id.desc()).limit(limit)).all()
+        InboundMessage.received_at.desc(), InboundMessage.id.desc()).limit(limit).offset(offset)).all()
     return [{"id": m.id, "from": m.phone, "to": m.to_number, "body": m.body, "received_at": m.received_at, "note": m.match_note}
             for m in rows]

@@ -16,14 +16,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from .adapter import FMSAdapter, FMSError
+from .adapter import FMSAdapter, FMSError, InboundText
 from .adapter.cubby import CubbyAdapter
 from .cases import queue, sync_facility
 from .config import Settings
 from .conversation import Conversation
 from .lien_files import ensure_append_only, evaluate_case, record_evidence, replay
 from .liens import FL_R1, ValidationError
-from .db import bind_to_fms, make_session_factory
+from .db import bind_to_fms, make_session_factory, refresh_binding
 from .messaging import inbox, match_pending, outbound_view, receive_text, send_text, unrouted
 from .models import (
     CaseEvent, DelinquencyCase, DeskBinding, Facility, InboundMessage, Lease, LedgerSnapshot, LienEvaluation, PaymentCommand,
@@ -235,6 +235,13 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         check_facility(session, facility_id)
         return {"rows": [r.__dict__ for r in queue(session, facility_id)], "collected": collected(session, adapter.provider, facility_id)}
 
+    def owns(binding: DeskBinding, text: InboundText) -> bool:
+        """A text belongs to this desk when its facility is one the FMS key sees. A text with no facility (a number several
+        facilities share) belongs to it when its organization is one the key sees."""
+        if text.facility_provider_id is not None:
+            return text.facility_provider_id in binding.facility_ids
+        return text.org_id in (binding.org_ids or [])
+
     def known_facility(session: Session, facility_id: str) -> Facility | None:
         """The desk's row for a facility the FMS key can see, or None when nothing has been synced from it yet."""
         check_facility(session, facility_id)
@@ -253,8 +260,19 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
             text = adapter.inbound_text(payload)
         except ValueError as exc:
             raise HTTPException(422, f"not an SMS Received payload: {exc}") from exc
-        # a facility added to the account after the desk started is not in its binding yet; the text is kept for it anyway
-        row = receive_text(session, text, settings.text_numbers)
+        binding = session.get(DeskBinding, 1)
+        if binding is None:
+            raise HTTPException(503, "the desk has not recorded which FMS account it serves yet")
+        if not owns(binding, text):
+            # a facility added to the account after the desk started is not in the binding yet: ask the FMS once
+            try:
+                refresh_binding(session, adapter)
+            except FMSError as exc:
+                raise HTTPException(503, "could not check which facilities this desk serves; try again") from exc
+            session.refresh(binding)
+            if not owns(binding, text):
+                raise HTTPException(404, "this text is not for a facility or organization this desk serves")
+        row = receive_text(session, text, settings.text_numbers, set(binding.facility_ids))
         if row is not None and row.facility_id is not None:
             try:
                 match_pending(session, adapter, session.get(Facility, row.facility_id))
@@ -270,9 +288,9 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         return {"messages": inbox(session, facility, min(max(limit, 1), 200)) if facility else []}
 
     @app.get("/api/inbox/unrouted")
-    def unrouted_texts(limit: int = 50, session: Session = Depends(db), _: str = Depends(viewer)):
+    def unrouted_texts(limit: int = 50, offset: int = 0, session: Session = Depends(db), _: str = Depends(viewer)):
         """Texts kept without a facility because no facility is set for the number that received them."""
-        return {"messages": unrouted(session, min(max(limit, 1), 200))}
+        return {"messages": unrouted(session, min(max(limit, 1), 200), max(offset, 0))}
 
     @app.post("/api/inbox/{message_id}/reply")
     def reply_to_text(message_id: int, body: ReplyIn, session: Session = Depends(db), _: str = Depends(operator)):

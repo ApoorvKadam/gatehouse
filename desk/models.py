@@ -202,6 +202,8 @@ class DeskBinding(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     fms_base_url: Mapped[str] = mapped_column(String, default="")
     facility_ids: Mapped[list] = mapped_column(JSON, default=list)
+    # the organizations those facilities belong to, from the facility objects; empty when the FMS does not say
+    org_ids: Mapped[list] = mapped_column(JSON, default=list)
     fms_fingerprint: Mapped[str] = mapped_column(String, default="")
     bound_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 

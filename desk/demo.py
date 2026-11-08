@@ -222,7 +222,7 @@ def tenant_texts(session: Session, adapter: FMSAdapter, sim: httpx.Client) -> No
         answer = sim.post("/sim/messages/inbound", json={"facilityId": ORLANDO, "from": phone, "body": body,
                                                          "receivedAt": (now - timedelta(minutes=minutes_ago)).isoformat()})
         answer.raise_for_status()
-        receive_text(session, adapter.inbound_text(answer.json()["data"]["webhook"]))
+        receive_text(session, adapter.inbound_text(answer.json()["data"]["webhook"]), None, (ORLANDO, ALBANY))
     match_pending(session, adapter, orlando)
     texted = {m.phone_key: m for m in session.scalars(select(InboundMessage).where(InboundMessage.facility_id == orlando.id))}
     send_text(session, adapter, orlando, "cust_PriyaRmn01", "Hi Priya, yes. Your payment plan for A-012 is on file. "
