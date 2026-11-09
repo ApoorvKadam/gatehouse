@@ -10,6 +10,31 @@ Gatehouse finds that work, keeps the evidence, and closes an item only when the 
 
 A 29-second loop of one lost payment, built from the app's own screens (click the frame for the video).
 
+## Where it fits
+
+Self-storage does not lack software. Storable and swivl already automate the front of collections: reminders by text and voice, payment links, lockout rules and auction listings. Tenant Inc. offers its own FMS. Gatehouse does not compete with any of that.
+
+It starts where that automation stops. swivl's Q2 2026 report counts offers and completions apart. Of 10,735 past-due conversations, 21.66% ended with a payment link sent and 9% with a completed payment. Its collections guide hands accounts in lien, disputes and policy exceptions to a person.
+
+That hand-off is the work Gatehouse is for. It finds where the systems disagree and keeps the evidence. It closes an item only when the system of record shows the fact that proves it done.
+
+What it checks that a reminder tool does not:
+
+- A card is charged and the FMS never shows it, or shows it twice.
+- A tenant paid and is still locked out, or still listed for auction.
+- A lien sale is cancelled in the FMS but still listed on an outside site.
+- A tenant texted STOP and a later message would still go out.
+
+It is not an FMS, a reminder or calling bot, a payment processor or legal advice.
+
+Not shown yet: no operator has used it. It runs on a simulator that follows Cubby's public API. Public pages do not say what the vendors do inside, and Gatehouse does not claim they lack any of this.
+
+Sources:
+
+- swivl: "Collections Without a Collections Team: The First Pass", 2 November 2026, and the State of Voice AI report it cites.
+- Storable: its collections, delinquency and auctions pages.
+- Tenant Inc.: its products page.
+
 ## Screens
 
 | | |
