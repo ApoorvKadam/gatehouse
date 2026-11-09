@@ -126,6 +126,9 @@ def test_the_seeded_lien_file_is_not_called_stale_by_its_own_payment(fms_url, si
         assert "Account changed: re-review</span><span class=\"muted small\">as of" in lien and "not reflected here until the file is evaluated again" in lien
 
 
+EVIDENCE_PAGES = ("/payments/", "/accounts/", "/sales/", "/access/")
+
+
 def test_no_page_shows_a_state_code_that_the_desk_has_a_word_for(fms_url, sim):
     """A crawl of every page the preview links to, from the overview. A code the FMS or the desk uses for a state is written as words wherever a
     person reads it. An id may stay on an evidence page, where a person compares it with the FMS; a code may not."""
@@ -148,6 +151,9 @@ def test_no_page_shows_a_state_code_that_the_desk_has_a_word_for(fms_url, sim):
                     queue.append(href)
             text = H.unescape(re.sub(r"<[^>]+>", " ", body))
             found = sorted(code for code in STATE_WORDS if re.search(rf"\b{code}\b", text))
+            # a provider id belongs on an evidence page only: the overview, Today, Messages, Evaluation and Operations are read by people, not compared
+            if not path.startswith(EVIDENCE_PAGES):
+                found += sorted(set(re.findall(r"\b(?:payment|auction|listing|task|lease|cust|customer)_[A-Za-z0-9]{4,}\b", text)))
             if found:
                 hits[path] = found
         assert len(seen) >= 20                                       # the crawl reached the evidence pages, not only the overview
