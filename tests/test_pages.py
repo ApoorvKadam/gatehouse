@@ -49,9 +49,9 @@ def test_the_lost_payment_shows_both_sides_and_offers_no_payment_button(fms_url,
         assert "&ldquo;Yes, go ahead&rdquo;" in page or "Yes, go ahead" in page
         # the simulator's own record, saved when the world was built: one charge, applied
         assert "The simulator&#39;s own record" in page or "The simulator's own record" in page
-        assert "SUCCEEDED, applied to the ledger (possible match)" in page and "did not retry it" in page
+        assert "succeeded, applied to the ledger (possible match)" in page and "did not retry it" in page
         returned = visitor.get("/payments/2").text
-        assert "DIRECT_DEBIT_RETURN" in returned and "(this attempt)" in returned and "did not retry it" not in returned
+        assert "returned by the bank" in returned and "DIRECT_DEBIT_RETURN" not in returned and "(this attempt)" in returned and "did not retry it" not in returned
         assert "<form" not in page.split("<main>")[1] and "Mark paid" not in page
 
 
@@ -124,6 +124,34 @@ def test_the_seeded_lien_file_is_not_called_stale_by_its_own_payment(fms_url, si
     with TestClient(preview(fms_url)) as visitor:
         lien = visitor.get("/accounts/2/lien").text
         assert "Account changed: re-review</span><span class=\"muted small\">as of" in lien and "not reflected here until the file is evaluated again" in lien
+
+
+def test_no_page_shows_a_state_code_that_the_desk_has_a_word_for(fms_url, sim):
+    """A crawl of every page the preview links to, from the overview. A code the FMS or the desk uses for a state is written as words wherever a
+    person reads it. An id may stay on an evidence page, where a person compares it with the FMS; a code may not."""
+    import html as H
+
+    from desk.wording import STATE_WORDS
+    with TestClient(preview(fms_url)) as visitor:
+        seen, queue, hits = set(), ["/"], {}
+        while queue and len(seen) < 90:
+            path = queue.pop(0)
+            if path in seen:
+                continue
+            seen.add(path)
+            page = visitor.get(path)
+            assert page.status_code == 200, path
+            body = re.sub(r"<(script|style|svg)[^>]*>.*?</\1>", " ", page.text, flags=re.S)
+            for href in re.findall(r'<a [^>]*href="(/[^"#]*)"', body):
+                href = H.unescape(href)
+                if not href.startswith(("/static", "/api")) and not href.endswith((".mp4", ".jpg", ".png", ".webm")):
+                    queue.append(href)
+            text = H.unescape(re.sub(r"<[^>]+>", " ", body))
+            found = sorted(code for code in STATE_WORDS if re.search(rf"\b{code}\b", text))
+            if found:
+                hits[path] = found
+        assert len(seen) >= 20                                       # the crawl reached the evidence pages, not only the overview
+        assert hits == {}, hits
 
 
 def test_the_front_page_says_where_it_fits_in_plain_words(fms_url, sim):
