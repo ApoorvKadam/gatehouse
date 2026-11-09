@@ -300,6 +300,20 @@ def test_a_packet_with_a_made_up_id_is_sent_back_once_and_the_corrected_one_is_u
         assert run.trace[2]["calls"][0]["error"] is None
 
 
+def test_a_summary_that_names_a_record_id_is_sent_back_once_and_the_corrected_one_is_used(factory):
+    """Taking an id out of a sentence leaves it without a subject, so the desk sends the packet back instead of printing the stump."""
+    with factory() as s:
+        dana = text_of(s, "Dana Whitfield")
+        lease = dana_facts(s)["lease"]
+        with_id = {**dana_packet(s), "summary": f"Records: {lease} shows $240.00 owed on unit B-1042."}
+        reads = [tool("get_account", id_="a1"), tool("get_sale_status", {"lease_id": DANA_LEASE}, id_="a2"), tool("get_payments", {"lease_id": DANA_LEASE}, id_="a3")]
+        model = Scripted(reads, [tool("submit_case_packet", with_id, id_="a4")], [tool("submit_case_packet", dana_packet(s), id_="a5")])
+        run, _ = investigate(s, model, dana, "request-0093")
+        assert run.status == "done" and run.turns == 3 and lease not in run.packet["summary"]
+        assert model.calls[2]["messages"][-1]["content"] == [{"type": "tool_result", "tool_use_id": "a4", "is_error": True, "content": NOT_ACCEPTED}]
+        assert "names a record id" in run.trace[1]["calls"][0]["error"] and run.trace[2]["calls"][0]["error"] is None
+
+
 def test_a_packet_written_in_the_same_turn_as_a_lookup_cannot_list_what_that_lookup_returns(factory):
     with factory() as s:
         same_turn = packet("other", [dana_facts(s)["lease"]], True, "x")             # the model could not have read the record it lists

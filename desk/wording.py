@@ -44,6 +44,11 @@ def when(t: datetime | None, zone: str | None = None) -> str:
     return f"{t:%b} {t.day}, {t.year}, {t.hour % 12 or 12}:{t:%M} {t:%p}"
 
 
+def names_a_record(text: str | None) -> bool:
+    """Whether a text carries an id the desk gave a record. A person never reads one, and taking it out leaves a sentence with no subject."""
+    return bool(text and _RECORD_ID.search(text))
+
+
 def words(code: str | None) -> str:
     """A state code as words: a known one by its wording, any other with its underscores taken out."""
     return STATE_WORDS.get(code or "", (code or "").replace("_", " ").lower())

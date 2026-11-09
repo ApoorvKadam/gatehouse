@@ -31,7 +31,7 @@ from .sales import KIND_NAMES, LISTED_KINDS, LISTED_PAID, OUTSIDE, SALE_KINDS
 from .staff_review import staff_review
 from .spend import WORST_RUN_USD, Refused
 from .usage import PRICES, cost_usd
-from .wording import REPLY_KINDS, clock, plain, when, words
+from .wording import REPLY_KINDS, clock, names_a_record, plain, when, words
 
 log = logging.getLogger("desk.investigator")
 
@@ -42,7 +42,7 @@ MAX_TURNS = 8
 NOT_ACCEPTED = ("The packet was not accepted. Every record_id you list must be one that an earlier lookup returned in this conversation or the one on "
                 "the tenant's message; a lookup that found nothing returned a record that says so. Every amount and date you write in the "
                 "summary and the reason must appear in a record you list, so do not add, subtract or estimate. You list at most eight records. "
-                "Fix that and submit the packet again.")
+                "Write no record id in the summary or the reason: say in words what the record shows. Fix that and submit the packet again.")
 # A model call is cut off after CALL_TIMEOUT seconds and the desk tries it once more (the SDK's own retries are off for these calls, see
 # Investigation._ask), so a live run writes its heartbeat (AgentRun.beat_at) at least every two and a half minutes. A run silent for
 # STRANDED_AFTER was cut off, not slow.
@@ -516,6 +516,8 @@ def packet_problem(packet, facts: dict[str, str], tenant_text: str = "") -> str 
     unknown = [i for i in ids if i not in facts]
     if unknown:
         return "the packet lists records that no earlier lookup of this run returned: " + ", ".join(shown_id(i) for i in unknown[:5])
+    if names_a_record(packet["summary"]) or names_a_record(packet["reason"]):
+        return "the summary or the reason names a record id"
     loose = ungrounded(packet, facts, tenant_text)
     if loose:
         return "the packet names an amount or date that no record it lists shows: " + ", ".join(loose[:5])
