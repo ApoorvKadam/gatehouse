@@ -4,12 +4,12 @@ from __future__ import annotations
 from datetime import timedelta
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from desk.adapter import NotFound
 from desk.adapter.cubby import CubbyAdapter
 from desk.cases import current_case, refresh_case, sync_facility
-from desk.models import CaseEvent, DelinquencyCase, Lease, PaymentCommand
+from desk.models import CaseEvent, DelinquencyCase, LedgerSnapshot, Lease, PaymentCommand
 from desk.payments import (
     Authorization, IdentityClaim, PaymentRefused, PaymentService, collected, tenant_message, verify_identity,
 )
@@ -670,6 +670,58 @@ def test_a_counter_payment_not_yet_on_the_ledger_blocks_a_new_charge(session, fm
     with pytest.raises(PaymentRefused, match="not visibly on the ledger"):
         PaymentService(session, unposted).take_payment(case.id, "pm_DanaVisa4242", Authorization.new(True, 24000, 24000))
     assert all(p["status"] != "SUCCEEDED" for p in sim.payments(DANA))
+
+
+def test_a_desk_payment_confirmed_while_a_ledger_read_was_being_stored_does_not_vouch_for_a_counter_payment(session, fms_url, sim):
+    """A ledger read began before the desk's own payment B reached the ledger, and its row was stored after B was confirmed. B's money is in the
+    ledger's later increase, so B must be subtracted from it. If it is not, B stands in for a counter payment A that never reached the ledger,
+    and the desk charges the card on top of it."""
+    from dataclasses import replace
+
+    plain = CubbyAdapter(fms_url, "sim_org_northstar_full", timeout_seconds=5.0)
+    b, case, _ = pay(session, plain, DANA, "pm_DanaVisa4242", 10000)         # B: $100 of the $240, taken and confirmed by the desk
+    settle(session, plain)
+    assert b.state == "CONFIRMED" and b.confirmed_at is not None
+    lease = session.get(Lease, case.lease_id)
+    snaps = session.scalars(select(LedgerSnapshot).where(LedgerSnapshot.lease_id == lease.id).order_by(LedgerSnapshot.id)).all()
+    stale = snaps[0]
+    assert stale.total_due == 24000                                           # the read that began before B was on the ledger
+    session.execute(delete(LedgerSnapshot).where(LedgerSnapshot.lease_id == lease.id, LedgerSnapshot.id != stale.id))
+    stale.observed_at = b.confirmed_at + timedelta(seconds=1)                 # and was stored after B was confirmed
+    session.commit()
+
+    class Counter(CubbyAdapter):
+        """The FMS lists a $100 counter payment A, taken after that read was stored, as succeeded. Its ledger has not caught up."""
+        def payments_for_lease(self, lease_provider_id):
+            real = super().payments_for_lease(lease_provider_id)
+            return real + [replace(real[0], provider_id="payment_counter01", status="SUCCEEDED", amount=10000, created_at=stale.observed_at + timedelta(seconds=2))]
+
+    ledger_now = plain.ledger(DANA)
+    assert ledger_now.total_due == 14000                                      # B is on the ledger; A is not
+    with pytest.raises(PaymentRefused, match="not visibly on the ledger"):
+        PaymentService(session, Counter(fms_url, "sim_org_northstar_full", timeout_seconds=5.0)).take_payment(
+            case.id, "pm_DanaVisa4242", Authorization.new(True, 14000, 14000))
+    assert sum(1 for p in sim.payments(DANA) if p["status"] == "SUCCEEDED") == 1          # nothing was charged on top of B
+
+
+def test_a_ledger_reading_is_stamped_with_when_the_read_began_not_when_it_was_stored(session, fms_url, sim):
+    """The read can finish, and the row be stored, after things happened that the reading does not show."""
+    from datetime import datetime, timezone
+
+    seen = {}
+
+    class Slow(CubbyAdapter):
+        def ledger(self, lease_provider_id):
+            seen["asked"] = datetime.now(timezone.utc).replace(tzinfo=None)
+            import time
+            time.sleep(0.05)
+            return super().ledger(lease_provider_id)
+
+    case, lease = case_for(session, CubbyAdapter(fms_url, "sim_org_northstar_full", timeout_seconds=5.0), DANA)
+    refresh_case(session, Slow(fms_url, "sim_org_northstar_full", timeout_seconds=5.0), case)
+    snap = session.get(LedgerSnapshot, case.last_snapshot_id)
+    assert snap.read_at is not None and snap.read_at <= seen["asked"] < snap.observed_at
+    assert (snap.observed_at - snap.read_at).total_seconds() >= 0.05            # the wait for the FMS lies between the two stamps
 
 
 def test_staff_cannot_swap_the_payment_id_the_fms_gave_this_attempt(session, adapter, sim):

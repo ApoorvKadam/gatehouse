@@ -48,6 +48,8 @@ class LedgerSnapshot(Base):
     total_due: Mapped[int] = mapped_column(Integer)
     prepaid: Mapped[int] = mapped_column(Integer)
     observed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    # when the read began: the ledger shown is no older than this, and it may have been stored after later things happened
+    read_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     raw: Mapped[dict] = mapped_column(JSON)
 
 
