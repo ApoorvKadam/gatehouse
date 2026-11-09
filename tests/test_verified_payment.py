@@ -375,6 +375,83 @@ def test_one_lease_the_fms_cannot_read_does_not_stop_the_pass(session, fms_url, 
     assert "fms read failed" in events
 
 
+# ------------------------------------------------------------------ a facility that leaves the account
+
+class Asking(CubbyAdapter):
+    """Remembers which leases the desk asked the FMS about."""
+
+    asked: list
+
+    def payments_for_lease(self, lease_provider_id):
+        self.asked.append(lease_provider_id)
+        return super().payments_for_lease(lease_provider_id)
+
+
+def asking_adapter(fms_url):
+    adapter = Asking(fms_url, "sim_org_northstar_full", timeout_seconds=5.0)
+    adapter.asked = []
+    return adapter
+
+
+def bind_desk(session, fms_url, served, move_to_left=None):
+    """Bind the desk to the facilities its key sees. A lease named in move_to_left sits at a facility that is not among them."""
+    from desk.models import DeskBinding, Facility
+
+    if move_to_left:
+        lease = session.scalar(select(Lease).where(Lease.provider_id == move_to_left))
+        home = session.get(Facility, lease.facility_id)
+        left = Facility(provider=home.provider, provider_id="fac_left01", name="Left the account", jurisdiction=home.jurisdiction,
+                        time_zone=home.time_zone)
+        session.add(left)
+        session.flush()
+        lease.facility_id = left.id
+    session.add(DeskBinding(id=1, fms_base_url=fms_url, facility_ids=served, org_ids=[]))
+    session.commit()
+
+
+def test_an_open_payment_at_a_facility_the_key_no_longer_sees_goes_to_staff_once(session, fms_url, sim):
+    adapter = asking_adapter(fms_url)
+    sim.behave(DANA, "pending_then_succeed", lag=5)
+    sim.behave(MARCUS, "pending_then_succeed", lag=5)
+    dana, dana_case, _ = pay(session, adapter, DANA, "pm_DanaVisa4242", 24000)
+    marcus, _, _ = pay(session, adapter, MARCUS, "pm_MarcVisa1881", 18500)
+    assert dana.state == marcus.state == "PENDING_AT_FMS"
+    bind_desk(session, fms_url, [ORLANDO], move_to_left=DANA)
+    adapter.asked.clear()
+    service = PaymentService(session, adapter)
+    service.reconcile_all()
+    service.reconcile_all()
+    dana = session.get(PaymentCommand, dana.id)
+    assert dana.state == "NEEDS_STAFF" and "no longer served" in dana.provider_reason
+    assert DANA not in adapter.asked and MARCUS in adapter.asked        # the leases the key still sees are read as before
+    assert service.read_failures == 0
+    events = session.scalars(select(CaseEvent.kind).where(CaseEvent.case_id == dana_case.id)).all()
+    assert events.count("payment needs staff") == 1                      # said once, not on every pass
+
+
+def test_a_settled_payment_at_a_facility_the_key_no_longer_sees_is_left_as_it_was(session, fms_url, sim):
+    adapter = asking_adapter(fms_url)
+    dana, dana_case, _ = pay(session, adapter, DANA, "pm_DanaVisa4242", 24000)
+    assert dana.state == "CONFIRMED"
+    bind_desk(session, fms_url, [ORLANDO], move_to_left=DANA)
+    adapter.asked.clear()
+    service = PaymentService(session, adapter)
+    service.reconcile_all()
+    assert DANA not in adapter.asked and service.read_failures == 0
+    assert session.get(PaymentCommand, dana.id).state == "CONFIRMED"
+    assert session.get(DelinquencyCase, dana_case.id).state == "paid"
+
+
+def test_a_key_that_sees_no_facility_is_a_failing_read_not_every_payment_sent_to_staff(session, fms_url, sim):
+    adapter = asking_adapter(fms_url)
+    sim.behave(DANA, "pending_then_succeed", lag=5)
+    dana, _, _ = pay(session, adapter, DANA, "pm_DanaVisa4242", 24000)
+    bind_desk(session, fms_url, [])
+    adapter.asked.clear()
+    PaymentService(session, adapter).reconcile_all()
+    assert DANA in adapter.asked and session.get(PaymentCommand, dana.id).state == "PENDING_AT_FMS"
+
+
 # ------------------------------------------------------------------ answers that are not FMS answers
 
 def test_a_proxy_error_page_is_not_taken_for_an_fms_answer():
