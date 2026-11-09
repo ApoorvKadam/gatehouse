@@ -41,6 +41,7 @@
           or <button type="button" data-as="dana" data-try="STOP">STOP</button>.</p>
         <p class="play-foot"><button class="button primary" type="submit" id="play-send">Send text</button></p>
         <p class="small" id="play-error" role="alert" hidden></p>
+        {% if check and not check.verified %}<div class="cf-turnstile" data-sitekey="{{ check.sitekey }}" data-action="visit" data-appearance="interaction-only" data-callback="gatehouseChecked" data-error-callback="gatehouseCheckFailed"></div>{% endif %}
       </form>
     </section>
     {% endif %}
@@ -124,6 +125,29 @@
   <p class="empty">No message has reached this facility's number yet.</p>
   {% endif %}
 </div>
+{% if check and not check.verified %}<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>{% endif %}
+<script>
+// the bot check: a press waits for it once, and a browser that has passed already has nothing to wait for
+var gatehouseCheck = Promise.resolve();
+function checkError(text) { var e = new Error(text); e.check = true; return e; }
+{% if check and not check.verified %}
+gatehouseCheck = new Promise(function (resolve, reject) {
+  window.gatehouseChecked = function (token) {
+    fetch("/api/visitor", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: token }) })
+      .then(function (r) {
+        if (r.ok) { resolve(); return; }
+        return r.json().then(function (body) { reject(checkError(body && typeof body.detail === "string" ? body.detail : "The quick check did not pass. Reload the page and try again.")); });
+      })
+      .catch(function () { reject(checkError("The quick check could not run. Reload the page and try again.")); });
+  };
+  window.gatehouseCheckFailed = function () { reject(checkError("The quick check could not run. Reload the page and try again.")); };
+});
+gatehouseCheck.catch(function () {});
+{% endif %}
+function checked() {
+  return Promise.race([gatehouseCheck, new Promise(function (_, reject) { setTimeout(function () { reject(checkError("The quick check could not run. Reload the page and try again.")); }, 20000); })]);
+}
+</script>
 <script>
 (function () {
   var button = document.getElementById("explore");
@@ -166,17 +190,19 @@
   }
   button.addEventListener("click", function () {
     start();
-    fetch("/api/inbox/" + id + "/investigate", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ request_id: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2), again: true })
+    checked().then(function () {
+      return fetch("/api/inbox/" + id + "/investigate", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ request_id: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2), again: true })
+      });
     }).then(function (r) { return r.json().then(function (body) { return { code: r.status, body: body }; }); }).then(function (res) {
       waiting = false;
       if (res.code === 200 || res.code === 202) { finished = true; paint(); location.reload(); return; }
       reset();
       error.textContent = (res.body && res.body.detail) || "Our agent could not run just now. Try again in a minute."; error.hidden = false;
-    }).catch(function () {
+    }).catch(function (err) {
       waiting = false; reset();
-      error.textContent = "The request failed. Try again."; error.hidden = false;
+      error.textContent = err && err.check ? err.message : "The request failed. Try again."; error.hidden = false;
     });
   });
   if (button.hasAttribute("data-running")) {
@@ -202,14 +228,14 @@
     error.hidden = true; send.disabled = true; send.textContent = "Sending...";
     // one id for the press and its retries, so a repeat is the same text
     request = request || ((window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
-    fetch("/api/inbox/texts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sender: who.value, body: text.value, request_id: request }) })
+    checked().then(function () { return fetch("/api/inbox/texts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sender: who.value, body: text.value, request_id: request }) }); })
       .then(function (r) { return r.json().then(function (body) { return { code: r.status, body: body }; }); })
       .then(function (res) {
         if (res.code === 200) { location.href = "/inbox?facility=" + encodeURIComponent(res.body.facility) + "&text=" + res.body.id; return; }
         request = null;
         again(res.body && typeof res.body.detail === "string" ? res.body.detail : "That text could not be sent.");
       })
-      .catch(function () { again("The request failed. Try again."); });
+      .catch(function (err) { again(err && err.check ? err.message : "The request failed. Try again."); });
   });
 })();
 </script>

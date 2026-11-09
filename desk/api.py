@@ -22,6 +22,7 @@ from .adapter import FMSAdapter, FMSError, InboundText
 from .adapter.cubby import CubbyAdapter
 from .cases import queue, sync_facility
 from .config import Settings
+from .guard import ASK, LIFETIME, UNSET, Guard, Unreachable
 from .conversation import Conversation
 from . import spend
 from .investigator import CALL_TIMEOUT, SALE_FRESH_FOR, investigate, run_view
@@ -94,6 +95,10 @@ class PlayIn(BaseModel):
                             description="chosen by the screen for each press and kept for its retries; sending it twice is one text")
 
 
+class VisitorIn(BaseModel):
+    token: str = Field(min_length=1, max_length=2048, description="the answer the page's bot check gave")
+
+
 class StaffResolutionIn(BaseModel):
     staff: str = Field(min_length=2, description="who checked")
     charged: bool = Field(description="what the FMS or the processor showed when staff checked")
@@ -121,6 +126,8 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         import anthropic
         # a call that hangs is cut off after a minute and tried once more, so no run sits on a dead connection for ten
         chat_client = anthropic.Anthropic(timeout=CALL_TIMEOUT, max_retries=1)
+    # the bot check is on only in the preview that lets a visitor start a run, and only when both of its keys are set
+    guard = Guard(settings.turnstile_sitekey, settings.turnstile_secret, settings.turnstile_host) if settings.public_view and settings.public_investigate and chat_client is not None else Guard()
     # Conversations live in this process: a restart ends them (their proposals and payments are in the database).
     # Running more than one API process needs them stored, and the channel in front must route each tenant to one.
     conversations: dict[str, Conversation] = {}
@@ -153,6 +160,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
 
     app = FastAPI(title="Gatehouse", lifespan=lifespan)
     app.state.session_factory = factory
+    app.state.guard = guard
     if settings.public_view:
         # the operator screens; for now they exist only in the read-only preview, which needs no sign-in
         from fastapi.staticfiles import StaticFiles
@@ -160,7 +168,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         from .web import HERE, Pages, router
         app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
         app.include_router(router(Pages(factory, trace, worker if start_worker else None,
-                                        live=chat_client is not None and settings.public_investigate)))
+                                        live=chat_client is not None and settings.public_investigate, guard=guard)))
 
     @app.exception_handler(StaleDataError)
     async def changed_meanwhile(_, exc: StaleDataError):
@@ -347,16 +355,57 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
     # the count of a visitor's texts and the new text are one step: presses that arrive together cannot each find a free place
     text_lock = threading.Lock()
 
+    def from_elsewhere(request: Request) -> bool:
+        origin = request.headers.get("origin")
+        return bool(origin) and urlsplit(origin).netloc != (request.headers.get("x-forwarded-host") or request.headers.get("host", ""))
+
+    def require_check(request: Request, who: str) -> None:
+        """A visitor starts a run or types a text only after passing the bot check. The operator is not asked. A check with one key set and not
+        the other is a mistake in how the desk was started, and it closes both paths."""
+        if who != "visitor":
+            return
+        if guard.broken:
+            raise HTTPException(503, UNSET)
+        if guard.on and guard.valid(request.cookies.get(spend.COOKIE)) is None:
+            raise HTTPException(403, ASK)
+
+    @app.post("/api/visitor")
+    def check_visitor(body: VisitorIn, request: Request, response: Response):
+        """The bot check, once for each browser. The page sends what the check gave it; the desk asks whether it is genuine, was given on
+        this address and was given for this check, and only then gives the browser its signed cookie. A browser that already holds one
+        keeps it: a new cookie would be a new count to start from."""
+        if guard.broken:
+            raise HTTPException(503, UNSET)
+        if not guard.on:
+            raise HTTPException(404, "not found")
+        if from_elsewhere(request):
+            raise HTTPException(403, "this request came from another site")
+        if guard.valid(request.cookies.get(spend.COOKIE)):
+            return {"verified": True}
+        if not guard.allow(spend.visitor_of(request)):
+            raise HTTPException(429, "Too many tries from here. Wait a while and reload the page.")
+        host = (request.headers.get("x-forwarded-host") or request.headers.get("host", "")).split(",")[0].strip().lower().split(":")[0]
+        try:
+            passed = guard.passed(body.token, spend.address_of(request), host)
+        except Unreachable as exc:
+            log.warning("the bot check did not answer: %s", exc)
+            raise HTTPException(503, "The quick check is not answering. Try again in a minute.") from exc
+        if not passed:
+            raise HTTPException(403, "The quick check did not pass. Reload the page and try again.")
+        response.set_cookie(spend.COOKIE, guard.cookie(), max_age=LIFETIME, httponly=True, samesite="lax",
+                            secure=request.headers.get("x-forwarded-proto") == "https")
+        return {"verified": True}
+
     @app.post("/api/inbox/texts")
-    def play_text(body: PlayIn, request: Request, session: Session = Depends(db), _: str = Depends(actor)):
+    def play_text(body: PlayIn, request: Request, session: Session = Depends(db), who: str = Depends(actor)):
         """A visitor plays the tenant: types a text as one of the tenants they may play. The desk keeps it the way it keeps a text from the
         webhook, matches it to a tenant by the number, and it belongs to this visitor alone. The visitor supplies only the words."""
         # the desk answers a typed text through the FMS it is attached to, so it keeps one only where that FMS is the synthetic one
         if not settings.public_view or chat_client is None or not settings.public_investigate:
             raise HTTPException(503, "texts can be typed only on the synthetic preview, where the agent is switched on")
-        origin = request.headers.get("origin")
-        if origin and urlsplit(origin).netloc != (request.headers.get("x-forwarded-host") or request.headers.get("host", "")):
+        if from_elsewhere(request):
             raise HTTPException(403, "this request came from another site")
+        require_check(request, who)
         visitor = spend.visitor_of(request)
         binding = session.get(DeskBinding, 1)
         with text_lock:
@@ -378,6 +427,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         its own records. Needs a model key. A text has one run unless `again` is set, and a double click is one run."""
         if chat_client is None:
             raise HTTPException(503, "the desk has no model key configured")
+        require_check(request, who)
         message = session.get(InboundMessage, message_id)
         facility = session.get(Facility, message.facility_id) if message is not None and message.facility_id is not None else None
         if message is None or facility is None or not seen_by(message, who, request):

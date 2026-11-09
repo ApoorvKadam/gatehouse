@@ -58,6 +58,11 @@ class Settings:
     public_investigate: bool = False
     daily_budget_usd: float = 1.0
     visitor_cases_per_day: int = 10
+    # the bot check in front of the two public write paths (desk/guard.py); it is on only when both keys are set
+    turnstile_sitekey: str | None = None
+    turnstile_secret: str | None = None
+    # the one address the check must have been passed on; unset, the address the request came to (tests, a laptop)
+    turnstile_host: str | None = None
 
     @staticmethod
     def from_env() -> "Settings":
@@ -80,4 +85,7 @@ class Settings:
             public_investigate=os.environ.get("DESK_PUBLIC_INVESTIGATE") == "1",
             daily_budget_usd=float(os.environ.get("DESK_DAILY_BUDGET_USD", "1")),
             visitor_cases_per_day=int(os.environ.get("DESK_VISITOR_CASES_PER_DAY", "10")),
+            turnstile_sitekey=os.environ.get("DESK_TURNSTILE_SITEKEY") or None,
+            turnstile_secret=os.environ.get("DESK_TURNSTILE_SECRET") or None,
+            turnstile_host=os.environ.get("DESK_TURNSTILE_HOST") or None,
         )

@@ -182,6 +182,7 @@ Not covered: checking what a kept document actually says (a person does that), s
 - Conversations live in the API process; a restart ends them (proposals and payments are in the database). Identity checks are serialized per case within one process. Running several API processes needs both moved into the database.
 - Card processing fees are not modeled. Where an FMS deducts a fee from the charged amount, the ledger shows less than the charge and the payment goes to staff instead of confirming.
 - Ledger evidence: an outside payment that succeeded more than a day before a desk payment is taken to be on the ledger already. Cubby exposes no payment-to-charge allocation, so a shorter rule would send every payment to staff and a longer one cannot be proven either; it is a stated policy (`RECENT_OUTSIDE_PAYMENT`).
+- The preview's counts live in its database, which is rebuilt at every start, so a restart begins them again. In front of that, a visitor passes a bot check (Cloudflare Turnstile) once before typing a text or starting a run. The desk then signs the browser a cookie that lasts a day and checks that the answer was given on its own address. A browser that drops the cookie has to pass the check again. The check is on only when `DESK_TURNSTILE_SITEKEY` and `DESK_TURNSTILE_SECRET` are set, and one key alone closes both paths.
 - Settled payments and paid cases are re-read for 180 days (card disputes run to about 120 days, ACH returns to 60); a later return is caught the next time the lease is read.
 
 ## Data, rules and limits of use
