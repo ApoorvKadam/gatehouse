@@ -272,6 +272,10 @@ dl.kv dd { margin: 0; }
 .film { margin: 0; }
 .film video { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; border-radius: 14px; background: #121413; border: 1px solid var(--frame); box-shadow: var(--shadow); }
 .film figcaption { margin-top: var(--s3); font-size: var(--t-sm); color: var(--ink-3); max-width: 90ch; }
+.chapters { list-style: none; margin: var(--s4) 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: var(--s2); }
+.chapters .button { width: 100%; justify-content: flex-start; font-weight: 500; }
+.chapters .button[aria-current="true"] { border-color: var(--teal); }
+.chapters .at { color: var(--ink-3); font-variant-numeric: tabular-nums; margin-right: var(--s2); }
 .hero h1 { font-family: var(--display); font-size: clamp(2.5rem, 5vw, 5.25rem); line-height: 1.04; letter-spacing: -0.025em; font-weight: 500; font-optical-sizing: auto; }
 .hero p { color: var(--ink-2); font-size: var(--t-lg); line-height: 1.6; margin-top: var(--s4); max-width: 46ch; }
 .actions { display: flex; gap: var(--s3); margin-top: var(--s5); flex-wrap: wrap; }
@@ -442,7 +446,7 @@ dl.kv.pairs { grid-template-columns: 11rem minmax(0, 1fr) 11rem minmax(0, 1fr); 
 }
 @media (max-width: 340px) { .top nav a { padding: 12px 2px; } }
 
-@media (max-width: 640px) { .film video { aspect-ratio: 4 / 5; } .open-col { display: none; } }
+@media (max-width: 640px) { .open-col { display: none; } }
 
 
 /* Messages: a list of what tenants sent, and for the one chosen the steps it went through */
