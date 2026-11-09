@@ -118,7 +118,7 @@
     <thead><tr><th>Broken build</th><th>What it does wrong</th><th class="num">Caught</th></tr></thead>
     <tbody>{% for c in controls %}<tr><td>{{ c.name }}</td><td>{{ c.broken[:1]|upper }}{{ c.broken[1:] }}</td><td class="num"><span class="status {{ 'met' if c.caught else 'review' }}">{{ 'Yes' if c.caught else 'No' }}</span></td></tr>{% endfor %}</tbody>
   </table>
-  <p class="note">The scenarios run in desk/scenarios.py and desk/evaluate.py. The simulator follows Cubby's public Operator API. A real FMS, gate system, auction site or processor is not part of this run.</p>
+  <p class="note">The scenarios run in desk/scenarios.py, desk/evaluate.py and desk/evaluate_texts.py. The simulator follows Cubby's public Operator API. A real FMS, gate system, auction site or processor is not part of this run.</p>
 </details>
 
 <div class="tip" id="tip" aria-hidden="true" hidden></div>
