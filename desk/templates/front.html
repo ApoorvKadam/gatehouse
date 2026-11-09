@@ -237,6 +237,27 @@
 </section>
 {% endif %}
 
+<section class="feature tight">
+  <div class="wrap">
+    <div data-reveal>
+      <p class="kicker" style="--c:var(--navy)">{% include "icons/unplug.svg" %}Where it fits</p>
+      <h2>It does not replace what you run.</h2>
+      <p>Your FMS, your reminders and your auction site already do their jobs. Gatehouse starts where they stop. It checks that each outcome reached the system of record, and it keeps the evidence when the systems disagree.</p>
+    </div>
+    <div class="frame" data-reveal>
+      <div class="frame-bar"><span><b>What it checks</b> &middot; that a reminder tool does not</span></div>
+      <div class="frame-body">
+        <dl class="kv">
+          <dt>Payment</dt><dd>A card is charged and the FMS never shows it, or shows it twice</dd>
+          <dt>Access</dt><dd>A tenant paid and is still locked out</dd>
+          <dt>Auction</dt><dd>A paid unit is still listed, in the FMS or on an outside site</dd>
+          <dt>Texts</dt><dd>A STOP that a later message would ignore</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+</section>
+
 {% if report %}
 <section class="feature tight">
   <div class="wrap">
@@ -251,7 +272,7 @@
       <div class="frame-body">
         <dl class="kv">
           <dt>Scenarios</dt><dd>{{ report.rows|selectattr('passed')|list|length }} of {{ report.rows|length }} behaved as they should</dd>
-          <dt>Red lines</dt><dd>{{ report.red_lines|selectattr('count', 'equalto', 0)|list|length }} of {{ report.red_lines|length }} at zero</dd>
+          <dt>Red lines</dt><dd>{{ report.red_lines|rejectattr('checked', 'equalto', 0)|selectattr('count', 'equalto', 0)|list|length }} of {{ report.red_lines|length }} at zero</dd>
           <dt>Wrong builds</dt><dd>{{ report.controls|selectattr('caught')|list|length }} of {{ report.controls|length }} caught</dd>
         </dl>
       </div>

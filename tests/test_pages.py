@@ -126,6 +126,15 @@ def test_the_seeded_lien_file_is_not_called_stale_by_its_own_payment(fms_url, si
         assert "Account changed: re-review</span><span class=\"muted small\">as of" in lien and "not reflected here until the file is evaluated again" in lien
 
 
+def test_the_front_page_says_where_it_fits_in_plain_words(fms_url, sim):
+    with TestClient(preview(fms_url)) as visitor:
+        page = visitor.get("/").text
+        assert "Where it fits" in page and "It does not replace what you run." in page
+        for failure in ("A card is charged and the FMS never shows it", "A tenant paid and is still locked out", "A paid unit is still listed",
+                        "A STOP that a later message would ignore"):
+            assert failure in page, failure
+
+
 def test_the_front_page_shows_every_built_feature_with_a_link_into_it(fms_url, sim):
     with TestClient(preview(fms_url)) as visitor:
         page = visitor.get("/").text
