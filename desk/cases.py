@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -17,8 +18,9 @@ def record(session: Session, case: DelinquencyCase, kind: str, detail: dict, act
     session.add(CaseEvent(case_id=case.id, kind=kind, actor=actor, source=source, detail=detail))
 
 
-def snapshot(session: Session, lease: Lease, ledger: ProviderLedger) -> LedgerSnapshot:
-    snap = LedgerSnapshot(lease_id=lease.id, total_due=ledger.total_due, prepaid=ledger.prepaid, raw=ledger.raw)
+def snapshot(session: Session, lease: Lease, ledger: ProviderLedger, read_at: datetime | None = None) -> LedgerSnapshot:
+    """Keep one reading of a lease's ledger. `read_at` is when the read began, taken before the FMS was asked."""
+    snap = LedgerSnapshot(lease_id=lease.id, total_due=ledger.total_due, prepaid=ledger.prepaid, raw=ledger.raw, read_at=read_at)
     session.add(snap)
     session.flush()
     return snap
@@ -87,7 +89,8 @@ def reversed_at_fms(session: Session, lease: Lease, case: DelinquencyCase, was_p
 def refresh_case(session: Session, adapter: FMSAdapter, case: DelinquencyCase) -> DelinquencyCase:
     """Re-read the ledger and derive the case state. Nothing here writes to the FMS."""
     lease = session.get(Lease, case.lease_id)
-    snap = snapshot(session, lease, adapter.ledger(lease.provider_id))
+    read_at = utcnow()                      # before the FMS is asked: what it answers is no older than this
+    snap = snapshot(session, lease, adapter.ledger(lease.provider_id), read_at)
     case.last_snapshot_id = snap.id
     commands = session.scalars(select(PaymentCommand).where(PaymentCommand.case_id == case.id)).all()
     holds = []
