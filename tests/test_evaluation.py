@@ -7,7 +7,7 @@ from datetime import datetime
 
 from fastapi.testclient import TestClient
 
-from desk import evaluate, web
+from desk import evaluate, evaluate_texts as texts, web
 from desk.wording import TROUBLES
 
 from .test_pages import preview
@@ -17,11 +17,11 @@ def test_the_evaluation_runs_clean_and_its_wrong_builds_are_caught(tmp_path):
     out = tmp_path / "evaluation.json"
     assert evaluate.main(["--out", str(out)]) == 0
     report = json.loads(out.read_text())
-    assert report["ok"] and all(r["passed"] for r in report["rows"]) and len(report["rows"]) >= 26
+    assert report["ok"] and all(r["passed"] for r in report["rows"]) and len(report["rows"]) >= 34
     assert all(r["count"] == 0 for r in report["red_lines"]) and all(c["caught"] for c in report["controls"])
     # every red line says what it was counted over, and nothing is counted over nothing
-    assert all(r["checked"] > 0 and r["of"] in ("scenarios", "messages", "passes", "requests") for r in report["red_lines"])
-    assert {r["module"] for r in report["rows"]} == {"Payments", "Access", "Lien sales"}
+    assert all(r["checked"] > 0 and r["of"] for r in report["red_lines"])
+    assert {r["module"] for r in report["rows"]} == {"Payments", "Access", "Lien sales", "Texts"}
     # every scenario, red line and wrong build names its kind of trouble, from the fixed list the page colours, and every wrong build has
     # the short name its mark shows
     assert all(r["trouble"] in TROUBLES for r in report["rows"]) and all(l["trouble"] in TROUBLES for l in report["red_lines"])
@@ -106,3 +106,25 @@ def test_a_red_line_with_nothing_checked_is_not_tested_and_stops_the_build(fms_u
     assert not report.ok                                   # nothing checked proves nothing
     report.red_lines[0].checked = 3
     assert report.ok
+
+
+def test_the_texts_part_counts_four_red_lines_over_real_attempts_and_catches_four_wrong_builds(tmp_path):
+    out = tmp_path / "evaluation.json"
+    assert evaluate.main(["--out", str(out)]) == 0
+    report = json.loads(out.read_text())
+    lines = {l["line"]: l for l in report["red_lines"] if l["module"] == "Texts"}
+    assert set(lines) == {texts.OWN, texts.CLAIM, texts.STOP, texts.TWICE}
+    assert all(l["count"] == 0 and l["checked"] >= 4 for l in lines.values())            # a zero over a handful of real attempts at least
+    wrong = {c["short"] for c in report["controls"] if c["name"] in {"A build that cannot tell visitors apart", "A build that sends what the agent wrote",
+                                                                    "A build that ignores a visitor's STOP", "A build that keeps a text for every press"}}
+    assert len(wrong) == 4 and all(c["caught"] for c in report["controls"])
+
+
+def test_the_judge_calls_a_sentence_unsupported_only_when_the_fms_does_not_bear_it_out():
+    own, listed = {"B-1042"}, {"B-1042", "E-505"}
+    said = "Hi Dana, we got your message from Nov 8 at 6:19 PM. Unit B-1042 is listed for a lien sale on Nov 10. Call the office if anything changes."
+    assert texts.unsupported(said, own, listed, set()) == 0
+    assert texts.unsupported("Unit E-505 is listed for a lien sale on Nov 10.", own, listed, set()) == 1       # a unit that is not hers
+    assert texts.unsupported("Unit B-1042 is listed for a lien sale on Nov 10.", own, {"E-505"}, set()) == 1      # a sale the FMS does not list
+    assert texts.unsupported("The auction is canceled.", own, listed, set()) == 1                              # a cancellation it does not show
+    assert texts.unsupported("The auction is canceled.", own, listed, {"B-1042"}) == 0

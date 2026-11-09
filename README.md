@@ -65,6 +65,16 @@ The case notes are written by a language model from the records the desk holds. 
 
 On the preview a visitor can also play the tenant: pick Dana, Priya or an unknown sender and type a text. The desk keeps it the way it keeps a text from the webhook, and matches it to a tenant by the number it comes from, never by what it says. The visitor supplies only the words. The text is shown only to the visitor who typed it. A STOP they type stops sends in their own space and nowhere else, and an exploration of their text never asks the FMS for a new task.
 
+## Evaluation
+
+Every image build runs `python -m desk.evaluate` against its own throwaway simulator and writes the report that the `/evaluation` page shows. It has four parts: payments, access, lien sales, and texts typed as a tenant. A part holds scenarios (what the FMS did, what Gatehouse did, who hears what), red lines and wrong builds.
+
+A red line is something that must never happen. Examples are a duplicate charge, a write to the FMS other than a task, a text sent after STOP, and one visitor's text reaching another. Each is counted from the simulator's record or the desk's rows, never from what the desk believes. It is shown with what it was counted over, for example 0 of 174 requests. A line above zero fails the build, and so does a line that nothing was checked against.
+
+A wrong build is the same run with one check taken out, such as a build that cannot tell visitors apart. The checks must catch it, or the build fails.
+
+The texts part runs hostile texts through the preview's own app with the model played from a script. The desk, the simulator, the limits and the pages are real. How the real model behaves on the same texts is checked on the live link, not in the build.
+
 ## How it is built
 
 - A FastAPI service with a database and a reconciliation worker.

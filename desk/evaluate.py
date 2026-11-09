@@ -31,6 +31,7 @@ from .db import make_session_factory
 from .models import AccessPolicy, Facility, WorkItem
 from . import sales
 from .adapter.base import FMSError
+from .evaluate_texts import CLAIM, OWN, STOP, TWICE, texts_part
 
 KEY = "sim_org_northstar_full"
 ORLANDO = "fac_NSorlando01"
@@ -633,6 +634,12 @@ GUARDS = {
     "a zero balance with no payment since the notice described as a tenant payment": "money",
     "a settled sale shown with an order between the sale and the payments": "disagree",
     "a request from Gatehouse that could change a sale (cancel, settle or complete)": "disagree",
+    # texts typed as a tenant (desk/evaluate_texts.py): a text of one visitor reached by another, a sentence the FMS does not bear out,
+    # a send after STOP, and one press counted twice
+    OWN: "twice",
+    CLAIM: "disagree",
+    STOP: "no",
+    TWICE: "twice",
 }
 
 
@@ -660,6 +667,10 @@ def evaluate(url: str) -> Report:
                                     sale_writes, sale_checked["requests"], "requests"))
     report.controls += [control_retry(url), control_task_closes(url), control_sale_task_closes(url), control_outside_from_fms(url),
                         control_sale_cancelled_by_gatehouse(url)]
+    text_rows, text_lines, text_controls = texts_part(url)
+    report.rows += [Row("Texts", *row) for row in text_rows]
+    report.red_lines += [red_line("Texts", *line) for line in text_lines]
+    report.controls += [Control(*control) for control in text_controls]
     return report
 
 
