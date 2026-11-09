@@ -102,6 +102,7 @@ def test_a_red_line_with_nothing_checked_is_not_tested_and_stops_the_build(fms_u
         monkeypatch.setattr(web, "evaluation_report", lambda: _report(rows=[], red_lines=lines, controls=[]))
         page = visitor.get("/evaluation").text
         assert "not tested" in page and "Not tested, so the build stops" in page and "of 9 passes" in page and "1 of 2 at zero" in page
+        assert "1 of 2 at zero" in visitor.get("/").text                                  # the overview counts them the same way
     report = evaluate.Report("now", red_lines=[evaluate.RedLine("Access", "x", "twice", 0, 0, "passes")])
     assert not report.ok                                   # nothing checked proves nothing
     report.red_lines[0].checked = 3
