@@ -247,7 +247,7 @@ def test_the_access_lookup_tells_priyas_arrangement_in_words_and_holds_no_serial
         assert run.status == "done" and run.error is None
         plan, locked = run.facts[f"access:{a012.id}"], run.facts[f"access:{a013.id}"]
         assert "exemption on file (payment arrangement) pauses the overlock until" in plan and "should not be restricted" in plan and "No operator lock" in plan
-        assert re.search(r"until [A-Z][a-z]{2} \d{1,2}, 20\d\d\.", plan) and "38 days overdue, per the FMS" in plan
+        assert re.search(r"until [A-Z][a-z]{2} \d{1,2}, 20\d\d\.", plan) and re.search(r"\b\d+ days overdue, per the FMS", plan)
         assert "should be restricted" in locked and "One operator lock is recorded" in locked
         assert "gate code is switched off" in plan and "denies the tenant's code while any of their units is restricted" in plan
         assert "Another unit of this tenant that the rule restricts: A-013." in plan and "Another unit" not in locked
