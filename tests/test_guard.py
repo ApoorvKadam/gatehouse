@@ -8,15 +8,15 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from desk.config import Settings
-from desk.guard import ACTION, ASK, LIFETIME, TRIES_PER_HOUR, UNSET, Guard, Unreachable
+from desk.guard import ACTION, ASK, LIFETIME, PASSES_PER_HOUR, SLOW_DOWN, TRIES_PER_HOUR, UNSET, Guard, Unreachable
 from desk.models import InboundMessage
 
 from .test_investigator import TOKEN, Scripted
 from .test_live import live_app
 from .test_sandbox import explore, type_as
 
-KEYS = {"turnstile_sitekey": "site-key-for-tests", "turnstile_secret": "secret-for-tests"}
 HOST = "testserver"
+KEYS = {"turnstile_sitekey": "site-key-for-tests", "turnstile_secret": "secret-for-tests", "turnstile_host": HOST}
 
 
 class Turnstile:
@@ -148,11 +148,15 @@ def test_with_no_keys_the_check_is_off_and_the_preview_works_as_before(fms_url, 
     monkeypatch.setenv("DESK_TURNSTILE_HOST", "Gatehouse-Peug.onrender.com")
     settings = Settings.from_env()
     assert (settings.turnstile_sitekey, settings.turnstile_secret, settings.turnstile_host) == ("a-site-key", "a-secret", "Gatehouse-Peug.onrender.com")
-    assert Guard(settings.turnstile_sitekey, settings.turnstile_secret, settings.turnstile_host).host == "gatehouse-peug.onrender.com"
+    guard = Guard(settings.turnstile_sitekey, settings.turnstile_secret, settings.turnstile_host)
+    assert guard.host == "gatehouse-peug.onrender.com" and guard.on and not guard.broken
+    assert Guard("a-site-key", "a-secret").broken and not Guard("a-site-key", "a-secret").on and not Guard().broken
 
 
-def test_one_key_without_the_other_closes_both_paths_and_the_operator_still_works(fms_url, sim, turnstile):
-    app = live_app(fms_url, Scripted(), turnstile_sitekey="site-key-for-tests")
+@pytest.mark.parametrize("part", [{"turnstile_sitekey": "site-key-for-tests"}, {"turnstile_secret": "secret-for-tests"},
+                                  {"turnstile_sitekey": "site-key-for-tests", "turnstile_secret": "secret-for-tests"}, {"turnstile_host": HOST}])
+def test_a_check_set_up_in_part_closes_both_paths_and_the_operator_still_works(fms_url, sim, turnstile, part):
+    app = live_app(fms_url, Scripted(), **part)
     with TestClient(app) as visitor:
         page = visitor.get("/inbox")
         assert 'class="cf-turnstile"' not in page.text
@@ -163,13 +167,36 @@ def test_one_key_without_the_other_closes_both_paths_and_the_operator_still_work
         assert type_as(visitor, "dana", "From the desk", "press-0003", headers={"X-Desk-Token": TOKEN}).status_code == 200
 
 
-def test_the_answer_must_come_from_the_address_the_desk_was_told_to_expect(fms_url, sim, turnstile):
-    app = live_app(fms_url, Scripted(), turnstile_host="gatehouse-peug.onrender.com", **KEYS)
+def test_the_answer_must_come_from_the_address_the_desk_was_told_to_expect_and_not_from_the_request(fms_url, sim, turnstile):
+    app = live_app(fms_url, Scripted(), **{**KEYS, "turnstile_host": "Gatehouse-Peug.onrender.com"})
+    assert app.state.guard.host == "gatehouse-peug.onrender.com"
     with TestClient(app) as visitor:
-        assert pass_the_check(visitor).status_code == 403                            # given on "testserver", the address the request came to
+        turnstile.answer = {"success": True, "hostname": "elsewhere.example", "action": ACTION}
+        for headers in ({}, {"x-forwarded-host": "elsewhere.example"}, {"host": "elsewhere.example"}):          # what the client writes decides nothing
+            assert visitor.post("/api/visitor", json={"token": "t"}, headers=headers).status_code == 403, headers
         turnstile.answer = {"success": True, "hostname": "Gatehouse-Peug.onrender.com", "action": ACTION}
         assert pass_the_check(visitor).status_code == 200                            # given where the desk expects it, whatever the Host header says
-    assert app.state.guard.host == "gatehouse-peug.onrender.com"
+
+
+def test_the_desk_gives_out_a_bounded_number_of_cookies_whatever_address_a_request_claims(fms_url, sim, turnstile):
+    app = live_app(fms_url, Scripted(), **KEYS)
+    with TestClient(app) as visitor:
+        for n in range(PASSES_PER_HOUR):
+            assert visitor.post("/api/visitor", json={"token": f"t{n}"}, headers={"x-forwarded-for": f"198.51.100.{n}"}).status_code == 200
+            visitor.cookies.clear()                                                  # a browser that drops its cookie, claiming a new address each time
+        spent = visitor.post("/api/visitor", json={"token": "late"}, headers={"x-forwarded-for": "203.0.113.200"})
+        assert spent.status_code == 429 and spent.json()["detail"] == SLOW_DOWN       # a new address does not help
+        assert len(turnstile.asked) == PASSES_PER_HOUR                              # and Turnstile is not asked for it
+
+
+def test_answers_that_fail_do_not_use_up_the_cookies_everyone_else_may_be_given(fms_url, sim, turnstile):
+    turnstile.answer = {"success": False}
+    app = live_app(fms_url, Scripted(), **KEYS)
+    with TestClient(app) as visitor:
+        for n in range(PASSES_PER_HOUR + 5):
+            visitor.post("/api/visitor", json={"token": f"t{n}"}, headers={"x-forwarded-for": f"198.51.100.{n % 250}"})
+        turnstile.answer = {"success": True, "hostname": HOST, "action": ACTION}
+        assert visitor.post("/api/visitor", json={"token": "real"}, headers={"x-forwarded-for": "203.0.113.7"}).status_code == 200
 
 
 def test_a_cookie_stops_counting_when_its_day_is_over_and_cannot_be_extended():
@@ -211,3 +238,24 @@ def test_the_real_call_sends_the_secret_the_token_and_a_valid_address_and_a_fail
     monkeypatch.setattr(httpx, "post", down)
     with pytest.raises(Unreachable):
         guard._siteverify("tok", "203.0.113.9")
+
+
+def test_an_answer_that_is_not_an_object_is_treated_as_no_answer(monkeypatch):
+    class Reply:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return ["success"]
+    monkeypatch.setattr(httpx, "post", lambda url, data, timeout: Reply())
+    with pytest.raises(Unreachable):
+        Guard("site", "secret", HOST)._siteverify("tok", "203.0.113.9")
+
+
+@pytest.mark.parametrize("headers,secure", [({}, False), ({"x-forwarded-proto": "https"}, True), ({"x-forwarded-proto": "https, http"}, True),
+                                            ({"x-forwarded-proto": "http"}, False)])
+def test_the_cookie_is_marked_secure_when_the_browser_came_over_https(fms_url, sim, turnstile, headers, secure):
+    app = live_app(fms_url, Scripted(), **KEYS)
+    with TestClient(app) as visitor:
+        cookie = visitor.post("/api/visitor", json={"token": "t"}, headers=headers).headers["set-cookie"]
+        assert ("Secure" in cookie) is secure

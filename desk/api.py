@@ -22,7 +22,7 @@ from .adapter import FMSAdapter, FMSError, InboundText
 from .adapter.cubby import CubbyAdapter
 from .cases import queue, sync_facility
 from .config import Settings
-from .guard import ASK, LIFETIME, UNSET, Guard, Unreachable
+from .guard import ASK, LIFETIME, SLOW_DOWN, UNSET, Guard, Unreachable
 from .conversation import Conversation
 from . import spend
 from .investigator import CALL_TIMEOUT, SALE_FRESH_FOR, investigate, run_view
@@ -357,7 +357,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
 
     def from_elsewhere(request: Request) -> bool:
         origin = request.headers.get("origin")
-        return bool(origin) and urlsplit(origin).netloc != (request.headers.get("x-forwarded-host") or request.headers.get("host", ""))
+        return bool(origin) and urlsplit(origin).netloc.lower() != spend.host_of(request)
 
     def require_check(request: Request, who: str) -> None:
         """A visitor starts a run or types a text only after passing the bot check. The operator is not asked. A check with one key set and not
@@ -372,8 +372,8 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
     @app.post("/api/visitor")
     def check_visitor(body: VisitorIn, request: Request, response: Response):
         """The bot check, once for each browser. The page sends what the check gave it; the desk asks whether it is genuine, was given on
-        this address and was given for this check, and only then gives the browser its signed cookie. A browser that already holds one
-        keeps it: a new cookie would be a new count to start from."""
+        the desk's own address (set when the desk is started, never read from the request) and was given for this check, and only then gives
+        the browser its signed cookie. A browser that already holds one keeps it: a new cookie would be a new count to start from."""
         if guard.broken:
             raise HTTPException(503, UNSET)
         if not guard.on:
@@ -383,17 +383,15 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         if guard.valid(request.cookies.get(spend.COOKIE)):
             return {"verified": True}
         if not guard.allow(spend.visitor_of(request)):
-            raise HTTPException(429, "Too many tries from here. Wait a while and reload the page.")
-        host = (request.headers.get("x-forwarded-host") or request.headers.get("host", "")).split(",")[0].strip().lower().split(":")[0]
+            raise HTTPException(429, SLOW_DOWN)
         try:
-            passed = guard.passed(body.token, spend.address_of(request), host)
+            passed = guard.passed(body.token, spend.address_of(request))
         except Unreachable as exc:
             log.warning("the bot check did not answer: %s", exc)
             raise HTTPException(503, "The quick check is not answering. Try again in a minute.") from exc
         if not passed:
             raise HTTPException(403, "The quick check did not pass. Reload the page and try again.")
-        response.set_cookie(spend.COOKIE, guard.cookie(), max_age=LIFETIME, httponly=True, samesite="lax",
-                            secure=request.headers.get("x-forwarded-proto") == "https")
+        response.set_cookie(spend.COOKIE, guard.cookie(), max_age=LIFETIME, httponly=True, samesite="lax", secure=spend.is_https(request))
         return {"verified": True}
 
     @app.post("/api/inbox/texts")

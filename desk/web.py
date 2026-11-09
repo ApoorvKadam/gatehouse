@@ -540,8 +540,7 @@ def router(pages: Pages) -> APIRouter:
                 "live": pages.live, "check": check})
             if pages.live and not checked and spend.COOKIE not in request.cookies:
                 # the cookie tells this browser from another, so texts typed here are seen here and counted here
-                page.set_cookie(spend.COOKIE, spend.new_cookie(), max_age=86400, httponly=True, samesite="lax",
-                                secure=request.headers.get("x-forwarded-proto") == "https")
+                page.set_cookie(spend.COOKIE, spend.new_cookie(), max_age=86400, httponly=True, samesite="lax", secure=spend.is_https(request))
             return page
 
     @r.get("/accounts/{case_id}", response_class=HTMLResponse)

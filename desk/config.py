@@ -61,7 +61,7 @@ class Settings:
     # the bot check in front of the two public write paths (desk/guard.py); it is on only when both keys are set
     turnstile_sitekey: str | None = None
     turnstile_secret: str | None = None
-    # the one address the check must have been passed on; unset, the address the request came to (tests, a laptop)
+    # the one address the check must have been passed on; the check is on only with all three set, and the desk never takes it from the request
     turnstile_host: str | None = None
 
     @staticmethod

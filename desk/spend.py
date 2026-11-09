@@ -92,6 +92,16 @@ def address_of(request) -> str:
         or (request.client.host if request.client else "unknown")
 
 
+def host_of(request) -> str:
+    """The address a request came to, as the front door reports it: one value, lower case, with its port."""
+    return (request.headers.get("x-forwarded-host") or request.headers.get("host", "")).split(",")[0].strip().lower()
+
+
+def is_https(request) -> bool:
+    """Whether the browser reached the desk over https, which the front door reports in a header when it ends the connection itself."""
+    return request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower() == "https" or request.url.scheme == "https"
+
+
 def visitor_of(request) -> str:
     """A short keyed hash of who a request came from. A browser that holds the desk's cookie is told apart by it, so two people behind
     one address have their own count and their own texts; a request without one is told apart by its address, as before. Render's front

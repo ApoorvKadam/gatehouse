@@ -20,9 +20,11 @@ log = logging.getLogger("desk.guard")
 SITEVERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 ACTION = "visit"                 # the name the page gives the check; an answer given for another action is refused
 TRIES_PER_HOUR = 10              # checks one address may ask this process to verify in an hour
+PASSES_PER_HOUR = 60             # cookies this process gives out in an hour, to anyone: the bound that holds whatever address a request claims
 LIFETIME = 86400                 # the cookie lives as long as the daily limits do
 ASK = "Pass the quick check first. Reload the page and try again."
 UNSET = "The quick check is not set up on this copy, so texts and runs are closed."
+SLOW_DOWN = "Too many tries. Wait a while and reload the page."
 
 
 class Unreachable(Exception):
@@ -33,13 +35,16 @@ class Guard:
     def __init__(self, sitekey: str | None = None, secret: str | None = None, host: str | None = None, ask=None, key: bytes | None = None,
                  now=time.time):
         self.sitekey, self.secret, self.host = sitekey, secret, (host or "").lower() or None
-        self.on = bool(sitekey and secret)
-        self.broken = bool(sitekey or secret) and not self.on      # one key without the other must close the paths, not open them
+        self.on = bool(sitekey and secret and self.host)
+        # a check set up in part must close the paths, not open them: the host is the address an answer must have been given on, and the desk
+        # never takes it from the request, which the client writes
+        self.broken = bool(sitekey or secret or self.host) and not self.on
         self._ask = ask or self._siteverify
         # made when the process starts: a restart ends every cookie, as it ends the counts they belong to
         self._key = key or secrets.token_bytes(32)
         self._now = now
         self._tries: dict[str, deque[float]] = {}
+        self._passes: deque[float] = deque()
 
     def _sig(self, ident: str, expires: str) -> str:
         return hmac.new(self._key, f"visitor:{ident}:{expires}".encode(), "sha256").hexdigest()[:32]
@@ -61,8 +66,14 @@ class Guard:
         return ident
 
     def allow(self, who: str) -> bool:
-        """At most TRIES_PER_HOUR checks from one address in an hour. The count lives in this process."""
+        """Whether a check may be asked for now: no more than TRIES_PER_HOUR from one address in an hour, and no more than PASSES_PER_HOUR
+        cookies given in all. The address is whatever the front door reports, which a client may be able to choose, so the second bound is the
+        one that holds. Only a pass counts toward it, so garbage tokens cannot use it up. The counts live in this process."""
         now = self._now()
+        while self._passes and now - self._passes[0] > 3600:
+            self._passes.popleft()
+        if len(self._passes) >= PASSES_PER_HOUR:
+            return False
         tries = self._tries.setdefault(who, deque())
         while tries and now - tries[0] > 3600:
             tries.popleft()
@@ -74,12 +85,14 @@ class Guard:
                 del self._tries[stale]
         return True
 
-    def passed(self, token: str, address: str, host: str) -> bool:
-        """Whether Turnstile says this answer is genuine, was given on `host` and was given for the visit check. Raises Unreachable when
-        Turnstile cannot say."""
+    def passed(self, token: str, address: str) -> bool:
+        """Whether Turnstile says this answer is genuine, was given on the desk's own address and was given for the visit check. Raises
+        Unreachable when Turnstile cannot say."""
         answer = self._ask(token, address)
-        good = bool(answer.get("success")) and answer.get("action") == ACTION and (answer.get("hostname") or "").lower() == (self.host or host)
+        good = bool(answer.get("success")) and answer.get("action") == ACTION and (answer.get("hostname") or "").lower() == self.host
         log.info("bot check %s%s", "passed" if good else "refused", "" if good else f": {answer.get('error-codes') or answer.get('hostname')}")
+        if good:
+            self._passes.append(self._now())
         return good
 
     def _siteverify(self, token: str, address: str) -> dict:
@@ -89,6 +102,9 @@ class Guard:
         try:
             reply = httpx.post(SITEVERIFY, data=form, timeout=5.0)
             reply.raise_for_status()
-            return reply.json()
+            answer = reply.json()
+            if not isinstance(answer, dict):
+                raise ValueError("not an answer")
+            return answer
         except (httpx.HTTPError, ValueError) as exc:
             raise Unreachable(type(exc).__name__) from exc
