@@ -90,7 +90,8 @@ class Guard:
         Unreachable when Turnstile cannot say."""
         answer = self._ask(token, address)
         good = bool(answer.get("success")) and answer.get("action") == ACTION and (answer.get("hostname") or "").lower() == self.host
-        log.info("bot check %s%s", "passed" if good else "refused", "" if good else f": {answer.get('error-codes') or answer.get('hostname')}")
+        log.info("bot check %s%s", "passed" if good else "refused",
+                 "" if good else f": {answer.get('error-codes') or 'success'} on {answer.get('hostname')} for {answer.get('action')}")
         if good:
             self._passes.append(self._now())
         return good
