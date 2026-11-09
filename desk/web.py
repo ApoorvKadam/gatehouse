@@ -29,7 +29,7 @@ from .models import (
 )
 from .payments import tenant_message
 from .sequence import sequence
-from .wording import TROUBLES, plain
+from .wording import TROUBLES, plain, words
 
 HERE = Path(__file__).parent
 templates = Jinja2Templates(directory=HERE / "templates")
@@ -246,17 +246,17 @@ def describe(e: CaseEvent, commands: dict[int, PaymentCommand], evidence: dict[i
     if kind == "case opened":
         title, text = "Past due", f"{money(d.get('total_due'))} owed since {day(d.get('delinquent_since'))}."
     elif kind == "payment submitted":
-        said = {"lost": f"The outcome was not confirmed ({d.get('detail') or 'no usable answer'}).", "accepted": f"The FMS answered {d.get('status')}."}
+        said = {"lost": f"The outcome was not confirmed ({d.get('detail') or 'no usable answer'}).", "accepted": f"The FMS answered {words(d.get('status'))}."}
         title = f"Sent a {money(d.get('amount'))} card payment"
         text = said.get(d.get("fms_said"), f"The FMS answered: {d.get('detail') or d.get('fms_said')}.")
     elif kind == "possible match for staff":
-        title, text = "Found a possible match", f"{d.get('payment')} ({d.get('status')}) at the FMS may be this attempt. Not matched automatically."
+        title, text = "Found a possible match", f"{d.get('payment')} ({words(d.get('status'))}) at the FMS may be this attempt. Not matched automatically."
     elif kind == "state changed":
         title, text = f"Account {d.get('to')}", f"From {d.get('from')}. The FMS balance read {money(d.get('total_due'))}."
     elif kind == "payment confirmed":
         title, text = "Payment confirmed", f"{money(d.get('amount'))} as {d.get('payment')}, applied on the FMS ledger."
     elif kind == "payment status changed after success":
-        title, text = "Payment came back", f"The FMS now reports {d.get('fms_status')} for a payment Gatehouse had confirmed."
+        title, text = "Payment came back", f"The FMS now reports {words(d.get('fms_status'))} for a payment Gatehouse had confirmed."
     elif kind == "payment taken outside the desk":
         title, text = "Payment made outside Gatehouse", f"{money(d.get('amount'))}, recorded as {d.get('payment')}."
     elif kind == "payment needs staff":
