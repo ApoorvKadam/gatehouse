@@ -86,19 +86,38 @@ def allowance(session: Session, budget_usd: float, cases_per_day: int, visitor: 
     return Allowance(True, None, cases_left, left)
 
 
+def address_of(request) -> str:
+    """Where a request came from, as the front door reports it."""
+    return request.headers.get("cf-connecting-ip") or (request.headers.get("x-forwarded-for", "").split(",")[0].strip()) \
+        or (request.client.host if request.client else "unknown")
+
+
+def host_of(request) -> str:
+    """The address a request came to, as the front door reports it: one value, lower case, with its port."""
+    return (request.headers.get("x-forwarded-host") or request.headers.get("host", "")).split(",")[0].strip().lower()
+
+
+def is_https(request) -> bool:
+    """Whether the browser reached the desk over https, which the front door reports in a header when it ends the connection itself."""
+    return request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower() == "https" or request.url.scheme == "https"
+
+
 def visitor_of(request) -> str:
     """A short keyed hash of who a request came from. A browser that holds the desk's cookie is told apart by it, so two people behind
     one address have their own count and their own texts; a request without one is told apart by its address, as before. Render's front
-    door puts the visitor's address in a header; the hash keeps the cookie and the address out of the database. Either can be forged by
-    someone who is set on it (they can drop the cookie, or reach the app without the front door), so the count per visitor is a courtesy;
-    what bounds the spend is the day's budget and the cap on runs going at once."""
+    door puts the visitor's address in a header; the hash keeps the cookie and the address out of the database. When the bot check is on
+    (desk/guard.py) only a cookie the desk signed counts, and a browser gets one only by passing the check, so dropping the cookie costs a
+    new check. When it is off either can be forged by someone who is set on it (they can drop the cookie, or reach the app without the
+    front door), so the count per visitor is a courtesy; what bounds the spend is the day's budget and the cap on runs going at once."""
     token = request.cookies.get(COOKIE, "")
-    if re.fullmatch(r"[0-9a-f]{32}", token):
+    guard = getattr(getattr(getattr(request, "app", None), "state", None), "guard", None)
+    if guard is not None and guard.on:
+        ident = guard.valid(token)
+        source = ("cookie:" + ident) if ident else ("ip:" + address_of(request))
+    elif re.fullmatch(r"[0-9a-f]{32}", token):
         source = "cookie:" + token
     else:
-        ip = request.headers.get("cf-connecting-ip") or (request.headers.get("x-forwarded-for", "").split(",")[0].strip()) \
-            or (request.client.host if request.client else "unknown")
-        source = "ip:" + ip
+        source = "ip:" + address_of(request)
     return hmac.new(_VISITOR_KEY, source.encode(), "sha256").hexdigest()[:16]
 
 
