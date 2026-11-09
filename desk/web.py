@@ -704,7 +704,7 @@ def router(pages: Pages) -> APIRouter:
                         "Access": ago(s.scalar(select(func.max(AccessView.observed_at))), now)}
             runs = s.scalars(select(AgentRun).where(AgentRun.started_at >= spend.day_start(now))).all()
             outcomes = Counter(a.get("outcome") for r in runs for a in (r.actions or []) if a.get("kind") == "staff_review")
-            agent = {"runs": len(runs), "cost": sum(r.cost_usd for r in runs),
+            agent = {"runs": len(runs),
                      "confirmed": outcomes["linked"] + outcomes["requested"], "unconfirmed": outcomes["not_confirmed"] + outcomes["refused"]}
             return templates.TemplateResponse(request, "operations.html", {
                 "open_work": open_work, "by_who": by_who.most_common(), "by_part": by_part.most_common(), "peak": max(by_who.values(), default=1),

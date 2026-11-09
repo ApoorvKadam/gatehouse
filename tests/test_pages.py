@@ -308,3 +308,11 @@ def test_the_walkthrough_answers_a_byte_range_so_a_chapter_can_be_sought(fms_url
         got = visitor.get("/static/film/gatehouse-walkthrough.mp4", headers={"Range": "bytes=100-199"})
         assert got.status_code == 206 and len(got.content) == 100
         assert got.headers["content-range"].startswith("bytes 100-199/")
+
+
+def test_operations_shows_what_the_agent_did_and_not_what_it_cost(fms_url, sim):
+    """A spend figure answers no question a visitor has at that moment; the server enforces the limit and says so when it is hit."""
+    with TestClient(preview(fms_url)) as visitor:
+        text = visitor.get("/operations").text
+        assert "Our agent today" in text and "Explorations" in text
+        assert "Spent" not in text and "$0." not in text
