@@ -235,7 +235,7 @@ td.num, th.num { text-align: right; }
 /* evidence pages */
 .grid2.align-start { align-items: start; }
 .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s5); margin-top: var(--s5); }
-.panel { border: 1px solid var(--frame); border-radius: 10px; padding: var(--s4) var(--s5); background: var(--paper); }
+.panel { border: 1px solid var(--frame); border-radius: 10px; padding: var(--s4) var(--s5); background: var(--paper); overflow-x: auto; /* a wide table scrolls inside its panel */ }
 .panel.wide { grid-column: 1 / -1; }
 .panel h2 { font-size: var(--t-sm); font-weight: 600; margin-bottom: var(--s3); display: flex; align-items: center; gap: var(--s2); }
 .panel h2 .lane-dot { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
@@ -430,8 +430,7 @@ dl.kv.pairs { grid-template-columns: 11rem minmax(0, 1fr) 11rem minmax(0, 1fr); 
   .next-cols li, .next-cols li + li { padding: var(--s4) 0; border-left: 0; border-bottom: 1px solid rgba(255,255,255,.16); }
 }
 .next-cols.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-/* up to 900 px the nav scrolls sideways instead of pushing the page wider (the next block spreads it at 520 px and below), and a wide table scrolls inside its panel */
-.panel { overflow-x: auto; }
+/* up to 900 px the nav scrolls sideways instead of pushing the page wider (the next block spreads it at 520 px and below) */
 @media (max-width: 900px) {
   .top nav { gap: var(--s5); max-width: 100%; overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
   .top nav::-webkit-scrollbar { display: none; }
@@ -620,10 +619,10 @@ html { scrollbar-color: var(--frame) var(--paper); }
 /* a mark above links to its row; the row it lands on is washed, and stops below the sticky header */
 .flow, .board-col li { scroll-margin-top: calc(72px + var(--s5)); }
 .flow:target, .board-col li:target { background: var(--select); box-shadow: -12px 0 0 var(--select), 12px 0 0 var(--select); }
-.node { margin: 0; padding: 7px 11px; border: 1px solid var(--frame); border-radius: 8px; background: var(--paper); font-size: var(--t-sm); line-height: 1.45; }
-.node.told { color: var(--ink-2); background: var(--hover); }
-.arrow { display: grid; place-items: center; color: var(--ink-3); }
-.arrow .icon { width: 16px; height: 16px; }
+.flow-node { margin: 0; padding: 7px 11px; border: 1px solid var(--frame); border-radius: 8px; background: var(--paper); font-size: var(--t-sm); line-height: 1.45; }
+.flow-node.told { color: var(--ink-2); background: var(--hover); }
+.flow-arrow { display: grid; place-items: center; color: var(--ink-3); }
+.flow-arrow .icon { width: 16px; height: 16px; }
 .flow-result { justify-self: end; }
 .flow-result.left { justify-self: start; }
 .board { display: grid; grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr)); gap: var(--s5) var(--s7); }
@@ -643,7 +642,7 @@ html { scrollbar-color: var(--frame) var(--paper); }
   .meter-row { grid-template-columns: 1fr; gap: var(--s2); }
   .flow, .flow.control { grid-template-columns: 1fr; gap: var(--s2); }
   .flow-head { display: none; }
-  .arrow { display: none; }
+  .flow-arrow { display: none; }
   .flow-result, .flow-result.left { justify-self: start; }
 }
 
