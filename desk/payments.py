@@ -23,7 +23,8 @@ from .adapter import FMSAdapter, FMSError, NotFound, PermissionDenied, ProviderP
 from .cases import record, refresh_case
 from .db import utcnow
 from .models import (
-    HOLDING_STATES, DelinquencyCase, IdentityCheck, Lease, LedgerSnapshot, ObservedPayment, PaymentCommand, PaymentProposal,
+    HOLDING_STATES, DelinquencyCase, DeskBinding, Facility, IdentityCheck, Lease, LedgerSnapshot, ObservedPayment, PaymentCommand,
+    PaymentProposal,
 )
 
 # what the FMS can later say about a payment that succeeded, and the state the desk records for each; none of
@@ -479,7 +480,7 @@ class PaymentService:
         return command
 
     def reconcile_all(self) -> int:
-        """One pass of the worker: every unsettled payment, and confirmed ones that could still come back."""
+        """One pass of the worker: every unsettled payment, and confirmed ones that could still come back, at the facilities the key sees."""
         recent = utcnow() - RETURN_WINDOW
         # a command left in SUBMITTING by a crash may or may not have reached the FMS: look for it instead of resending
         for stuck in self.session.scalars(select(PaymentCommand).where(
@@ -489,26 +490,58 @@ class PaymentService:
             else:
                 stuck.state = "OUTCOME_UNKNOWN"
         self.session.commit()
-        commands = self.session.scalars(select(PaymentCommand).where(
+        served = self._served_facilities()
+        if served is not None:
+            self._send_unserved_to_staff(served)
+        payments = select(PaymentCommand).where(
             (PaymentCommand.state.in_(UNRESOLVED))
             | ((PaymentCommand.state == "NEEDS_STAFF") & (PaymentCommand.created_at >= recent))
             | ((PaymentCommand.state == "CONFIRMED") & (PaymentCommand.confirmed_at >= recent))
             # a refund or dispute still open is watched until the FMS settles it, however old
-            | (PaymentCommand.state.in_(("REFUND_PENDING", "DISPUTED"))))).all()
+            | (PaymentCommand.state.in_(("REFUND_PENDING", "DISPUTED"))))
+        # payments taken outside the desk (at the counter, by autopay) still change open cases, and a payment that
+        # settled a case can still come back within the return window
+        cases = select(DelinquencyCase).where((DelinquencyCase.state != "paid") | (DelinquencyCase.resolved_at >= recent))
+        if served is not None:
+            # a facility the key no longer sees cannot be read: what is there waits for it, and does not fail every pass
+            payments = payments.join(Lease, Lease.id == PaymentCommand.lease_id).where(Lease.facility_id.in_(served))
+            cases = cases.join(Lease, Lease.id == DelinquencyCase.lease_id).where(Lease.facility_id.in_(served))
+        commands = self.session.scalars(payments).all()
         touched = set()
         for command in commands:
             self.reconcile(command)
             touched.add(command.case_id)
-        # payments taken outside the desk (at the counter, by autopay) still change open cases, and a payment that
-        # settled a case can still come back within the return window
-        watched = (DelinquencyCase.state != "paid") | (DelinquencyCase.resolved_at >= recent)
-        for case in self.session.scalars(select(DelinquencyCase).where(watched)).all():
+        for case in self.session.scalars(cases).all():
             self.observe_case(case)
             touched.add(case.id)
         for case_id in touched:
             self._refresh(self.session.get(DelinquencyCase, case_id))
         self.session.commit()
         return len(commands)
+
+    def _served_facilities(self):
+        """The facilities the desk's key sees, as a query on their ids; None when the desk has no list to go by. A key that sees
+        no facility at all is a broken key: its reads fail and the worker says so, instead of every open payment going to staff."""
+        binding = self.session.get(DeskBinding, 1)
+        # ponytail: a desk without a binding (the unit tests) serves everything; the running app always has one from its start
+        if binding is None or not binding.facility_ids:
+            return None
+        return select(Facility.id).where(Facility.provider_id.in_(binding.facility_ids))
+
+    def _send_unserved_to_staff(self, served) -> None:
+        """An open payment at a facility the key no longer sees cannot be checked, so it must not sit as pending for good."""
+        reason = "this facility is no longer served by the desk's key, so the outcome cannot be checked"
+        # each case is loaded with its payment: a query between the change and the save would write the change outside _save(),
+        # which is where a pass that lost a race on the row drops its change and goes on
+        gone = self.session.execute(select(PaymentCommand, DelinquencyCase).select_from(PaymentCommand)
+                                    .join(Lease, Lease.id == PaymentCommand.lease_id)
+                                    .join(DelinquencyCase, DelinquencyCase.id == PaymentCommand.case_id)
+                                    .where(PaymentCommand.state.in_(UNRESOLVED), Lease.facility_id.not_in(served))).all()
+        for command, case in gone:
+            command.state, command.provider_reason = "NEEDS_STAFF", reason
+            record(self.session, case, "payment needs staff", {"command": command.id, "reason": reason})
+            log.warning("payment %s is at a facility the key no longer sees; sent to staff", command.id)
+        self._save()
 
     def observe_case(self, case: DelinquencyCase) -> None:
         """Record every payment the FMS shows on this case's lease, whoever took it."""
