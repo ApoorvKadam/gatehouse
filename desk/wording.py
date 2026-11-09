@@ -25,7 +25,7 @@ _PROVIDER_ID = r"(?:payment|auction|listing|task|lease|be|dex|cust|customer|fac|
 _IN_BRACKETS = re.compile(rf"\s*\({_PROVIDER_ID}\)")
 _BARE_ID = re.compile(rf"\b{_PROVIDER_ID}\b")
 # a record id the desk gave a record: workitem:4, payment:12, text:in:3
-_RECORD_ID = re.compile(r"\b(?:workitem|payment|observed|lease|lien|text|texting)(?::[A-Za-z0-9]+)+")
+_RECORD_ID = re.compile(r"\b(?:workitem|payment|observed|lease|lien|text|texting|access)(?::[A-Za-z0-9]+)+")
 # a time as the FMS or a feed wrote it, 2026-11-08T17:53:15.573390, which the desk keeps in UTC and a screen reads on the facility clock
 _STAMP = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|\+00:00)?")
 _CODE = re.compile(r"\b(?:" + "|".join(sorted(STATE_WORDS, key=len, reverse=True)) + r")\b")
@@ -42,6 +42,11 @@ def when(t: datetime | None, zone: str | None = None) -> str:
         return "an unknown time"
     t = clock(t, zone)
     return f"{t:%b} {t.day}, {t.year}, {t.hour % 12 or 12}:{t:%M} {t:%p}"
+
+
+def names_a_record(text: str | None) -> bool:
+    """Whether a text carries an id the desk gave a record. A person never reads one, and taking it out leaves a sentence with no subject."""
+    return bool(text and _RECORD_ID.search(text))
 
 
 def words(code: str | None) -> str:
