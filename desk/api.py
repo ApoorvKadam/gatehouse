@@ -388,7 +388,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
             passed = guard.passed(body.token, spend.address_of(request))
         except Unreachable as exc:
             log.warning("the bot check did not answer: %s", exc)
-            raise HTTPException(503, "The quick check is not answering. Try again in a minute.") from exc
+            raise HTTPException(503, "The quick check is not answering. Wait a minute, then reload the page.") from exc
         if not passed:
             raise HTTPException(403, "The quick check did not pass. Reload the page and try again.")
         response.set_cookie(spend.COOKIE, guard.cookie(), max_age=LIFETIME, httponly=True, samesite="lax", secure=spend.is_https(request))
