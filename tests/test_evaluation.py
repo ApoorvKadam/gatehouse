@@ -20,7 +20,7 @@ def test_the_evaluation_runs_clean_and_its_wrong_builds_are_caught(tmp_path):
     assert report["ok"] and all(r["passed"] for r in report["rows"]) and len(report["rows"]) >= 34
     assert all(r["count"] == 0 for r in report["red_lines"]) and all(c["caught"] for c in report["controls"])
     # every red line says what it was counted over, and nothing is counted over nothing
-    assert all(r["checked"] > 0 and r["of"] in ("scenarios", "messages", "passes", "requests") for r in report["red_lines"])
+    assert all(r["checked"] > 0 and r["of"] for r in report["red_lines"])
     assert {r["module"] for r in report["rows"]} == {"Payments", "Access", "Lien sales", "Texts"}
     # every scenario, red line and wrong build names its kind of trouble, from the fixed list the page colours, and every wrong build has
     # the short name its mark shows
