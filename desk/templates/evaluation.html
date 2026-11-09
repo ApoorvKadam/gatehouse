@@ -63,11 +63,11 @@
       <b class="flow-name">{{ r.name }}</b>
       {% if r.kind %}<span class="flow-kind k-{{ r.key }}"><i aria-hidden="true"></i>{{ r.kind }}</span>{% endif %}
     </div>
-    <p class="node">{{ r.fms }}</p>
-    <span class="arrow" aria-hidden="true">{% include "icons/arrow-right.svg" %}</span>
-    <p class="node">{{ r.gatehouse }}</p>
-    <span class="arrow" aria-hidden="true">{% include "icons/arrow-right.svg" %}</span>
-    <p class="node told">{{ r.told }}</p>
+    <p class="flow-node">{{ r.fms }}</p>
+    <span class="flow-arrow" aria-hidden="true">{% include "icons/arrow-right.svg" %}</span>
+    <p class="flow-node">{{ r.gatehouse }}</p>
+    <span class="flow-arrow" aria-hidden="true">{% include "icons/arrow-right.svg" %}</span>
+    <p class="flow-node told">{{ r.told }}</p>
     <span class="flow-result"><span class="chip {{ 'done' if r.passed else 'act' }}">{% include "icons/circle-check.svg" %}{{ 'Pass' if r.passed else 'Fail' }}</span></span>
   </div>
   {% endfor %}
@@ -97,8 +97,8 @@
       <b class="flow-name">{{ c.name }}</b>
       {% if c.kind %}<span class="flow-kind k-{{ c.key }}"><i aria-hidden="true"></i>{{ c.kind }}</span>{% endif %}
     </div>
-    <p class="node">{{ c.broken[:1]|upper }}{{ c.broken[1:] }}</p>
-    <span class="arrow" aria-hidden="true">{% include "icons/arrow-right.svg" %}</span>
+    <p class="flow-node">{{ c.broken[:1]|upper }}{{ c.broken[1:] }}</p>
+    <span class="flow-arrow" aria-hidden="true">{% include "icons/arrow-right.svg" %}</span>
     <span class="flow-result left"><span class="chip {{ 'done' if c.caught else 'act' }}">{% include "icons/circle-check.svg" %}{{ 'Caught' if c.caught else 'Missed' }}</span></span>
   </div>
   {% endfor %}

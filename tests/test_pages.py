@@ -126,6 +126,25 @@ def test_the_seeded_lien_file_is_not_called_stale_by_its_own_payment(fms_url, si
         assert "Account changed: re-review</span><span class=\"muted small\">as of" in lien and "not reflected here until the file is evaluated again" in lien
 
 
+def test_a_class_is_styled_by_one_rule_of_its_own():
+    """Two screens that share a class name restyle each other. The Messages step markers and the Evaluation flow cells both used `node`,
+    and the flow text was squeezed into 36 px boxes. A class gets one rule of its own; a variant is a second class or a longer selector."""
+    from pathlib import Path
+
+    css = re.sub(r"/\*.*?\*/", "", (Path(__file__).parent.parent / "desk" / "static" / "gatehouse.css").read_text(), flags=re.S)
+    rules, depth, rule = [], 0, ""
+    for ch in css:
+        depth += (ch == "{") - (ch == "}")
+        if depth == 0 and ch == "}":
+            rules.append(rule)
+            rule = ""
+        else:
+            rule += ch
+    own = [sel for sel in (r.split("{", 1)[0].strip() for r in rules) if re.fullmatch(r"\.[\w-]+", sel)]
+    assert len(own) > 50                                  # the stylesheet was read, not an empty string
+    assert sorted({sel for sel in own if own.count(sel) > 1}) == []
+
+
 EVIDENCE_PAGES = ("/payments/", "/accounts/", "/sales/", "/access/")
 
 
