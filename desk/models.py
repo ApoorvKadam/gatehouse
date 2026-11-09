@@ -376,7 +376,7 @@ def record_kind(record_id: str, text: str | None) -> str:
     head = record_id.split(":")[0]
     if head == "workitem":
         return "Outside listing" if (text or "").startswith("Outside listing") else "Sale"
-    return {"lease": "Account", "payment": "Payment attempt", "observed": "Payment at the FMS", "lien": "Lien file", "texting": "Texting",
+    return {"lease": "Account", "payment": "Payment attempt", "observed": "Payment at the FMS", "lien": "Lien file", "access": "Access", "texting": "Texting",
             "text": "Reply" if record_id.startswith("text:out:") else "Text"}.get(head, "Record")
 
 

@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from desk import demo, investigator
@@ -22,7 +22,7 @@ from desk.db import make_session_factory, utcnow
 from desk.investigator import (CALL_TIMEOUT, MAX_SUMMARY, MAX_TOKENS, MAX_TURNS, NOT_ACCEPTED, TOOLS, UNCHECKED, fail_stranded_runs, investigate, packet_problem, run_view, shorten)
 from desk.lien_files import ensure_append_only
 from desk.messaging import STOP_WORDS, inbox
-from desk.models import AgentRequest, AgentRun, Facility, InboundMessage, Lease, PaymentCommand, WorkItem
+from desk.models import AccessView, AgentRequest, AgentRun, Facility, InboundMessage, Lease, PaymentCommand, WorkItem
 from desk.rules import import_stitch
 from desk.sales import AFTER_NOTICE, LISTED_PAID
 from desk.usage import PRICES, cost_usd
@@ -219,7 +219,7 @@ def test_the_prompt_follows_the_playbook_and_keeps_the_tenants_words_and_name_ou
         assert first["timeout"] == CALL_TIMEOUT
         assert model.calls[0]["system"] == model.calls[1]["system"] and model.calls[0]["tools"] == model.calls[1]["tools"]    # append-only
         assert all(t["strict"] and t["input_schema"]["additionalProperties"] is False for t in TOOLS)
-        assert [t["name"] for t in TOOLS][-1] == "submit_case_packet" and len(TOOLS) == 8 and {"request_staff_review", "draft_reply"} <= {t["name"] for t in TOOLS}
+        assert [t["name"] for t in TOOLS][-1] == "submit_case_packet" and len(TOOLS) == 9 and {"request_staff_review", "draft_reply"} <= {t["name"] for t in TOOLS}
 
 
 def test_a_lookup_that_finds_nothing_returns_a_record_that_says_so_and_it_can_be_cited(factory):
@@ -234,6 +234,46 @@ def test_a_lookup_that_finds_nothing_returns_a_record_that_says_so_and_it_can_be
         assert run.status == "done" and run.error is None
         assert [c["records"] for c in run.trace[0]["calls"][1:]] == [[i] for i in none]
         assert "does not show that none was made" in run.facts[none[0]]
+
+
+def test_the_access_lookup_tells_priyas_arrangement_in_words_and_holds_no_serial_or_code(factory):
+    with factory() as s:
+        a012 = s.scalar(select(Lease).where(Lease.provider_customer_id == "cust_PriyaRmn01", Lease.unit_name == "A-012"))
+        a013 = s.scalar(select(Lease).where(Lease.provider_customer_id == "cust_PriyaRmn01", Lease.unit_name == "A-013"))
+        model = Scripted([tool("get_account", id_="a1"), tool("get_access", {"lease_id": a012.provider_id}, id_="a2"),
+                          tool("get_access", {"lease_id": a013.provider_id}, id_="a3")],
+                         [tool("submit_case_packet", packet("access_problem", [f"access:{a012.id}", f"access:{a013.id}"], False, "", "Priya asks about her plan."), id_="a4")])
+        run, _ = investigate(s, model, text_of(s, "Priya Raman"), "request-0090")
+        assert run.status == "done" and run.error is None
+        plan, locked = run.facts[f"access:{a012.id}"], run.facts[f"access:{a013.id}"]
+        assert "exemption on file (payment arrangement) pauses the overlock until" in plan and "should not be restricted" in plan and "No operator lock" in plan
+        assert re.search(r"until [A-Z][a-z]{2} \d{1,2}, 20\d\d\.", plan) and "38 days overdue, per the FMS" in plan
+        assert "should be restricted" in locked and "One operator lock is recorded" in locked
+        assert "gate code is switched off" in plan and "denies the tenant's code while any of their units is restricted" in plan
+        assert "Another unit of this tenant that the rule restricts: A-013." in plan and "Another unit" not in locked
+        for text in (plan, locked):
+            assert "NSO-OL" not in text and "serial" not in text.lower() and "Code disabled" not in text and "access:" not in text and "PAYMENT_ARRANGEMENT" not in text
+        assert {r["id"]: r["kind"] for r in run_view(run)["records"]}[f"access:{a012.id}"] == "Access"
+
+
+def test_the_access_lookup_refuses_a_unit_that_is_not_this_tenants(factory):
+    with factory() as s:
+        model = Scripted([tool("get_access", {"lease_id": MARCUS_LEASE}, id_="a1")], [tool("submit_case_packet", packet(), id_="a2")])
+        run, _ = investigate(s, model, text_of(s, "Priya Raman"), "request-0091")
+        [call] = run.trace[0]["calls"]
+        assert call["error"] and call["records"] == []
+
+
+def test_an_access_lookup_with_no_reading_returns_a_record_that_says_so_and_it_can_be_cited(factory):
+    with factory() as s:
+        a012 = s.scalar(select(Lease).where(Lease.provider_customer_id == "cust_PriyaRmn01", Lease.unit_name == "A-012"))
+        s.execute(delete(AccessView).where(AccessView.lease_id == a012.id))
+        s.commit()
+        model = Scripted([tool("get_account", id_="a1"), tool("get_access", {"lease_id": a012.provider_id}, id_="a2")],
+                         [tool("submit_case_packet", packet("access_problem", [f"access:none:{a012.id}"], True, "no reading"), id_="a3")])
+        run, _ = investigate(s, model, text_of(s, "Priya Raman"), "request-0092")
+        assert run.status == "done" and run.error is None
+        assert "does not show whether the unit is locked" in run.facts[f"access:none:{a012.id}"]
 
 
 def test_a_lease_can_be_named_by_the_record_id_get_account_wrote_but_only_for_this_tenant(factory):
@@ -258,6 +298,20 @@ def test_a_packet_with_a_made_up_id_is_sent_back_once_and_the_corrected_one_is_u
         assert sent_back == [{"type": "tool_result", "tool_use_id": "a4", "is_error": True, "content": NOT_ACCEPTED}]    # the made-up id is not repeated to the model
         assert run.trace[1]["calls"][0]["error"] == "the packet lists records that no earlier lookup of this run returned: lien_file:none"
         assert run.trace[2]["calls"][0]["error"] is None
+
+
+def test_a_summary_that_names_a_record_id_is_sent_back_once_and_the_corrected_one_is_used(factory):
+    """Taking an id out of a sentence leaves it without a subject, so the desk sends the packet back instead of printing the stump."""
+    with factory() as s:
+        dana = text_of(s, "Dana Whitfield")
+        lease = dana_facts(s)["lease"]
+        with_id = {**dana_packet(s), "summary": f"Records: {lease} shows $240.00 owed on unit B-1042."}
+        reads = [tool("get_account", id_="a1"), tool("get_sale_status", {"lease_id": DANA_LEASE}, id_="a2"), tool("get_payments", {"lease_id": DANA_LEASE}, id_="a3")]
+        model = Scripted(reads, [tool("submit_case_packet", with_id, id_="a4")], [tool("submit_case_packet", dana_packet(s), id_="a5")])
+        run, _ = investigate(s, model, dana, "request-0093")
+        assert run.status == "done" and run.turns == 3 and lease not in run.packet["summary"]
+        assert model.calls[2]["messages"][-1]["content"] == [{"type": "tool_result", "tool_use_id": "a4", "is_error": True, "content": NOT_ACCEPTED}]
+        assert "names a record id" in run.trace[1]["calls"][0]["error"] and run.trace[2]["calls"][0]["error"] is None
 
 
 def test_a_packet_written_in_the_same_turn_as_a_lookup_cannot_list_what_that_lookup_returns(factory):
