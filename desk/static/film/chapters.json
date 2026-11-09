@@ -1,0 +1,49 @@
+{
+ "total": 197.375,
+ "chapters": [
+  {
+   "t": 0.0,
+   "title": "A tenant writes in"
+  },
+  {
+   "t": 5.997,
+   "title": "What it checks"
+  },
+  {
+   "t": 18.978,
+   "title": "Today"
+  },
+  {
+   "t": 34.053,
+   "title": "Payments"
+  },
+  {
+   "t": 70.3,
+   "title": "Access"
+  },
+  {
+   "t": 82.8,
+   "title": "Lien files"
+  },
+  {
+   "t": 102.252,
+   "title": "Lien sales"
+  },
+  {
+   "t": 118.863,
+   "title": "Messages"
+  },
+  {
+   "t": 165.3,
+   "title": "Evaluation"
+  },
+  {
+   "t": 180.375,
+   "title": "Operations"
+  },
+  {
+   "t": 189.375,
+   "title": "Summary"
+  }
+ ]
+}
