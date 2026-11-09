@@ -634,6 +634,8 @@ html { scrollbar-color: var(--frame) var(--paper); }
 .board-col li.bad .dot { background: var(--brick); }
 .board-col li b { font-weight: 600; color: var(--teal); }
 .board-col li.bad b { color: var(--brick); }
+.board-col .tally { white-space: nowrap; }
+.board-col .tally small { font-size: var(--t-xs); color: var(--ink-3); }
 .table-view { margin-top: var(--s5); border: 1px solid var(--frame); border-radius: 10px; padding: var(--s3) var(--s5) var(--s5); }
 .table-view summary { cursor: pointer; font-size: var(--t-sm); font-weight: 600; color: var(--ink-2); padding: var(--s2) 0; }
 .table-view table { margin-top: var(--s4); }

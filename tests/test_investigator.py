@@ -26,6 +26,7 @@ from desk.models import AgentRequest, AgentRun, Facility, InboundMessage, Lease,
 from desk.rules import import_stitch
 from desk.sales import AFTER_NOTICE, LISTED_PAID
 from desk.usage import PRICES, cost_usd
+from desk.wording import clock
 
 from .conftest import FULL_KEY, ORLANDO
 from .test_conversation import text, tool
@@ -212,7 +213,7 @@ def test_the_prompt_follows_the_playbook_and_keeps_the_tenants_words_and_name_ou
         assert not {"temperature", "top_p", "top_k", "thinking"} & set(first)
         for tag in ("role", "objective", "trusted_facts", "allowed_actions", "prohibited_claims", "examples", "output_contract"):
             assert f"<{tag}>" in first["system"] and f"</{tag}>" in first["system"]
-        assert dana.body not in first["system"] and "Dana" not in first["system"] and utcnow().strftime("%Y-%m-%d") in first["system"]
+        assert dana.body not in first["system"] and "Dana" not in first["system"] and clock(utcnow(), "America/New_York").strftime("%Y-%m-%d") in first["system"]
         assert all(word in first["system"] for word in STOP_WORDS) and "stop_request" in first["system"]
         assert first["messages"][0] == {"role": "user", "content": f'<untrusted_input record_id="text:in:{dana.id}">\n{dana.body}\n</untrusted_input>'}
         assert first["timeout"] == CALL_TIMEOUT

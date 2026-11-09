@@ -80,7 +80,7 @@
     {% for part, lines in red_lines %}
     <div class="board-col">
       <h3>{{ part }}</h3>
-      <ul>{% for l in lines %}<li id="{{ l.id }}" class="{{ 'ok' if l.count == 0 else 'bad' }}{{ ' k-' ~ l.key if l.key else '' }}"><i class="dot" aria-hidden="true"></i><span>{{ l.line[:1]|upper }}{{ l.line[1:] }}</span><b>{{ l.count }}</b></li>{% endfor %}</ul>
+      <ul>{% for l in lines %}<li id="{{ l.id }}" class="{{ 'ok' if l.ok else 'bad' }}{{ ' k-' ~ l.key if l.key else '' }}"><i class="dot" aria-hidden="true"></i><span>{{ l.line[:1]|upper }}{{ l.line[1:] }}</span><span class="tally"><b>{{ l.count }}</b>{% if l.over %} <small>{{ l.over }}</small>{% endif %}</span></li>{% endfor %}</ul>
     </div>
     {% endfor %}
   </div>
@@ -111,8 +111,8 @@
     <tbody>{% for part, rows in scenarios %}{% for r in rows %}<tr><td class="small">{{ part }}</td><td><b>{{ r.name }}</b></td><td class="small">{{ r.kind }}</td><td class="small">{{ r.fms }}</td><td class="small">{{ r.gatehouse }}</td><td class="small muted">{{ r.told }}</td><td class="num"><span class="status {{ 'met' if r.passed else 'review' }}">{{ 'Pass' if r.passed else 'Fail' }}</span></td></tr>{% endfor %}{% endfor %}</tbody>
   </table>
   <table>
-    <thead><tr><th>Part</th><th>Red line</th><th class="num">Count</th></tr></thead>
-    <tbody>{% for part, lines in red_lines %}{% for l in lines %}<tr><td>{{ part }}</td><td>{{ l.line[:1]|upper }}{{ l.line[1:] }}</td><td class="num"><span class="status {{ 'met' if l.count == 0 else 'review' }}">{{ l.count }}</span></td></tr>{% endfor %}{% endfor %}</tbody>
+    <thead><tr><th>Part</th><th>Red line</th><th class="num">Count</th><th class="num">Counted over</th></tr></thead>
+    <tbody>{% for part, lines in red_lines %}{% for l in lines %}<tr><td>{{ part }}</td><td>{{ l.line[:1]|upper }}{{ l.line[1:] }}</td><td class="num"><span class="status {{ 'met' if l.ok else 'review' }}">{{ l.count }}</span></td><td class="num small">{{ l.over[3:] if l.over.startswith('of ') else l.over }}</td></tr>{% endfor %}{% endfor %}</tbody>
   </table>
   <table>
     <thead><tr><th>Broken build</th><th>What it does wrong</th><th class="num">Caught</th></tr></thead>
