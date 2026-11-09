@@ -22,6 +22,10 @@ def test_a_time_a_feed_wrote_is_written_as_a_person_reads_it():
     assert plain("at 2026-13-45T99:00:00") == "at 2026-13-45T99:00:00"           # not a time: left as it is
 
 
+def test_an_access_record_id_is_taken_out():
+    assert plain("The unit has an arrangement (access:12).") == "The unit has an arrangement."
+
+
 def test_ordinary_words_and_amounts_are_left_alone():
     said = "Unit B-1042. The FMS ledger shows $0.00 owed. A STOP from this number is in effect until START."
     assert plain(said) == said and plain(None) is None
