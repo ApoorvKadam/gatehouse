@@ -53,6 +53,8 @@ class RedLine:
     line: str
     trouble: str
     count: int
+    checked: int = 0     # how many times this run could have broken the line: the denominator of the count
+    of: str = ""         # what was checked: passes, requests, scenarios
 
 
 @dataclass
@@ -73,7 +75,8 @@ class Report:
 
     @property
     def ok(self) -> bool:
-        return all(r.passed for r in self.rows) and all(r.count == 0 for r in self.red_lines) and all(c.caught for c in self.controls)
+        # a red line nothing was checked against proves nothing, so it stops the build like a line above zero
+        return all(r.passed for r in self.rows) and all(r.count == 0 and r.checked > 0 for r in self.red_lines) and all(c.caught for c in self.controls)
 
 
 def start_simulator() -> tuple[str, uvicorn.Server, threading.Thread]:
@@ -217,6 +220,7 @@ class Tally:
 
     def __init__(self, run: AccessRun):
         self.run, self.totals, self.access_writes = run, {}, 0
+        self.passes = self.judged = self.requests = 0       # what the red lines were counted over
 
     def reconcile(self, session, adapter, facility, passes: int = 1, judged: bool = True) -> None:
         """judged=False for a facility without a rule: nothing is judged there, so mismatches are not counted."""
@@ -224,11 +228,14 @@ class Tally:
             sent = len(adapter.recording.paths)
             reconcile_access(session, adapter, facility, "eval")
             self.access_writes += sum(1 for path in adapter.recording.paths[sent:] if path not in ALLOWED)
+            self.passes += 1
+            self.judged += 1 if judged else 0
+            self.requests += len(adapter.recording.paths) - sent
             for k, v in access_red_lines(session, adapter, judged).items():
                 self.totals[k] = self.totals.get(k, 0) + v
 
 
-def access_scenarios(url: str) -> tuple[list[Row], dict[str, int], int]:
+def access_scenarios(url: str) -> tuple[list[Row], dict[str, int], int, dict[str, int]]:
     run = AccessRun(url)
     tally = Tally(run)
     rows: list[Row] = []
@@ -289,7 +296,7 @@ def access_scenarios(url: str) -> tuple[list[Row], dict[str, int], int]:
     ok = kinds == [("access_review_required", "facility")] and not run.tasks("lease_WhitB1042")
     rows.append(Row("Access", "No rule recorded", "disagree", "a paid unit is still locked, but the facility has no stated rule",
                     "one review item; no verdict and no task", "Operations manager: record the rule", ok))
-    return rows, tally.totals, tally.access_writes
+    return rows, tally.totals, tally.access_writes, {"passes": tally.passes, "judged": tally.judged, "requests": tally.requests}
 
 
 # ------------------------------------------------------------------ lien sales
@@ -335,6 +342,7 @@ def sale_calls(url: str) -> int:
 class SaleTally:
     def __init__(self, url: str):
         self.url, self.totals, self.sale_writes = url, {}, 0
+        self.passes = self.requests = 0                      # what the red lines were counted over
 
     def reconcile(self, session, adapter, facility, passes: int = 1) -> None:
         for _ in range(passes):
@@ -343,6 +351,8 @@ class SaleTally:
             # the simulator's own record of sale-changing calls, whoever sent them, plus any other write through the adapter
             self.sale_writes += sale_calls(self.url) - calls
             self.sale_writes += sum(1 for path in adapter.recording.paths[sent:] if path not in SALE_ALLOWED and not path.startswith("/v1/auctions/"))
+            self.passes += 1
+            self.requests += len(adapter.recording.paths) - sent
             for k, v in sales_red_lines(session, self.url).items():
                 self.totals[k] = self.totals.get(k, 0) + v
 
@@ -360,7 +370,7 @@ def sale_tasks(run: AccessRun, lease_id: str) -> list[dict]:
     return [t for t in run.tasks(lease_id) if t["title"].startswith("Cancel the lien sale")]
 
 
-def sales_scenarios(url: str) -> tuple[list[Row], dict[str, int], int]:
+def sales_scenarios(url: str) -> tuple[list[Row], dict[str, int], int, dict[str, int]]:
     run, tally, rows = AccessRun(url), SaleTally(url), []
 
     # 1. paid in full, the sale still listed, then the task marked done, then the FMS cancellation, then the outside site
@@ -477,7 +487,7 @@ def sales_scenarios(url: str) -> tuple[list[Row], dict[str, int], int]:
     ok = len(listed) == 1 and listed[0].observed.get("sale_at") is None and bool(listed[0].observed.get("sale_time_problem"))
     rows.append(Row("Lien sales", "Sale time on a clock change", "disagree", "1:30 AM on the night the clocks go back",
                     "the time is refused, not guessed; the item still opens", "The page says the time could not be worked out", ok))
-    return rows, tally.totals, tally.sale_writes
+    return rows, tally.totals, tally.sale_writes, {"passes": tally.passes, "requests": tally.requests}
 
 
 def control_sale_task_closes(url: str) -> Control:
@@ -554,16 +564,17 @@ def applied_on_ledger(url: str, lease_id: str) -> bool:
     return any(p["methodType"] != "CASH" and p["status"] == "SUCCEEDED" and p["applied"] for p in truth["payments"])
 
 
-def payment_rows(url: str) -> tuple[list[Row], int, int]:
+def payment_rows(url: str) -> tuple[list[Row], int, int, int]:
     """Each payment scenario, and two red lines read from the simulator's own record: card charges beyond the ones the
     tenant agreed to, counted after the scenario; and a tenant sentence that says "applied", judged against the ledger
     at the moment the sentence is written, whenever that is in the scenario."""
     run = scenarios.Run(url, timeout=5.0)
-    rows, duplicates, unproven = [], 0, []
+    rows, duplicates, unproven, written = [], 0, [], []
     original = scenarios.tenant_message
 
     def judged(command):
         sentence = original(command)
+        written.append(sentence)
         if "applied" in sentence.lower() and not applied_on_ledger(url, scenarios.DANA):
             unproven.append(sentence)
         return sentence
@@ -575,7 +586,7 @@ def payment_rows(url: str) -> tuple[list[Row], int, int]:
             duplicates += max(0, card_charges(url, scenarios.DANA) - EXPECTED_CARD_CHARGES[fn.title])
     finally:
         scenarios.tenant_message = original
-    return rows, len(unproven), duplicates
+    return rows, len(unproven), duplicates, len(written)
 
 
 # ------------------------------------------------------------------ negative controls
@@ -625,26 +636,28 @@ GUARDS = {
 }
 
 
-def red_line(module: str, line: str, count: int) -> RedLine:
-    return RedLine(module, line, GUARDS[line], count)
+def red_line(module: str, line: str, count: int, checked: int, of: str) -> RedLine:
+    return RedLine(module, line, GUARDS[line], count, checked, of)
 
 
 def evaluate(url: str) -> Report:
     report = Report(generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
-    rows, applied_without_proof, duplicates = payment_rows(url)
+    rows, applied_without_proof, duplicates, sentences = payment_rows(url)
     report.rows.extend(rows)
-    access_rows, access_totals, access_writes = access_scenarios(url)
+    access_rows, access_totals, access_writes, access_checked = access_scenarios(url)
     report.rows.extend(access_rows)
-    report.red_lines += [red_line("Payments", "a duplicate charge", duplicates),
-                         red_line("Payments", "a tenant told a payment was applied without FMS proof", applied_without_proof)]
-    report.red_lines += [red_line("Access", line, n) for line, n in access_totals.items()]
+    report.red_lines += [red_line("Payments", "a duplicate charge", duplicates, len(rows), "scenarios"),
+                         red_line("Payments", "a tenant told a payment was applied without FMS proof", applied_without_proof, sentences, "messages")]
+    # the mismatch line is judged only on a pass for a facility that has a rule recorded; the other two are counted after every pass
+    report.red_lines += [red_line("Access", line, n, access_checked["judged" if "left without a work item" in line else "passes"], "passes")
+                         for line, n in access_totals.items()]
     report.red_lines.append(red_line("Access", "a request from Gatehouse that could change access (anything but a read or a task)",
-                                    access_writes))
-    sale_rows, sale_totals, sale_writes = sales_scenarios(url)
+                                    access_writes, access_checked["requests"], "requests"))
+    sale_rows, sale_totals, sale_writes, sale_checked = sales_scenarios(url)
     report.rows.extend(sale_rows)
-    report.red_lines += [red_line("Lien sales", line, n) for line, n in sale_totals.items()]
+    report.red_lines += [red_line("Lien sales", line, n, sale_checked["passes"], "passes") for line, n in sale_totals.items()]
     report.red_lines.append(red_line("Lien sales", "a request from Gatehouse that could change a sale (cancel, settle or complete)",
-                                    sale_writes))
+                                    sale_writes, sale_checked["requests"], "requests"))
     report.controls += [control_retry(url), control_task_closes(url), control_sale_task_closes(url), control_outside_from_fms(url),
                         control_sale_cancelled_by_gatehouse(url)]
     return report
@@ -666,7 +679,7 @@ def main(argv: list[str] | None = None) -> int:
     for r in report.rows:
         print(f"{'PASS' if r.passed else 'FAIL'}  {r.module:<9} {r.name}")
     for r in report.red_lines:
-        print(f"{'ZERO' if r.count == 0 else 'HIT '}  {r.module:<9} {r.line}: {r.count}")
+        print(f"{'ZERO' if r.count == 0 and r.checked else 'HIT '}  {r.module:<9} {r.line}: {r.count} of {r.checked} {r.of}")
     for c in report.controls:
         print(f"{'CAUGHT' if c.caught else 'MISSED'}  {c.name}")
     print("evaluation " + ("passed" if report.ok else "FAILED"))

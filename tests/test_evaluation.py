@@ -19,6 +19,8 @@ def test_the_evaluation_runs_clean_and_its_wrong_builds_are_caught(tmp_path):
     report = json.loads(out.read_text())
     assert report["ok"] and all(r["passed"] for r in report["rows"]) and len(report["rows"]) >= 26
     assert all(r["count"] == 0 for r in report["red_lines"]) and all(c["caught"] for c in report["controls"])
+    # every red line says what it was counted over, and nothing is counted over nothing
+    assert all(r["checked"] > 0 and r["of"] in ("scenarios", "messages", "passes", "requests") for r in report["red_lines"])
     assert {r["module"] for r in report["rows"]} == {"Payments", "Access", "Lien sales"}
     # every scenario, red line and wrong build names its kind of trouble, from the fixed list the page colours, and every wrong build has
     # the short name its mark shows
@@ -33,7 +35,7 @@ def _report(**more) -> dict:
 
 def test_the_page_shows_the_report_or_says_there_is_none(fms_url, sim, monkeypatch):
     report = _report(rows=[{"module": "Access", "name": "Paid, still locked", "trouble": "disagree", "fms": "f", "gatehouse": "g", "told": "t", "passed": True}],
-                     red_lines=[{"module": "Access", "line": "a physical outcome labeled verified", "trouble": "disagree", "count": 0}],
+                     red_lines=[{"module": "Access", "line": "a physical outcome labeled verified", "trouble": "disagree", "count": 0, "checked": 9, "of": "passes"}],
                      controls=[{"name": "A build that closes on a task", "short": "Closes on a task", "trouble": "disagree", "broken": "closes", "caught": True}])
     with TestClient(preview(fms_url)) as visitor:
         monkeypatch.setattr(web, "evaluation_report", lambda: report)
@@ -41,6 +43,7 @@ def test_the_page_shows_the_report_or_says_there_is_none(fms_url, sim, monkeypat
         assert "Paid, still locked" in page and "1 of 1" in page and "Passed" in page
         assert page.count('<a class="seg') == 3 and page.count('data-tip="') == 3 and "The FMS did" in page and "Table view of every result" in page     # a mark for each result, and the table under them
         assert "Closes on a task" in page and "The records disagree" in page         # the wrong build's name inside its mark, and the kind in the legend
+        assert "of 9 passes" in page and "Counted over" in page                       # the red line says what its zero was counted over
         assert "Every build runs the failures" in visitor.get("/").text
         monkeypatch.setattr(web, "evaluation_report", lambda: None)
         assert "has no evaluation report" in visitor.get("/evaluation").text
@@ -50,8 +53,8 @@ def test_the_page_writes_the_state_codes_in_what_gatehouse_did_as_words(fms_url,
     report = _report(rows=[{"module": "Payments", "name": "Response lost after charging", "trouble": "late", "fms": "charges and applies, answers too late",
                             "gatehouse": "NEEDS_STAFF with the FMS payment suggested; staff confirmed it: CONFIRMED; 1 charge", "told": "t", "passed": True},
                            {"module": "Access", "name": "Paid, still locked", "trouble": "disagree", "fms": "f", "gatehouse": "g", "told": "t", "passed": False}],
-                     red_lines=[{"module": "Payments", "line": "a duplicate charge", "trouble": "twice", "count": 0},
-                                {"module": "Access", "line": "an item closed on a task", "trouble": "disagree", "count": 2}],
+                     red_lines=[{"module": "Payments", "line": "a duplicate charge", "trouble": "twice", "count": 0, "checked": 12, "of": "scenarios"},
+                                {"module": "Access", "line": "an item closed on a task", "trouble": "disagree", "count": 2, "checked": 14, "of": "passes"}],
                      controls=[{"name": "A build that resends", "short": "Resends", "trouble": "late", "broken": "sends again", "caught": False}])
     with TestClient(preview(fms_url)) as visitor:
         monkeypatch.setattr(web, "evaluation_report", lambda: report)
@@ -68,7 +71,7 @@ def test_every_mark_links_to_its_row_and_each_part_is_sorted_by_kind():
     rows = [{"module": "Payments", "name": name, "trouble": kind, "fms": "f", "gatehouse": "g", "told": "t", "passed": True}
             for name, kind in [("a", "disagree"), ("b", "no"), ("c", "normal"), ("d", "late"), ("e", "no")]]
     rows.append({"module": "Access", "name": "f", "trouble": "money", "fms": "f", "gatehouse": "g", "told": "t", "passed": True})
-    report = _report(rows=rows, red_lines=[{"module": "Payments", "line": line, "trouble": kind, "count": 0}
+    report = _report(rows=rows, red_lines=[{"module": "Payments", "line": line, "trouble": kind, "count": 0, "checked": 3, "of": "passes"}
                                            for line, kind in [("a", "disagree"), ("b", "twice"), ("c", "late")]],
                      controls=[{"name": name, "short": name, "trouble": kind, "broken": "sends again", "caught": True}
                                for name, kind in [("A build", "disagree"), ("B build", "late")]])
@@ -90,3 +93,16 @@ def test_a_report_without_kinds_still_draws_its_marks():
                      red_lines=[], controls=[])
     view = web.evaluation_view(report)
     assert view["kinds"] == [] and view["scenario_marks"][0][1][0]["key"] is None
+
+
+def test_a_red_line_with_nothing_checked_is_not_tested_and_stops_the_build(fms_url, sim, monkeypatch):
+    lines = [{"module": "Access", "line": "a duplicate charge", "trouble": "twice", "count": 0, "checked": 0, "of": "passes"},
+             {"module": "Access", "line": "a physical outcome labeled verified", "trouble": "disagree", "count": 0, "checked": 9, "of": "passes"}]
+    with TestClient(preview(fms_url)) as visitor:
+        monkeypatch.setattr(web, "evaluation_report", lambda: _report(rows=[], red_lines=lines, controls=[]))
+        page = visitor.get("/evaluation").text
+        assert "not tested" in page and "Not tested, so the build stops" in page and "of 9 passes" in page and "1 of 2 at zero" in page
+    report = evaluate.Report("now", red_lines=[evaluate.RedLine("Access", "x", "twice", 0, 0, "passes")])
+    assert not report.ok                                   # nothing checked proves nothing
+    report.red_lines[0].checked = 3
+    assert report.ok

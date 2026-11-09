@@ -137,7 +137,10 @@ def evaluation_view(report: dict) -> dict:
     red_lines: dict[str, list[dict]] = {}
     for n, line in enumerate(report["red_lines"], 1):
         key = line.get("trouble") if line.get("trouble") in TROUBLES else None
-        red_lines.setdefault(line["module"], []).append({**line, "id": f"rl-{n}", "key": key, "kind": TROUBLES.get(key or "", "")})
+        checked = line.get("checked")          # a report from before the counts were kept has none, and is not failed for it
+        over = f"of {checked} {line.get('of', '')}".strip() if checked else ("not tested" if checked == 0 else "")
+        red_lines.setdefault(line["module"], []).append({**line, "id": f"rl-{n}", "key": key, "kind": TROUBLES.get(key or "", ""),
+                                                          "over": over, "ok": line["count"] == 0 and checked != 0})
     controls = []
     for n, c in enumerate(report["controls"], 1):
         key = c.get("trouble") if c.get("trouble") in TROUBLES else None
@@ -153,10 +156,12 @@ def evaluation_view(report: dict) -> dict:
         return _mark(r["id"], r["passed"], f"{r['name']}: {result.lower()}" + (f". {r['kind']}" if r["kind"] else ""), tip, key=r["key"])
 
     def line_mark(part: str, line: dict) -> dict:
-        ok, said = line["count"] == 0, _upper(line["line"])
-        tip = {"name": said, "key": line["key"], "kind": line["kind"], "ok": ok, "result": "At zero" if ok else f"{line['count']} found, so the build stops",
-               "lines": [["Counted in", part]]}
-        return _mark(line["id"], ok, f"{said}: {line['count']}" + (f". {line['kind']}" if line["kind"] else ""), tip, key=line["key"], shown=str(line["count"]), count=True)
+        ok, said = line["ok"], _upper(line["line"])
+        result = "At zero" if ok else "Not tested, so the build stops" if line["over"] == "not tested" else f"{line['count']} found, so the build stops"
+        tip = {"name": said, "key": line["key"], "kind": line["kind"], "ok": ok, "result": result,
+               "lines": [["Counted in", part]] + ([["Counted over", line["over"][3:]]] if line["over"].startswith("of ") else [])}
+        return _mark(line["id"], ok, f"{said}: {line['count']} {line['over']}".strip() + (f". {line['kind']}" if line["kind"] else ""), tip,
+                     key=line["key"], shown=str(line["count"]), count=True)
 
     def control_mark(c: dict) -> dict:
         tip = {"name": c["name"], "key": c["key"], "kind": c["kind"], "ok": c["caught"], "result": "Caught by the checks" if c["caught"] else "Missed by the checks",
@@ -172,7 +177,7 @@ def evaluation_view(report: dict) -> dict:
         "line_marks": [(part, [line_mark(part, l) for l in by_kind(lines)]) for part, lines in red_lines.items()],
         "control_marks": [("Wrong builds", [control_mark(c) for c in by_kind(controls)])],
         "passed": sum(1 for r in report["rows"] if r["passed"]), "total": len(report["rows"]),
-        "at_zero": sum(1 for l in report["red_lines"] if l["count"] == 0), "lines_total": len(report["red_lines"]),
+        "at_zero": sum(1 for l in report["red_lines"] if l["count"] == 0 and l.get("checked") != 0), "lines_total": len(report["red_lines"]),
         "caught": sum(1 for c in controls if c["caught"]), "controls_total": len(controls)}
 
 
