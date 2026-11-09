@@ -452,6 +452,34 @@ def test_a_key_that_sees_no_facility_is_a_failing_read_not_every_payment_sent_to
     assert DANA in adapter.asked and session.get(PaymentCommand, dana.id).state == "PENDING_AT_FMS"
 
 
+def test_the_hand_off_to_staff_asks_nothing_between_the_change_and_the_save(session, fms_url, sim):
+    """A pass that loses a race on the payment's row has to be able to drop its change and go on. That works only in the save: a query
+    in between would write the change earlier, outside the place that recovers from it, and end the whole pass."""
+    from sqlalchemy import event
+    from sqlalchemy.orm import Session
+
+    adapter = asking_adapter(fms_url)
+    sim.behave(DANA, "pending_then_succeed", lag=5)
+    dana, _, _ = pay(session, adapter, DANA, "pm_DanaVisa4242", 24000)
+    bind_desk(session, fms_url, [ORLANDO], move_to_left=DANA)
+    engine, verbs = session.get_bind(), []
+
+    def watch(conn, cursor, statement, parameters, context, executemany):
+        verbs.append(statement.split()[0].upper())
+
+    fresh = Session(bind=engine)           # a worker pass starts with a session that has not seen these rows
+    service = PaymentService(fresh, adapter)
+    event.listen(engine, "before_cursor_execute", watch)
+    try:
+        service._send_unserved_to_staff(service._served_facilities())
+    finally:
+        event.remove(engine, "before_cursor_execute", watch)
+        fresh.close()
+    assert "UPDATE" in verbs and "SELECT" not in verbs[verbs.index("UPDATE"):]
+    session.expire_all()                   # the change was saved through the other session
+    assert session.get(PaymentCommand, dana.id).state == "NEEDS_STAFF"
+
+
 # ------------------------------------------------------------------ answers that are not FMS answers
 
 def test_a_proxy_error_page_is_not_taken_for_an_fms_answer():

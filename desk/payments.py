@@ -531,11 +531,15 @@ class PaymentService:
     def _send_unserved_to_staff(self, served) -> None:
         """An open payment at a facility the key no longer sees cannot be checked, so it must not sit as pending for good."""
         reason = "this facility is no longer served by the desk's key, so the outcome cannot be checked"
-        for command in self.session.scalars(select(PaymentCommand).join(Lease, Lease.id == PaymentCommand.lease_id).where(
-                PaymentCommand.state.in_(UNRESOLVED), Lease.facility_id.not_in(served))).all():
+        # each case is loaded with its payment: a query between the change and the save would write the change outside _save(),
+        # which is where a pass that lost a race on the row drops its change and goes on
+        gone = self.session.execute(select(PaymentCommand, DelinquencyCase).select_from(PaymentCommand)
+                                    .join(Lease, Lease.id == PaymentCommand.lease_id)
+                                    .join(DelinquencyCase, DelinquencyCase.id == PaymentCommand.case_id)
+                                    .where(PaymentCommand.state.in_(UNRESOLVED), Lease.facility_id.not_in(served))).all()
+        for command, case in gone:
             command.state, command.provider_reason = "NEEDS_STAFF", reason
-            record(self.session, self.session.get(DelinquencyCase, command.case_id), "payment needs staff",
-                   {"command": command.id, "reason": reason})
+            record(self.session, case, "payment needs staff", {"command": command.id, "reason": reason})
             log.warning("payment %s is at a facility the key no longer sees; sent to staff", command.id)
         self._save()
 
