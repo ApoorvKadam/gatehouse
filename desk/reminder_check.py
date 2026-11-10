@@ -29,6 +29,11 @@ from .sales import SALE_KINDS
 log = logging.getLogger("desk.reminder_check")
 
 CLEAR, HOLD = "clear", "hold"
+# what the page and the API call each reason. Only a tenant who must not be texted at all is labelled so; the rest are held for a person or for a fix.
+LABELS = {"consent": "Must not be texted", "lien": "A person decides", "paused": "Texts paused in the FMS", "unpaused": "Not paused in the FMS",
+          "tenant_exemption": "A person decides", "payment": "Payment in progress", "unread": "Not checked", "date": "A person decides",
+          "clear": "Clear to text"}
+UNREAD = "The last reading of this account failed, so the check cannot say a text is safe. It reads again on the next pass."
 # a payment the desk is still working: a text now would tell a tenant who has paid, or is paying, that they owe
 WORKING = IN_FLIGHT + ("NEEDS_STAFF", "NEEDS_REAUTHORIZATION")
 
@@ -40,7 +45,7 @@ class Reading:
     overdue: int | None                     # days past due per the FMS; None when the date could not be read
     consent: Verdict                        # may the tenant be texted at all, at any hour
     lien: str | None = None
-    exemption: str | None = None
+    exemption: tuple[str, str] | None = None        # (code, sentence): paused, unpaused or tenant_exemption
     payment: str | None = None
 
 
@@ -57,11 +62,11 @@ def decide(r: Reading) -> dict:
         reasons.append(("date", "The FMS sent a delinquency date Gatehouse cannot read, so how late this account is cannot be said."))
     if not r.consent.ok:
         reasons.append(("consent", r.consent.reason))
-    reasons += [(code, why) for code, why in (("lien", r.lien), ("exemption", r.exemption), ("payment", r.payment)) if why]
+    reasons += [(code, why) for code, why in (("lien", r.lien), r.exemption or ("exemption", None), ("payment", r.payment)) if why]
     if not reasons:
-        return {"state": CLEAR, "code": "clear", "why": "Nothing in the records says this tenant should not be texted.", "also": []}
+        return {"state": CLEAR, "code": "clear", "label": LABELS["clear"], "why": "Nothing in the records says this tenant should not be texted.", "also": []}
     (code, why), rest = reasons[0], reasons[1:]
-    return {"state": HOLD, "code": code, "why": why, "also": [other for _, other in rest]}
+    return {"state": HOLD, "code": code, "label": LABELS[code], "why": why, "also": [other for _, other in rest]}
 
 
 @dataclass
@@ -91,24 +96,42 @@ def _payment_words(session: Session, leases: list[Lease]) -> str | None:
     return f"The FMS shows a pending payment of {dollars(pending.amount)}, so a text now could be wrong." if pending is not None else None
 
 
-def _exemption_words(session: Session, lease_id: str, exemptions: list[ProviderExemption], today: date) -> str | None:
+def _is_active(e: ProviderExemption, today: date) -> bool:
+    """An exemption with no end date, one that ends today or later, or one whose end date nobody can read: the check holds the text rather than
+    guess that it ended."""
+    if not e.end_date:
+        return True
+    try:
+        return date.fromisoformat(e.end_date[:10]) >= today
+    except ValueError:
+        return True
+
+
+def _until(e: ProviderExemption) -> str:
+    try:
+        return f" until {day(e.end_date)}" if e.end_date else ""
+    except ValueError:
+        return ""
+
+
+def _exemption_words(session: Session, lease_id: str, exemptions: list[ProviderExemption], today: date) -> tuple[str, str] | None:
     """An exemption on this unit, or on another unit of the same tenant. The flag Cubby documents says whether the FMS's own collections texts are
     paused; an arrangement that does not pause them is a catch in itself, because the FMS will keep texting a tenant who is on a payment plan."""
-    active = [e for e in exemptions if not e.end_date or e.end_date[:10] >= today.isoformat()]
+    active = [e for e in exemptions if _is_active(e, today)]
     own = next((e for e in active if e.lease_provider_id == lease_id), None)
     other = next((e for e in active if e.lease_provider_id != lease_id), None)
     e = own or other
     if e is None:
         return None
-    until = f" until {day(e.end_date)}" if e.end_date else ""
+    until = _until(e)
     what = "a payment arrangement" if e.reason == "PAYMENT_ARRANGEMENT" else f"an exemption ({e.reason.replace('_', ' ').lower()})"
     if own is None:
         unit = session.scalar(select(Lease.unit_name).where(Lease.provider_id == e.lease_provider_id)) or "another unit"
-        return f"This tenant has {what} on unit {unit}{until}. A person decides whether a text about this unit goes."
+        return "tenant_exemption", f"This tenant has {what} on unit {unit}{until}. A person decides whether a text about this unit goes."
     if own.pause_collections_messages:
-        return f"The FMS has {what} on this unit{until} and has paused collections texts for it."
-    return (f"The FMS has {what} on this unit{until} but has not paused collections texts for it. Pause them in the FMS, "
-            "or its reminder tool will still text this tenant.")
+        return "paused", f"The FMS has {what} on this unit{until} and has paused collections texts for it."
+    return "unpaused", (f"The FMS has {what} on this unit{until} but has not paused collections texts for it. Pause them in the FMS, "
+                        "or its reminder tool will still text this tenant.")
 
 
 def _customer(adapter: FMSAdapter, customer_id: str) -> ProviderCustomer | None:
@@ -125,15 +148,28 @@ def _overdue(pl: ProviderLease, today: date) -> int | None:
         return None
 
 
+def _unread(session: Session, lease: Lease, pl: ProviderLease, today: date) -> None:
+    """The reading of this account failed, so what was said about it before is not trusted: the text is held until a reading succeeds."""
+    check = session.get(ReminderCheck, lease.id) or ReminderCheck(lease_id=lease.id)
+    check.observed_at = utcnow()
+    check.data = {"state": HOLD, "code": "unread", "label": LABELS["unread"], "why": UNREAD, "also": [], "unit": pl.unit_name, "owed": pl.total_due,
+                  "overdue_days": _overdue(pl, today), "tenant": (check.data or {}).get("tenant")}
+    session.merge(check)
+
+
 def reconcile_reminder_checks(session: Session, adapter: FMSAdapter, facility: Facility) -> CheckPass:
-    """One reading of every past-due lease at a facility, a verdict each, kept for the page and the API. A lease whose reading fails keeps its last
-    verdict and is named in `failures`: a partial picture is never judged. A lease that is no longer past due loses its verdict."""
+    """One reading of every past-due lease at a facility, a verdict each, kept for the page and the API. A lease whose reading fails is named in
+    `failures` and held, never judged on a partial picture and never left saying clear. A lease that is no longer past due loses its verdict."""
     result = CheckPass()
     today = facility_today(facility)
     try:
         past_due = [pl for pl in adapter.delinquent_leases(facility.provider_id) if pl.total_due > 0]
     except FMSError as exc:
         result.failures.append(f"past-due leases: {exc}")
+        for old in session.scalars(select(ReminderCheck).join(Lease, Lease.id == ReminderCheck.lease_id).where(Lease.facility_id == facility.id)):
+            if old.data.get("state") == CLEAR:
+                old.data = {**old.data, "state": HOLD, "code": "unread", "label": LABELS["unread"], "why": UNREAD, "also": []}
+        session.commit()
         return result
     kept: set[int] = set()
     exemptions: dict[str, list[ProviderExemption]] = {}
@@ -146,9 +182,10 @@ def reconcile_reminder_checks(session: Session, adapter: FMSAdapter, facility: F
                 exemptions[pl.customer_provider_id] = adapter.exemptions_for_customer(pl.customer_provider_id)
         except FMSError as exc:
             result.failures.append(f"{pl.provider_id}: {exc}")
+            _unread(session, lease, pl, today)
             continue
         theirs = session.scalars(select(Lease).where(Lease.facility_id == facility.id, Lease.provider_customer_id == pl.customer_provider_id)).all()
-        reading = Reading(overdue=_overdue(pl, today), consent=may_text(session, customer), lien=_lien_words(session, lease),
+        reading = Reading(overdue=_overdue(pl, today), consent=may_text(session, customer, zone=facility.time_zone), lien=_lien_words(session, lease),
                           exemption=_exemption_words(session, pl.provider_id, exemptions[pl.customer_provider_id], today),
                           payment=_payment_words(session, theirs))
         view = session.get(ReminderCheck, lease.id) or ReminderCheck(lease_id=lease.id)

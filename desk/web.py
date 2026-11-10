@@ -71,6 +71,8 @@ REVERSED = {
     "REFUND_PENDING": ("Refund in progress", "The FMS reports the refund finished, or that it was cancelled."),
     "DISPUTED": ("Payment disputed", "The FMS reports the dispute settled, and the ledger shows what is owed."),
 }
+# the chip a reason takes on the Reminder check: red only for a tenant who must not be texted, amber for what needs a fix or a wait
+CHECK_CHIPS = {"consent": "act", "unpaused": "wait", "payment": "wait", "unread": "wait", "clear": "done"}
 EVIDENCE_NAMES = {"notice": "Lien notice", "mail_deposit": "Certificate of mailing", "posting": "Notice posted",
                   "publication": "Newspaper publication", "legal_check": "Legal check", "email_delivery": "Email delivery"}
 
@@ -318,7 +320,7 @@ class Pages:
         rows = []
         for lease in s.scalars(select(Lease).where(Lease.facility_id == facility.id).order_by(Lease.id)):
             check = s.get(ReminderCheck, lease.id)
-            if check is not None:
+            if check is not None and check.data.get("state") in ("hold", "clear") and isinstance(check.data.get("owed"), int):
                 rows.append({**check.data, "lease": lease.provider_id, "observed_at": check.observed_at})
         return sorted(rows, key=lambda row: (row["state"] != "hold", -row["owed"]))
 
@@ -564,7 +566,7 @@ def router(pages: Pages) -> APIRouter:
             rows = pages.reminder_checks(s, current)
             return templates.TemplateResponse(request, "reminder_check.html", {
                 "facilities": facilities, "facility": current, "rows": rows, "holds": sum(1 for row in rows if row["state"] == "hold"),
-                "quiet": in_quiet_hours(current, utcnow()), "money": money, "nav": "reminder-check"})
+                "quiet": in_quiet_hours(current, utcnow()), "chips": CHECK_CHIPS, "money": money, "nav": "reminder-check"})
 
     @r.get("/inbox", response_class=HTMLResponse)
     def inbox_page(request: Request, facility: str | None = None, text: int | None = None):

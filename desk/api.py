@@ -284,7 +284,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         rows = []
         for lease in session.scalars(select(Lease).where(Lease.facility_id == facility.id).order_by(Lease.id)) if facility is not None else []:
             check = session.get(ReminderCheck, lease.id)
-            if check is not None:
+            if check is not None and check.data.get("state"):
                 rows.append({"lease": lease.provider_id, "customer": lease.provider_customer_id, **check.data, "read_at": check.observed_at})
         return {"rows": rows}
 

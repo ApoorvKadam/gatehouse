@@ -2,19 +2,22 @@
 from __future__ import annotations
 
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from desk.adapter.base import FMSError, ProviderExemption
 from desk.cases import current_case, sync_facility
-from desk.db import utcnow
+from desk.db import bind_to_fms, make_session_factory, utcnow
 from desk.messaging import Verdict, e164
 from desk.models import Facility, InboundMessage, Lease, LienEvaluation, PaymentCommand, ReminderCheck
 from desk.payments import PaymentService
-from desk.reminder_check import CLEAR, HOLD, Reading, _payment_words, decide, reconcile_reminder_checks
+from desk.reminder_check import CLEAR, HOLD, Reading, _exemption_words, _payment_words, decide, reconcile_reminder_checks
+from desk.worker import run_once
 
 from .conftest import ORLANDO
+from .test_messaging import DANA as DANA_PHONE, arrive, texts_in
 from .test_pages import preview
 
 OK = Verdict(True)
@@ -34,19 +37,28 @@ def test_an_account_with_nothing_in_the_way_is_clear():
 
 def test_a_tenant_who_must_not_be_texted_outranks_every_other_reason():
     verdict = decide(read(consent=Verdict(False, "This number texted STOP on Nov 3. It stays off until they text START."),
-                          lien="A lien file has begun.", exemption="An arrangement runs.", payment="A payment is being checked."))
+                          lien="A lien file has begun.", exemption=("paused", "An arrangement runs."), payment="A payment is being checked."))
     assert (verdict["state"], verdict["code"]) == (HOLD, "consent") and "STOP" in verdict["why"]
 
 
 def test_a_lien_then_an_exemption_then_a_payment_hold_the_text_in_that_order():
-    everything = dict(lien="lien words", exemption="exemption words", payment="payment words")
+    everything = dict(lien="lien words", exemption=("paused", "exemption words"), payment="payment words")
     assert decide(read(**everything))["code"] == "lien"
-    assert decide(read(exemption="exemption words", payment="payment words"))["code"] == "exemption"
-    assert decide(read(payment="payment words")) == {"state": HOLD, "code": "payment", "why": "payment words", "also": []}
+    assert decide(read(exemption=("paused", "exemption words"), payment="payment words"))["code"] == "paused"
+    assert decide(read(payment="payment words")) == {"state": HOLD, "code": "payment", "label": "Payment in progress", "why": "payment words", "also": []}
+
+
+def test_only_a_tenant_who_must_not_be_texted_is_labelled_so():
+    assert decide(read(consent=Verdict(False, "STOP.")))["label"] == "Must not be texted"
+    assert decide(read(lien="lien words"))["label"] == "A person decides"
+    assert decide(read(exemption=("unpaused", "e")))["label"] == "Not paused in the FMS"
+    assert decide(read(exemption=("paused", "e")))["label"] == "Texts paused in the FMS"
+    assert decide(read(exemption=("tenant_exemption", "e")))["label"] == "A person decides"
+    assert decide(read())["label"] == "Clear to text"
 
 
 def test_every_reason_is_kept_and_only_the_first_is_the_headline():
-    verdict = decide(read(overdue=None, consent=Verdict(False, "STOP."), lien="lien words", exemption="exemption words", payment="payment words"))
+    verdict = decide(read(overdue=None, consent=Verdict(False, "STOP."), lien="lien words", exemption=("unpaused", "exemption words"), payment="payment words"))
     assert verdict["code"] == "date" and verdict["also"] == ["STOP.", "lien words", "exemption words", "payment words"]
 
 
@@ -76,10 +88,11 @@ def test_every_past_due_account_gets_a_verdict_and_an_arrangement_that_still_let
     seen = verdicts(session)
     assert result.failures == [] and set(seen) == {"lease_WhitB1042", "lease_BellC0207", "lease_RamnA0012", "lease_RamnA0013", "lease_OkfrE0505"}
     own = seen["lease_RamnA0012"]
-    assert (own["state"], own["code"]) == (HOLD, "exemption")
+    assert (own["state"], own["code"], own["label"]) == (HOLD, "unpaused", "Not paused in the FMS")
     assert "payment arrangement on this unit until" in own["why"] and "has not paused collections texts for it" in own["why"]
     sibling = seen["lease_RamnA0013"]
-    assert sibling["state"] == HOLD and "arrangement on unit A-012" in sibling["why"] and "A person decides" in sibling["why"]
+    assert (sibling["state"], sibling["code"]) == (HOLD, "tenant_exemption") and "arrangement on unit A-012" in sibling["why"]
+    assert "A person decides" in sibling["why"]
     assert all(seen[k]["state"] == CLEAR for k in ("lease_WhitB1042", "lease_BellC0207", "lease_OkfrE0505"))
     assert seen["lease_BellC0207"]["owed"] == 18500 and seen["lease_BellC0207"]["tenant"] == "Marcus" and seen["lease_BellC0207"]["overdue_days"] > 0
 
@@ -91,7 +104,8 @@ def test_an_arrangement_that_pauses_the_fms_texts_says_so(session, adapter, sim)
     assert sim.post("/sim/exemptions", {"leaseId": "lease_RamnA0012", "reason": "PAYMENT_ARRANGEMENT", "endDate": ends,
                                         "pauseCollectionsMessages": True}).status_code == 200
     reconcile_reminder_checks(session, adapter, facility)
-    assert "and has paused collections texts for it" in verdicts(session)["lease_RamnA0012"]["why"]
+    paused = verdicts(session)["lease_RamnA0012"]
+    assert paused["code"] == "paused" and "and has paused collections texts for it" in paused["why"]
     assert sim.post("/sim/exemptions/cancel", {"leaseId": "lease_RamnA0012"}).status_code == 200
     reconcile_reminder_checks(session, adapter, facility)
     assert verdicts(session)["lease_RamnA0012"]["state"] == CLEAR and verdicts(session)["lease_RamnA0013"]["state"] == CLEAR
@@ -163,8 +177,10 @@ def test_the_page_and_the_api_show_who_must_not_be_texted_and_why(fms_url, sim):
     with TestClient(preview(fms_url)) as visitor:
         page = visitor.get("/reminder-check").text
         assert "Reminder check at Northstar Storage, Orlando East" in page and "Gatehouse sends nothing" in page
-        found = re.search(r"(\d+) of (\d+) past-due accounts must not get a text", page)
-        assert found and int(found.group(1)) == page.count("Must not be texted") >= 4
+        found = re.search(r"(\d+) of (\d+) past-due accounts should not get a text today", page)
+        assert found and int(found.group(1)) >= 4
+        # only the tenant who texted STOP is labelled a must-not; the rest are held for a person or for a fix
+        assert page.count("Must not be texted") == 1 and "Not paused in the FMS" in page and page.count('class="chip act"') == 1
         for reason in ("has not paused collections texts for it", "This number texted STOP", "A lien file has begun for this account",
                        "arrangement on unit A-012"):
             assert reason in page, reason
@@ -173,6 +189,95 @@ def test_the_page_and_the_api_show_who_must_not_be_texted_and_why(fms_url, sim):
         assert visitor.get("/reminder-check", params={"facility": "fac_HBtampa0001"}).status_code == 404
         rows = visitor.get(f"/api/facilities/{ORLANDO}/reminder-check").json()["rows"]
         marcus = next(r for r in rows if r["lease"] == "lease_BellC0207")
-        assert (marcus["state"], marcus["code"], marcus["unit"], marcus["owed"]) == ("hold", "consent", "C-207", 18500)
+        assert (marcus["state"], marcus["code"], marcus["label"], marcus["unit"], marcus["owed"]) == ("hold", "consent", "Must not be texted", "C-207", 18500)
         assert "texted STOP" in marcus["why"] and marcus["customer"] == "cust_MarcBell01" and marcus["read_at"]
         assert {r["state"] for r in rows} <= {"hold", "clear"} and len(rows) >= 4 and all("also" in r for r in rows)
+
+
+# ---------------------------------------------------------------- a reading that fails, and rows that are not whole
+
+class Flaky:
+    """The real adapter, except for the calls named, which fail the way an FMS that is down does."""
+
+    def __init__(self, inner, down: set[str]):
+        self._inner, self._down = inner, down
+
+    def __getattr__(self, name):
+        if name in self._down:
+            def down(*_args, **_kwargs):
+                raise FMSError(f"{name}: the FMS did not answer")
+            return down
+        return getattr(self._inner, name)
+
+
+def test_a_failed_reading_holds_the_text_instead_of_keeping_an_old_clear(session, adapter, sim):
+    facility = orlando(session, adapter)
+    reconcile_reminder_checks(session, adapter, facility)
+    assert verdicts(session)["lease_BellC0207"]["state"] == CLEAR
+    result = reconcile_reminder_checks(session, Flaky(adapter, {"exemptions_for_customer"}), facility)
+    marcus = verdicts(session)["lease_BellC0207"]
+    assert result.failures and (marcus["state"], marcus["code"], marcus["owed"]) == (HOLD, "unread", 18500)
+    assert "cannot say a text is safe" in marcus["why"] and marcus["tenant"] == "Marcus"
+    reconcile_reminder_checks(session, adapter, facility)
+    assert verdicts(session)["lease_BellC0207"]["state"] == CLEAR                       # the next good reading restores it
+
+
+def test_when_the_past_due_list_cannot_be_read_no_clear_survives(session, adapter, sim):
+    facility = orlando(session, adapter)
+    reconcile_reminder_checks(session, adapter, facility)
+    result = reconcile_reminder_checks(session, Flaky(adapter, {"delinquent_leases"}), facility)
+    seen = verdicts(session)
+    assert result.failures and {v["state"] for v in seen.values()} == {HOLD}
+    assert seen["lease_BellC0207"]["code"] == "unread" and seen["lease_RamnA0012"]["code"] == "unpaused"       # a real hold keeps its own reason
+
+
+def test_an_exemption_whose_end_date_cannot_be_read_still_holds(session):
+    unreadable = ProviderExemption("lease_1", "PAYMENT_ARRANGEMENT", "next week", True, None)
+    code, words = _exemption_words(session, "lease_1", [unreadable], date(2026, 11, 9))
+    assert code == "unpaused" and "payment arrangement on this unit" in words and "until" not in words
+    ended = ProviderExemption("lease_1", "PAYMENT_ARRANGEMENT", "2026-11-01", True, None)
+    assert _exemption_words(session, "lease_1", [ended], date(2026, 11, 9)) is None
+
+
+def test_a_stored_verdict_without_its_fields_does_not_break_the_page_or_the_api(fms_url, sim):
+    app = preview(fms_url)
+    with TestClient(app) as visitor:
+        with app.state.session_factory() as s:
+            lease = s.scalar(select(Lease).where(Lease.provider_id == "lease_BellC0207"))
+            s.merge(ReminderCheck(lease_id=lease.id, data={}))
+            s.commit()
+        assert visitor.get("/reminder-check").status_code == 200
+        rows = visitor.get(f"/api/facilities/{ORLANDO}/reminder-check").json()["rows"]
+        assert rows and all(r["lease"] != "lease_BellC0207" for r in rows)
+
+
+def test_a_failing_reminder_step_does_not_stop_the_rest_of_the_pass(fms_url, sim, adapter, monkeypatch):
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("the check broke")
+    monkeypatch.setattr("desk.worker.reconcile_reminder_checks", broken)
+    factory = make_session_factory("sqlite:///:memory:")
+    bind_to_fms(factory, adapter, fms_url)
+    with factory() as s:
+        sync_facility(s, adapter, ORLANDO)
+        arrive(s, adapter, texts_in(sim, DANA_PHONE, "hello"))
+    _, failures = run_once(factory, adapter)
+    assert failures >= 1
+    with factory() as s:
+        assert s.scalar(select(InboundMessage.match_state)) == "matched"            # the text that waited was still matched
+
+
+def test_the_stop_date_is_the_facilitys_date_not_the_utc_date(session, adapter, sim):
+    facility = orlando(session, adapter)
+    session.add(InboundMessage(facility_id=facility.id, provider_message_id="SMstop2", phone=DANA, phone_key=e164(DANA), body="STOP",
+                               received_at=datetime(2026, 11, 10, 0, 30), match_state="matched"))           # 7:30 PM on Nov 9 in New York
+    session.commit()
+    reconcile_reminder_checks(session, adapter, facility)
+    assert "This number texted STOP on Nov 9." in verdicts(session)["lease_WhitB1042"]["why"]
+
+
+def test_the_page_says_when_it_is_quiet_hours_at_the_facility(fms_url, sim, monkeypatch):
+    with TestClient(preview(fms_url)) as visitor:
+        monkeypatch.setattr("desk.web.utcnow", lambda: datetime(2026, 11, 10, 2, 30))                       # 9:30 PM in New York
+        assert "It is quiet hours at this facility" in visitor.get("/reminder-check").text
+        monkeypatch.setattr("desk.web.utcnow", lambda: datetime(2026, 11, 10, 17, 0))                       # noon in New York
+        assert "It is quiet hours" not in visitor.get("/reminder-check").text
