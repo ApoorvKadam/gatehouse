@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -19,6 +20,13 @@ from desk.worker import run_once
 from .conftest import FULL_KEY
 from .test_pages import preview
 from .test_verified_payment import DANA, pay, settle
+
+
+@pytest.fixture(autouse=True)
+def drift_off(fms_url):
+    """The simulator lives for the whole session, so no test leaves a drift on for the next one."""
+    yield
+    httpx.post(f"{fms_url}/sim/drift", json={"kind": "off"}, timeout=10)
 
 
 def drift(sim, kind):
@@ -108,7 +116,8 @@ def test_today_shows_one_row_for_the_connection_and_the_api_lists_and_closes_it(
         drift(sim, "status")
         run_once(app.state.session_factory, adapter)
         page = visitor.get("/today").text
-        assert page.count("FMS answer not as documented") == 1 and "SETTLED" in page and "The FMS connection" in page
+        assert page.count("FMS answer not as documented") == 1 and "The FMS connection" in page
+        assert "A payment search carried a payment status the FMS documentation does not list" in page and "SETTLED" not in page
         assert "FMS answer not as documented" in visitor.get("/today", params={"facility": "fac_NSalbany001"}).text      # it is the connection's, not one facility's
         [row] = visitor.get("/api/integration").json()["open"]
         assert (row["endpoint"], row["field"], row["value"]) == ("payments search", "status", "SETTLED") and row["count"] >= 1
