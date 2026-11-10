@@ -14,7 +14,9 @@ from urllib.parse import urlsplit
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm.exc import StaleDataError
-from pydantic import BaseModel, Field
+from typing import Annotated
+
+from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
@@ -110,7 +112,7 @@ class StaffResolutionIn(BaseModel):
 
 
 class ReviewIn(BaseModel):
-    note: str = Field(min_length=10, max_length=500, description="what was checked and what was decided: the contract confirmed, the adapter changed, or the change expected")
+    note: Annotated[str, StringConstraints(strip_whitespace=True, min_length=10, max_length=500)] = Field(description="what was checked and what was decided: the contract confirmed, the adapter changed, or the change expected")
 
 
 def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = None, start_worker: bool = True,

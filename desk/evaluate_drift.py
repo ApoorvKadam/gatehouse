@@ -106,13 +106,13 @@ def exp_renamed_on_submission(run: Run, session, adapter, case, judge: Judge) ->
 def exp_amount(run: Run, session, adapter, case, judge: Judge) -> dict:
     take(session, adapter, case)
     drift(run, "amount")
-    real = {p["paymentId"]: p["amount"] for p in truth(run)}
+    real = truth(run)
     try:
         read = adapter.payments_for_lease(DANA)
     except FMSError:
         read = []
     judge.amount[1] += len(real)
-    judge.amount[0] += sum(1 for p in read if p.amount != real.get(p.provider_id))   # a payment handed to the desk with another amount
+    judge.amount[0] += len(read)        # every amount on the wire was text: any payment handed to the desk was read anyway, whatever its value
     Run.settle(session, adapter, passes=2)
     return {"refused": read == [], "noted": noted(session, adapter, "payments search", "amount", "not whole cents")}
 

@@ -129,3 +129,42 @@ def test_today_shows_one_row_for_the_connection_and_the_api_lists_and_closes_it(
         assert visitor.post("/api/integration/9999/review", json=note, headers={"x-desk-token": "op-token"}).status_code == 404
         assert "FMS answer not as documented" not in visitor.get("/today").text
         assert visitor.get("/api/integration").json() == {"open": []}
+
+
+def test_no_new_charge_while_the_fms_shows_a_payment_in_a_status_the_desk_does_not_know(session, adapter, sim):
+    command, case, _ = pay(session, adapter, DANA, "pm_DanaVisa4242", 10000)
+    # a payment the FMS now writes in a status nobody has checked could be a pending one under a new name
+    sim.post("/sim/payments/return", {"paymentId": command.provider_payment_id, "status": "IN_REVIEW"})
+    with pytest.raises(PaymentRefused, match="does not know"):
+        pay(session, adapter, DANA, "pm_DanaVisa4242", 5000)
+    assert len(sim.payments(DANA)) == 1
+
+
+def test_a_missing_amount_is_refused_never_guessed(adapter, monkeypatch):
+    with pytest.raises(ValueError):
+        adapter._payment({"paymentId": "payment_x1y2", "status": "SUCCEEDED", "createdAt": "2026-11-10T12:00:00"}, "make payment", ("SUCCEEDED",), 500)
+    assert adapter.take_anomalies() == [Anomaly("make payment", "amount", "missing", "")]
+
+
+def test_a_value_that_is_not_a_code_or_a_number_is_not_kept(adapter):
+    adapter._note("payments search", "status", "unlisted value", "Dana Whitfield 555-0142")
+    adapter._note("payments search", "status", "unlisted value", "SETTLED")
+    assert {a.value for a in adapter.take_anomalies()} == {"(other text)", "SETTLED"}
+
+
+def test_notes_go_back_to_the_adapter_when_saving_them_fails(session, adapter, monkeypatch):
+    adapter._note("payments search", "status", "unlisted value", "SETTLED")
+    adapter._note("payments search", "status", "unlisted value", "SETTLED")
+
+    def fail():
+        raise RuntimeError("the database is busy")
+    monkeypatch.setattr(session, "commit", fail)
+    with pytest.raises(RuntimeError):
+        save_notes(session, adapter)
+    assert adapter.take_anomalies() == [Anomaly("payments search", "status", "unlisted value", "SETTLED")] * 2
+
+
+def test_a_review_note_of_only_spaces_is_refused(fms_url, sim):
+    with TestClient(preview(fms_url)) as visitor:
+        refused = visitor.post("/api/integration/1/review", json={"note": " " * 20}, headers={"x-desk-token": "op-token"})
+        assert refused.status_code == 422

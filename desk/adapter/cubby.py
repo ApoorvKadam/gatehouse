@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import threading
+from collections import Counter
 from datetime import datetime, timezone
 
 import httpx
@@ -37,8 +38,10 @@ def _parse_time(value: str | None) -> datetime | None:
 
 
 def _safe(value) -> str:
-    """A short rendering of a value for a note: printable characters only, so an answer cannot fill the record or carry markup."""
-    return re.sub(r"[^\w .:/-]", "?", str(value))[:40]
+    """A value for a note, kept only when it is shaped like a status code or a number, so an answer cannot put a name or other free text in the
+    record; anything else is recorded as "(other text)"."""
+    text = str(value)
+    return text if re.fullmatch(r"[A-Z][A-Z0-9_]{0,31}|-?\d{1,12}(?:\.\d{1,4})?|", text) else "(other text)"
 
 
 def _json(response: httpx.Response) -> dict:
@@ -62,7 +65,7 @@ class CubbyAdapter:
     def __init__(self, base_url: str, api_key: str, timeout_seconds: float = 5.0, transport: httpx.BaseTransport | None = None):
         self._http = httpx.Client(base_url=base_url, headers={"Authorization": f"Bearer {api_key}"},
                                   timeout=timeout_seconds, transport=transport)
-        self._notes: list[Anomaly] = []
+        self._notes: Counter[Anomaly] = Counter()
         self._notes_lock = threading.Lock()
 
     def close(self) -> None:
@@ -71,29 +74,37 @@ class CubbyAdapter:
     # ------------------------------------------------------------------ answers the documentation does not describe
     def _note(self, endpoint: str, field: str, kind: str, value) -> None:
         """Keep a note that an answer departed from the documentation; the worker writes the notes down (desk/integration.py)."""
-        with self._notes_lock:
-            if len(self._notes) < MAX_NOTES:
-                self._notes.append(Anomaly(endpoint, field, kind, _safe(value)))
+        self.restore_anomalies([Anomaly(endpoint, field, kind, _safe(value))])
 
     def take_anomalies(self) -> list[Anomaly]:
-        """The notes kept since the last call, which are then forgotten here."""
+        """The notes kept since the last call, a repeat once per time it came, which are then forgotten here."""
         with self._notes_lock:
-            taken, self._notes = self._notes, []
-        return taken
+            taken, self._notes = self._notes, Counter()
+        return list(taken.elements())
+
+    def restore_anomalies(self, notes: list[Anomaly]) -> None:
+        """Keep notes (again, when saving them failed). Repeats are counted, so only the number of different notes is bounded."""
+        with self._notes_lock:
+            for note in notes:
+                if note in self._notes or len(self._notes) < MAX_NOTES:
+                    self._notes[note] += 1
 
     def _payment(self, p: dict, endpoint: str, listed: tuple[str, ...], amount: int = 0) -> ProviderPayment:
         """A payment as the FMS sent it, checked against what its documentation says the call returns. A status the documentation does not list is
         noted and kept exactly as written, never mapped to a known one: the payment service holds a payment with such a status for a person.
-        An amount that is not whole cents is refused, never rounded."""
+        An amount that is missing or not whole cents is refused, never guessed or rounded."""
         status = p.get("status", "")
         if status not in listed:
             self._note(endpoint, "status", "unlisted value", status)
-        if "amount" in p and (isinstance(p["amount"], bool) or not isinstance(p["amount"], int)):
+        if "amount" not in p:
+            self._note(endpoint, "amount", "missing", "")
+            raise ValueError("the payment has no amount")
+        if isinstance(p["amount"], bool) or not isinstance(p["amount"], int):
             self._note(endpoint, "amount", "not whole cents", p["amount"])
             raise ValueError(f"amount {p['amount']!r} is not whole cents")
         if "createdAt" not in p:
             self._note(endpoint, "createdAt", "missing", "")             # both calls document it, and a payment with no time cannot end a hold
-        return ProviderPayment(provider_id=p.get("paymentId", ""), amount=p.get("amount", amount), status=status,
+        return ProviderPayment(provider_id=p.get("paymentId", ""), amount=p["amount"], status=status,
                                reason=p.get("reason"), created_at=_parse_time(p.get("createdAt")),
                                method_type=p.get("methodType"), customer_provider_id=p.get("customerId"))
 
