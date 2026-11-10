@@ -74,6 +74,9 @@ def resolve(session: Session, inv, kind: str, record_id: str) -> tuple[Part | No
         return Part(kind, REPLY_PHRASES[kind].format(first=_first_name(scope.name), when=when), "the message"), ""
     if kind == CLOSING:
         return Part(kind, REPLY_PHRASES[kind], "a fixed line"), ""
+    if ((run.packet or {}).get("reminder") or {}).get("kind") == "wrong_number":
+        # whoever wrote this says it is not their number or account, so they may not be the tenant: no fact about the account goes to them
+        return None, "they say it is not their number or account"
     if kind == "staff_review":
         done = next((a for a in run.actions or [] if a.get("kind") == "staff_review" and a.get("outcome") in ("linked", "requested")
                      and a.get("task_status") == "OPEN"), None)

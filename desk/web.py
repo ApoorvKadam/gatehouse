@@ -29,6 +29,7 @@ from .models import (
 )
 from .payments import tenant_message
 from .messaging import in_quiet_hours
+from .reminder_check import with_texts
 from .sequence import sequence
 from .wording import TROUBLES, plain, words
 
@@ -298,16 +299,17 @@ class Pages:
         rows = s.scalars(select(Facility).order_by(Facility.id)).all()
         return [f for f in rows if binding is None or f.provider_id in binding.facility_ids]
 
-    def reminder_checks(self, s: Session, facility: Facility) -> list[dict]:
-        """The worker's last verdict for each past-due account at a facility: the texts that must not go first, since those are what the
-        check is for, then the clear ones. Within each, the largest balance first."""
+    def reminder_checks(self, s: Session, facility: Facility, visitor: str | None = None) -> list[dict]:
+        """The worker's last verdict for each past-due account at a facility, with what the tenants' own words say added to it (what our agent read
+        for the desk, and for this visitor if there is one): the texts that should not go first, since those are what the check is for, then the
+        clear ones. Within each, the largest balance first."""
         rows = []
-        found = s.execute(select(Lease.provider_id, ReminderCheck).join(ReminderCheck, ReminderCheck.lease_id == Lease.id)
+        found = s.execute(select(Lease.provider_id, Lease.provider_customer_id, ReminderCheck).join(ReminderCheck, ReminderCheck.lease_id == Lease.id)
                           .where(Lease.facility_id == facility.id).order_by(Lease.id)).all()
-        for lease_provider_id, check in found:
+        for lease_provider_id, customer_id, check in found:
             if check.data.get("state") in ("hold", "clear") and isinstance(check.data.get("owed"), int):
-                rows.append({**check.data, "lease": lease_provider_id, "observed_at": check.observed_at})
-        return sorted(rows, key=lambda row: (row["state"] != "hold", -row["owed"]))
+                rows.append({**check.data, "lease": lease_provider_id, "customer": customer_id, "observed_at": check.observed_at})
+        return sorted(with_texts(s, facility, rows, visitor=visitor), key=lambda row: (row["state"] != "hold", -row["owed"]))
 
     def today(self, s: Session, facility: Facility) -> list[Item]:
         items: list[Item] = []
@@ -551,7 +553,7 @@ def router(pages: Pages) -> APIRouter:
             current = next((f for f in facilities if f.provider_id == facility), None) if facility is not None else facilities[0]
             if current is None:
                 raise HTTPException(404, "No such facility")
-            rows = pages.reminder_checks(s, current)
+            rows = pages.reminder_checks(s, current, visitor=spend.visitor_of(request) if pages.live else None)
             return templates.TemplateResponse(request, "reminder_check.html", {
                 "facilities": facilities, "facility": current, "rows": rows, "holds": sum(1 for row in rows if row["state"] == "hold"),
                 "quiet": in_quiet_hours(current, utcnow()), "chips": CHECK_CHIPS, "money": money, "nav": "reminder-check"})
