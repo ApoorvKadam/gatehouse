@@ -8,7 +8,7 @@ Gatehouse finds that work, keeps the evidence, and closes an item only when the 
 
 [![A tenant says she paid and her unit is still going to auction; Gatehouse reads the case and the desk writes the reply from the records](desk/static/film/gatehouse-walkthrough.jpg)](desk/static/film/gatehouse-walkthrough.mp4)
 
-A walkthrough of every screen in use, recorded on the live preview with one live run of our agent (click the frame for the video, or open `/film` on the preview, which has sound and a chapter list). The overview plays a 30 second silent cut of it. The music is "Classical vibes 3" from Mixkit, used under Mixkit's free music licence.
+A walkthrough of every screen in use, recorded on the live preview with one live run of our agent. The overview plays it with sound (click the frame for the video here). The music is "Closer" from Mixkit, used under Mixkit's free music licence.
 
 ## Where it fits
 

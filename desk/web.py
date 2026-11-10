@@ -13,7 +13,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
@@ -115,22 +115,6 @@ def evaluation_report() -> dict | None:
         return None
     report["generated"] = datetime.fromisoformat(report["generated_at"]).replace(tzinfo=None)
     return report
-
-
-def _film() -> dict:
-    """Where each chapter of the walkthrough begins and how long it runs, written when the film was cut."""
-    return json.loads((Path(__file__).parent / "static" / "film" / "chapters.json").read_text())
-
-
-def film_chapters() -> list[dict]:
-    """The walkthrough's chapters in film order, each with its title, its start in seconds and that start as minutes:seconds."""
-    return [{"title": c["title"], "t": c["t"], "at": f"{int(c['t']) // 60}:{int(c['t']) % 60:02d}"} for c in _film()["chapters"]]
-
-
-def film_length() -> str:
-    """The walkthrough's length in words, for example "3 minutes 17 seconds"."""
-    total = round(_film()["total"])
-    return f"{total // 60} minutes {total % 60} seconds"
 
 
 def _upper(text: str) -> str:
@@ -536,14 +520,12 @@ def router(pages: Pages) -> APIRouter:
                 "access_view": access_view.data if access_view else None, "access_policy": access_policy, "gate_rules": GATE_RULES,
                 "report": evaluation_report(),
                 "truth": pages.trace.get(s.get(Lease, held.lease_id).provider_id) if held else None,
-                "money": money, "local": local, "nav": "front", "film_length": film_length()})
+                "money": money, "local": local, "nav": "front"})
 
-    @r.get("/film", response_class=HTMLResponse)
-    def film(request: Request):
-        """The complete walkthrough, with sound, and a chapter list that jumps to each screen."""
-        with session() as s:
-            return templates.TemplateResponse(request, "film.html", {
-                "chapters": film_chapters(), "length": film_length().capitalize(), "nav": "film", "facilities": pages.facilities(s), "local": local})
+    @r.get("/film")
+    def film_moved():
+        """The walkthrough plays on the overview; a link to the page it once had lands there."""
+        return RedirectResponse("/", status_code=301)
 
     @r.get("/today", response_class=HTMLResponse)
     def today(request: Request, facility: str | None = None):
