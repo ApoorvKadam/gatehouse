@@ -8,7 +8,7 @@ Gatehouse finds that work, keeps the evidence, and closes an item only when the 
 
 [![A tenant says she paid and her unit is still going to auction; Gatehouse reads the case and the desk writes the reply from the records](desk/static/film/gatehouse-walkthrough.jpg)](desk/static/film/gatehouse-walkthrough.mp4)
 
-A walkthrough of every screen in use, recorded on the live preview with one live run of our agent (click the frame for the video, or open `/film` on the preview, which has sound and a chapter list). The overview plays a 30 second silent cut of it. The music is "Classical vibes 3" from Mixkit, used under Mixkit's free music licence.
+A three-minute walkthrough of the screens, recorded on the live preview with one live run of our agent. The overview plays it with sound. Click the frame to open the video here. The music is "Closer" from Mixkit, used under Mixkit's free music licence.
 
 ## Where it fits
 
@@ -42,6 +42,7 @@ Sources:
 | ![The overview, opening on the film](docs/screens/overview.png) **Overview.** What Gatehouse is, with the film and each built part. | ![Today's worklist](docs/screens/today.png) **Today.** Every open item at a facility, worst first, with what proves it done. |
 | ![A held payment](docs/screens/payment.png) **A held payment.** What the tenant agreed to, what was sent and heard back, and what the FMS shows now. | ![The account record](docs/screens/record.png) **The record.** Four lanes: what the FMS said, what Gatehouse observed and concluded, and what a person decided. |
 | ![A Florida lien file](docs/screens/lien.png) **A lien file.** Every requirement with its basis and evidence, and what changed since the last evaluation. | ![An access item](docs/screens/access.png) **An access item.** The recorded rule, the FMS task, and what the FMS shows unit by unit. |
+| ![Messages, with our agent's case notes](docs/screens/messages.png) **Messages.** A tenant's text, the steps it went through, and the case notes our agent wrote under them. | ![The reminder check](docs/screens/reminder-check.png) **Reminder check.** Which past-due tenants a collections text should not go to, and why. |
 
 ## What is built and what is next
 
