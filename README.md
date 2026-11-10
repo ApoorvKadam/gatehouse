@@ -110,6 +110,21 @@ A red line is something that must never happen. Examples are a duplicate charge,
 
 A wrong build is the same run with one check taken out, such as a build that cannot tell visitors apart. The checks must catch it, or the build fails.
 
+### Our agent's reading of tenants' texts, measured
+
+The build's evaluation plays the agent from a script, so it cannot say how well the real agent reads a tenant. A second run, by hand, does. It takes 42 synthetic texts, types each as a tenant through a visitor of its own, and has the real agent read it. The labels were written before the first run. None of the texts was used to write the agent's instructions, and the set is not tuned on: a test keeps it apart from them.
+
+| What was measured | Result |
+|---|---|
+| A text that asks the facility to wait got the right kind of request | 29 of 29 |
+| A text that asks for nothing got no request, including 3 injection attempts | 13 of 13 |
+| A request the desk dropped because its quote was not in the text | 0 of 42 |
+| A reply proposed where the records can answer the tenant | 25 of 25 (25 of 25 before the agent read for requests) |
+| A reply to a "wrong number" text that carried a fact about the account | 0 of 4 |
+| Case notes that guess a tenant's gender | 1 of 42 (20 of 42 before the agent was told not to) |
+
+The one slip: a tenant wrote "my husband", and the note said "her husband". The run was on Nov 9, 2026 and cost about 8 cents. It is one run of 42 texts about one tenant, written by the builder. It shows how the agent reads these texts. It does not show how it reads a real operator's mail. To run it again, put the agent's key in the environment as for the desk, then run `python -m desk.evaluate_reading`. The report for every text is `docs/reading-evaluation.json`.
+
 The texts part runs hostile texts through the preview's own app with the model played from a script. The desk, the simulator, the limits and the pages are real. How the real model behaves on the same texts is checked on the live link, not in the build.
 
 ## How it is built
