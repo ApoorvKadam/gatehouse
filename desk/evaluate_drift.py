@@ -151,9 +151,9 @@ def drift_part(url: str):
     search, sent, amount, no_time = (run_experiment(url, exp, judge) for exp in (exp_renamed_on_search, exp_renamed_on_submission, exp_amount, exp_no_time))
     told = "Engineering: one row on Today until a person reviews it"
     rows = [
-        ("A status renamed in a search", "disagree", "Payments Search writes a confirmed payment's SUCCEEDED as SETTLED",
-         "keeps SETTLED as written; the payment stays confirmed from the earlier reading", told, search["kept"] and search["noted"]),
-        ("A status renamed in a payment answer", "late", "Make Payment charges the card, then answers SETTLED",
+        ("A status renamed in a search", "disagree", "Payments Search gives a confirmed payment a new status name its documentation does not list",
+         "keeps the new name as written; the payment stays confirmed from the earlier reading", told, search["kept"] and search["noted"]),
+        ("A status renamed in a payment answer", "late", "Make Payment charges the card, then answers with that new status name",
          "holds it as outcome unknown, hands it to a person after the wait, refuses a second try", told, sent["held"] and sent["cards"] == 1 and sent["noted"]),
         ("An amount sent as dollars in text", "money", "Payments Search writes 10000 cents as \"100.00\"",
          "reads none of that lease's payments rather than round the amount", told, amount["refused"] and amount["noted"]),
@@ -169,7 +169,7 @@ def drift_part(url: str):
     with broken(CubbyAdapter, "_payment", coerces_the_amount(CubbyAdapter._payment)):
         run_experiment(url, exp_amount, b)
     controls = [("A build that reads an undocumented status as the nearest documented one", "Maps a status", "disagree",
-                 "keeps SETTLED as SUCCEEDED, so a status nobody has checked counts as money that moved", a.unlisted[0] > 0),
+                 "reads the new name as succeeded, so a status nobody has checked counts as money that moved", a.unlisted[0] > 0),
                 ("A build that turns an amount sent as text into cents", "Coerces an amount", "money",
                  "reads \"100.00\" as 100 cents, a hundredth of the payment", b.amount[0] > 0)]
     return rows, lines, controls

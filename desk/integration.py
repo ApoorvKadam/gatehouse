@@ -79,6 +79,6 @@ def say(row: FmsObservation) -> str:
     what = {"unlisted value": f"carried a {field} the FMS documentation does not list for that call",
             "not whole cents": f"carried an {field} that is not a whole number of cents",
             }.get(row.kind, f"left out {field}, which the documentation says that call returns")
-    times = "once" if row.count == 1 else f"{row.count} times"
-    return (f"{CALLS.get(row.endpoint, 'An answer')} {what}. It has come {times}. "
+    times = "one answer" if row.count == 1 else f"{row.count} answers"
+    return (f"{CALLS.get(row.endpoint, 'An answer')} {what}. Seen in {times} so far. "
             + (KEPT_WITHOUT_TIME if row.field == "createdAt" else CONSEQUENCE.get((row.endpoint, row.kind), "")))
