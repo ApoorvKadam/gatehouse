@@ -629,7 +629,11 @@ class Investigation:
             self._read_file()
         self.lookups.text_in(self.inbound)
         body = self.inbound.body.replace("<", "&lt;")                       # the tenant's words cannot close the block they sit in
-        messages: list = [{"role": "user", "content": f'<untrusted_input record_id="text:in:{self.inbound.id}">\n{body}\n</untrusted_input>'}]
+        content = f'<untrusted_input record_id="text:in:{self.inbound.id}">\n{body}\n</untrusted_input>'
+        if self.inbound.attachment in intake.SAMPLES:
+            # only a text that carries a file gets this line, so the reading of every other text is unchanged
+            content += f"\n{intake.FILE_NOTE}"
+        messages: list = [{"role": "user", "content": content}]
         sent_back = False
         for turn in range(MAX_TURNS):
             if not self._beat():

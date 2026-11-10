@@ -55,6 +55,9 @@ SYSTEM = """<role>You read one file that a tenant sent to a self-storage facilit
 - Call report_file once.
 </rules>"""
 ASK = "Report what this file shows."
+# the line the text's reading gets when a file came with the text: it never sees the file, and staff see the file's reading apart
+FILE_NOTE = ("<file_note>The tenant also sent a file. The desk reads it separately and shows it to staff beside your notes. You cannot see it: "
+             "write your notes from the text and the records, and leave the file out of them.</file_note>")
 
 
 @lru_cache(maxsize=None)
