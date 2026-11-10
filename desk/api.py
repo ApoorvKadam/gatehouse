@@ -90,7 +90,7 @@ class InvestigateIn(BaseModel):
 
 
 class PlayIn(BaseModel):
-    sender: str = Field(min_length=1, max_length=16, description="who is texting: dana, priya or unknown; the number comes from the desk")
+    sender: str = Field(min_length=1, max_length=16, description="who is texting: dana, priya, omar or unknown; the number comes from the desk")
     body: str = Field(max_length=2000, description="what the tenant types: 1 to 320 characters once control characters are removed")
     request_id: str = Field(min_length=8, max_length=64,
                             description="chosen by the screen for each press and kept for its retries; sending it twice is one text")
