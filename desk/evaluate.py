@@ -31,6 +31,7 @@ from .db import make_session_factory
 from .models import AccessPolicy, Facility, WorkItem
 from . import sales
 from .adapter.base import FMSError
+from .evaluate_reminders import EARLY_PAYMENT, LIFTED, STOP_CLEAR, UNREAD_CLEAR, WRONG_FACT, reminders_part
 from .evaluate_texts import CLAIM, OWN, STOP, TWICE, texts_part
 
 KEY = "sim_org_northstar_full"
@@ -640,6 +641,13 @@ GUARDS = {
     CLAIM: "disagree",
     STOP: "no",
     TWICE: "twice",
+    # the Reminder check (desk/evaluate_reminders.py): a tenant who said STOP shown clear, an account shown clear after a failed read, a hold
+    # lifted, a fact about the account sent to a wrong number, and a hold ended by a payment made before the text
+    STOP_CLEAR: "no",
+    UNREAD_CLEAR: "no",
+    LIFTED: "disagree",
+    WRONG_FACT: "disagree",
+    EARLY_PAYMENT: "money",
 }
 
 
@@ -671,6 +679,10 @@ def evaluate(url: str) -> Report:
     report.rows += [Row("Texts", *row) for row in text_rows]
     report.red_lines += [red_line("Texts", *line) for line in text_lines]
     report.controls += [Control(*control) for control in text_controls]
+    reminder_rows, reminder_lines, reminder_controls = reminders_part(url)
+    report.rows += [Row("Reminder check", *row) for row in reminder_rows]
+    report.red_lines += [red_line("Reminder check", *line) for line in reminder_lines]
+    report.controls += [Control(*control) for control in reminder_controls]
     return report
 
 

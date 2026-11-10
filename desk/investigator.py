@@ -544,10 +544,12 @@ def check_reminder(inbound: InboundMessage, ask) -> tuple[dict | None, dict | No
     if not isinstance(ask, dict) or ask.get("hold") is not True:
         return None, None
 
-    def dropped(why: str) -> tuple[None, dict]:
-        return None, {"asked": True, "accepted": False, "why": why}
-
     kind, text_id, quote = ask.get("kind"), ask.get("text_id"), ask.get("quote")
+    asked = kind if kind in REMINDER_KINDS else None        # what the agent said the tenant's words mean, kept even when the request itself is refused
+
+    def dropped(why: str) -> tuple[None, dict]:
+        return None, {"asked": True, "accepted": False, "why": why, "kind": asked}
+
     if kind not in REMINDER_KINDS:
         return dropped("the kind is not one of the allowed values")
     if text_id != f"text:in:{inbound.id}":
@@ -560,7 +562,7 @@ def check_reminder(inbound: InboundMessage, ask) -> tuple[dict | None, dict | No
     if not 4 <= len(words_kept) <= MAX_QUOTE:
         return dropped("the quote is not in that text word for word")
     return ({"kind": kind, "text_id": text_id, "quote": words_kept, "text_at": inbound.received_at.isoformat(timespec="seconds")},
-            {"asked": True, "accepted": True, "why": ""})
+            {"asked": True, "accepted": True, "why": "", "kind": asked})
 
 
 def verify(session: Session, scope: Scope, packet: dict, fresh_for: timedelta = SALE_FRESH_FOR) -> dict:

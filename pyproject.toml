@@ -27,4 +27,4 @@ include = ["desk*", "fmssim*"]
 testpaths = ["tests"]
 
 [tool.setuptools.package-data]
-desk = ["reference/*.csv", "templates/*.html", "static/*"]
+desk = ["reference/*.csv", "templates/*.html", "static/*", "reading_set.json"]

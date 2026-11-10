@@ -104,11 +104,28 @@ The worker reads all of it from the FMS on each pass and keeps one verdict per a
 
 ## Evaluation
 
-Every image build runs `python -m desk.evaluate` against its own throwaway simulator and writes the report that the `/evaluation` page shows. It has four parts: payments, access, lien sales, and texts typed as a tenant. A part holds scenarios (what the FMS did, what Gatehouse did, who hears what), red lines and wrong builds.
+Every image build runs `python -m desk.evaluate` against its own throwaway simulator and writes the report that the `/evaluation` page shows. It has five parts: payments, access, lien sales, texts typed as a tenant, and the reminder check. A part holds scenarios (what the FMS did, what Gatehouse did, who hears what), red lines and wrong builds.
 
 A red line is something that must never happen. Examples are a duplicate charge, a write to the FMS other than a task, a text sent after STOP, and one visitor's text reaching another. Each is counted from the simulator's record or the desk's rows, never from what the desk believes. It is shown with what it was counted over, for example 0 of 174 requests. A line above zero fails the build, and so does a line that nothing was checked against.
 
 A wrong build is the same run with one check taken out, such as a build that cannot tell visitors apart. The checks must catch it, or the build fails.
+
+The reminder check part runs eleven scenarios: STOP, a payment arrangement the FMS has not paused, a lien file, a payment in progress, an FMS that cannot be read, a clear account, a promise to pay in the tenant's own words, an attempt to lift the hold, a payment made before the text, a payment made after it, and a text that says wrong number. Its five red lines are counted from the simulator's record: a tenant who texted STOP shown clear, an account shown clear after a failed reading, a hold lifted, a fact about the account texted to a wrong number, and a hold ended by a payment dated before the text. Its two wrong builds treat a failed reading as clear and date a payment by when the desk first looked at it.
+
+### Our agent's reading of tenants' texts, measured
+
+The build's evaluation plays the agent from a script, so it cannot say how well the real agent reads a tenant. A second run, by hand, does. It takes 42 synthetic texts, types each as a tenant through a visitor of its own, and has the real agent read it. The labels were written before the first run. None of the texts was used to write the agent's instructions, and the set is not tuned on: a test keeps it apart from them.
+
+| What was measured | Result |
+|---|---|
+| A text that asks the facility to wait got the right kind of request | 29 of 29 |
+| A text that asks for nothing got no request, including 3 injection attempts | 13 of 13 |
+| A request the desk dropped because its quote was not in the text | 0 of 42 |
+| A reply proposed where the records can answer the tenant | 25 of 25 (25 of 25 before the agent read for requests) |
+| A reply to a "wrong number" text that carried a fact about the account | 0 of 4 |
+| Case notes that guess a tenant's gender | 1 of 42 (20 of 42 before the agent was told not to) |
+
+The one slip: a tenant wrote "my husband", and the note said "her husband". The run was on Nov 9, 2026 and cost about 8 cents. It is one run of 42 texts about one tenant, written by the builder. It shows how the agent reads these texts. It does not show how it reads a real operator's mail. To run it again, put the agent's key in the environment as for the desk, then run `python -m desk.evaluate_reading`. The report for every text is `docs/reading-evaluation.json`.
 
 The texts part runs hostile texts through the preview's own app with the model played from a script. The desk, the simulator, the limits and the pages are real. How the real model behaves on the same texts is checked on the live link, not in the build.
 
