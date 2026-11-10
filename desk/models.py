@@ -448,3 +448,13 @@ class AccessView(Base):
     lease_id: Mapped[int] = mapped_column(ForeignKey("leases.id"), primary_key=True)
     observed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     data: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class ReminderCheck(Base):
+    """The latest complete reminder check for one past-due lease, as the worker took it: may a collections text go to this tenant, and if not,
+    why. Pages and the API read this, never the FMS."""
+
+    __tablename__ = "reminder_checks"
+    lease_id: Mapped[int] = mapped_column(ForeignKey("leases.id"), primary_key=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    data: Mapped[dict] = mapped_column(JSON, default=dict)

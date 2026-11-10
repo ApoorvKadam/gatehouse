@@ -52,6 +52,7 @@ Sources:
 | Access and overlocks | Built | The FMS's gate code and unit locks match the facility's recorded lockout rule, in both directions, on a complete reading |
 | Lien sales | Built | A sale still listed after the account was paid is cancelled in the FMS (auctions/search shows it), and an outside listing is withdrawn by that site's own report |
 | Messages | Built | A tenant's text is matched to a tenant through the FMS, never by a number someone typed, and every STOP is honoured. "Explore with our agent" reads that tenant's records and writes case notes; a staff review of a listed sale is linked or asked for, and read back from the FMS; the tenant gets a short acknowledgement whose every sentence the desk wrote from a verified record |
+| Reminder check | Built | Every past-due account has a verdict from a complete reading of the FMS: a collections text may go, or must not, with the reason. No tenant who texted STOP, is marked opted out or undeliverable, is paying under an arrangement, has a payment being checked or a lien file begun is shown as clear to text |
 | Leads and move-ins | Planned | A missed call counts as recovered only when a specific lease is linked to it |
 | Rent changes | Planned | An approved increase is saved, noticed and charged in the FMS, with what happened after |
 
@@ -89,6 +90,14 @@ The agent may also propose an acknowledgement for the tenant. It does not write 
 The case notes are written by a language model from the records the desk holds. The desk checks what it can and shows the records beside the notes: the sale the notes rely on must be open and read lately, and every amount and date in the notes must appear in a record. A run costs about a fifth of a cent. The preview allows ten explorations per visitor per day and one dollar a day in all.
 
 On the preview a visitor can also play the tenant: pick Dana, Priya or an unknown sender and type a text. The desk keeps it the way it keeps a text from the webhook, and matches it to a tenant by the number it comes from, never by what it says. The visitor supplies only the words. The text is shown only to the visitor who typed it. A STOP they type stops sends in their own space and nowhere else, and an exploration of their text never asks the FMS for a new task.
+
+## Reminder check
+
+Gatehouse does not send reminders and does not decide when one is due; the operator's reminder tool does both. The Reminder check page and an API endpoint (`GET /api/facilities/{facility}/reminder-check`) answer the question in front of it: for every past-due account, may a collections text go to this tenant today, and if not, why not.
+
+A text must not go to a tenant who texted STOP, whom the FMS marks opted out or undeliverable, or whose number it cannot read. Nor to one whose payment is still being checked at the desk or is pending at the FMS, whose unit has a lien file or a sale, or who has a payment arrangement or other exemption on any of their units. An arrangement is read against the flag Cubby documents for pausing its own collections texts: an arrangement that does not pause them is shown as a catch, because the FMS will keep texting a tenant who is on a payment plan. Every reason that applies is kept, and the first is the headline. When a person has to settle something, the check holds the text rather than guess.
+
+The worker reads all of it from the FMS on each pass and keeps one verdict per account, so the page and the API never ask the FMS. Quiet hours are not in a verdict, because they depend on the moment a text goes out; the page says when it is quiet at the facility. Gatehouse sees only what the FMS and the desk record. A text the operator's tool sent that the FMS keeps no record of is not visible to it, because Cubby documents no way to look a sent text up.
 
 ## Evaluation
 

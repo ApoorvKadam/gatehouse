@@ -25,9 +25,10 @@ from .db import utcnow
 from .liens import on
 from .models import (
     AccessPolicy, AccessView, AgentRun, CaseEvent, DelinquencyCase, DeskBinding, Facility, IdentityCheck, Lease, LedgerSnapshot,
-    LienEvaluation, LienEvidence, PaymentCommand, PaymentProposal, WorkItem,
+    LienEvaluation, LienEvidence, PaymentCommand, PaymentProposal, ReminderCheck, WorkItem,
 )
 from .payments import tenant_message
+from .messaging import in_quiet_hours
 from .sequence import sequence
 from .wording import TROUBLES, plain, words
 
@@ -311,6 +312,16 @@ class Pages:
         rows = s.scalars(select(Facility).order_by(Facility.id)).all()
         return [f for f in rows if binding is None or f.provider_id in binding.facility_ids]
 
+    def reminder_checks(self, s: Session, facility: Facility) -> list[dict]:
+        """The worker's last verdict for each past-due account at a facility: the texts that must not go first, since those are what the
+        check is for, then the clear ones. Within each, the largest balance first."""
+        rows = []
+        for lease in s.scalars(select(Lease).where(Lease.facility_id == facility.id).order_by(Lease.id)):
+            check = s.get(ReminderCheck, lease.id)
+            if check is not None:
+                rows.append({**check.data, "lease": lease.provider_id, "observed_at": check.observed_at})
+        return sorted(rows, key=lambda row: (row["state"] != "hold", -row["owed"]))
+
     def today(self, s: Session, facility: Facility) -> list[Item]:
         items: list[Item] = []
         # a paid account can still have a lien file in motion, so every case is read; only lien work shows for those
@@ -539,6 +550,21 @@ def router(pages: Pages) -> APIRouter:
             items = pages.today(s, current)
             return templates.TemplateResponse(request, "today.html", {
                 "facilities": facilities, "facility": current, "items": items, "local": local, "nav": "today"})
+
+    @r.get("/reminder-check", response_class=HTMLResponse)
+    def reminder_check_page(request: Request, facility: str | None = None):
+        """The check in front of a reminder: which past-due tenants a collections text must not go to, and why. Read from the worker's last pass."""
+        with session() as s:
+            facilities = pages.facilities(s)
+            if not facilities:
+                raise HTTPException(503, "No facility has been read from the FMS yet")
+            current = next((f for f in facilities if f.provider_id == facility), None) if facility is not None else facilities[0]
+            if current is None:
+                raise HTTPException(404, "No such facility")
+            rows = pages.reminder_checks(s, current)
+            return templates.TemplateResponse(request, "reminder_check.html", {
+                "facilities": facilities, "facility": current, "rows": rows, "holds": sum(1 for row in rows if row["state"] == "hold"),
+                "quiet": in_quiet_hours(current, utcnow()), "money": money, "nav": "reminder-check"})
 
     @r.get("/inbox", response_class=HTMLResponse)
     def inbox_page(request: Request, facility: str | None = None, text: int | None = None):

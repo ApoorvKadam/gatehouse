@@ -107,6 +107,7 @@ class ProviderExemption:
     end_date: str
     pause_overlock: bool
     note: str | None
+    pause_collections_messages: bool = False      # the exemption pauses the FMS's own collections texts for the lease
 
 
 @dataclass(frozen=True)
