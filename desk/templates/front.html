@@ -17,11 +17,10 @@
       </div>
     </div>
     <figure class="film">
-      <video id="film" autoplay muted loop playsinline preload="metadata" poster="{{ url_for('static', path='film/gatehouse-teaser.jpg') }}" aria-describedby="film-caption">
-        <source src="{{ url_for('static', path='film/gatehouse-teaser.webm') }}" type="video/webm">
-        <source src="{{ url_for('static', path='film/gatehouse-teaser.mp4') }}" type="video/mp4">
+      <video id="film" controls preload="metadata" playsinline poster="{{ url_for('static', path='film/gatehouse-walkthrough.jpg') }}" aria-label="Gatehouse in use: a walkthrough of every screen">
+        <source src="{{ url_for('static', path='film/gatehouse-walkthrough.mp4') }}" type="video/mp4">
       </video>
-      <figcaption id="film-caption">A tenant says she paid, and her unit is still going to auction. Our agent reads the case, and the desk writes the reply from the records. <a href="/film">Watch the full walkthrough, {{ film_length }}, with sound {% include "icons/arrow-right.svg" %}</a></figcaption>
+      <button class="button primary film-play" type="button" aria-controls="film">{% include "icons/play.svg" %}Play with sound <span id="film-length"></span></button>
     </figure>
   </div>
 </section>
@@ -236,6 +235,29 @@
 </section>
 {% endif %}
 
+{% if check_rows %}
+<section class="feature">
+  <div class="wrap">
+    <div data-reveal>
+      <p class="kicker" style="--c:var(--lilac)">{% include "icons/message-square.svg" %}Reminder check</p>
+      <h2>A reminder tool should not text a tenant who asked to stop, or who is on a payment plan.</h2>
+      <p>Your reminder tool decides who to text. Before it does, Gatehouse checks each past-due account against what the FMS and the desk know: a STOP, a payment still being checked, a lien file, a payment arrangement. A tenant who must not be texted, or whose text waits for a person, comes back with the reason. Gatehouse sends nothing.</p>
+      <a class="open" href="/reminder-check">Open the reminder check {% include "icons/arrow-right.svg" %}</a>
+    </div>
+    <div class="frame" data-reveal>
+      <div class="frame-bar"><span><b>Reminder check</b> &middot; {{ facility.name }}</span></div>
+      <div class="frame-body">
+        <dl class="kv">
+          {% for r in check_rows %}
+          <dt>Unit {{ r.unit }}</dt><dd><b>{{ r.label }}.</b> {{ r.why|readable }}</dd>
+          {% endfor %}
+        </dl>
+      </div>
+    </div>
+  </div>
+</section>
+{% endif %}
+
 <section class="feature tight">
   <div class="wrap">
     <div data-reveal>
@@ -297,4 +319,20 @@
     </ol>
   </div>
 </section>
+<script>
+  // the visitor starts the film and the sound is theirs; once it plays, bring the whole picture into view
+  (function () {
+    var v = document.getElementById("film"), b = document.querySelector(".film-play"), n = document.getElementById("film-length");
+    if (!v || !b) return;
+    function length() { if (!isFinite(v.duration)) return; var t = Math.round(v.duration); n.textContent = Math.floor(t / 60) + ":" + ("0" + (t % 60)).slice(-2); }
+    v.addEventListener("loadedmetadata", length); length();
+    b.addEventListener("click", function () { v.play(); });
+    v.addEventListener("play", function () {
+      b.hidden = true;
+      var r = v.getBoundingClientRect();
+      if (r.top < 0 || r.bottom > window.innerHeight) v.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    v.addEventListener("ended", function () { b.hidden = false; });
+  })();
+</script>
 {% endblock %}

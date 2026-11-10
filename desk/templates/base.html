@@ -50,10 +50,5 @@
   marked.forEach(function (el) { seen.observe(el); });
 })();
 </script>
-{% if nav == 'front' %}<script>
-  // the short film plays on its own, silent, unless the visitor asked for less motion; then it waits on its poster with controls
-  (function () { var v = document.getElementById("film"); if (!v) return;
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) { v.removeAttribute("autoplay"); v.pause(); v.controls = true; } })();
-</script>{% endif %}
 </body>
 </html>

@@ -193,11 +193,15 @@ def test_the_front_page_shows_every_built_feature_with_a_link_into_it(fms_url, s
         page = visitor.get("/").text
         for heading in ("A payment whose answer was lost is held, not retried.", "Every fact keeps its source.",
                         "A payment that comes back reopens the account.", "A lien file goes back to review when the account has changed.",
-                        "Where no rules are reviewed, the file goes to counsel."):
+                        "Where no rules are reviewed, the file goes to counsel.",
+                        "A reminder tool should not text a tenant who asked to stop, or who is on a payment plan."):
             assert heading in page
-        for link in ("/today", "/payments/1", "/payments/2", "/accounts/2/lien", "/accounts/6/lien"):
+        for link in ("/today", "/payments/1", "/payments/2", "/accounts/2/lien", "/accounts/6/lien", "/reminder-check"):
             assert f'href="{link}"' in page and visitor.get(link).status_code == 200
         assert "cents" not in page   # amounts read as dollars
+        # the excerpt is the check's own rows: the tenant who texted STOP, and the arrangement the FMS has not paused
+        assert "<b>Must not be texted.</b> This number texted STOP" in page
+        assert "<b>Not paused in the FMS.</b> The FMS has a payment arrangement" in page
 
 
 def test_findings_are_written_in_dollars_and_dates_and_quote_records_as_they_are():
@@ -272,38 +276,26 @@ def test_access_shows_on_today_and_its_own_page_without_any_credential(fms_url, 
         assert visitor.get("/access/99999").status_code == 404
 
 
-def test_the_overview_plays_the_short_film_and_links_the_full_walkthrough(fms_url, sim):
+def test_the_overview_plays_the_whole_walkthrough_and_the_sound_is_the_visitors_to_start(fms_url, sim):
     with TestClient(preview(fms_url)) as visitor:
         page = visitor.get("/").text
-        assert "film/gatehouse-teaser.mp4" in page and 'href="/film"' in page
-        assert "data-phone" not in page and "gatehouse-film" not in page         # the old portrait cut and film are gone
-
-
-def test_the_walkthrough_page_has_controls_and_a_chapter_for_each_part(fms_url, sim):
-    with TestClient(preview(fms_url)) as visitor:
-        page = visitor.get("/film")
-        assert page.status_code == 200
-        video = page.text.split('<video id="walk"')[1].split(">")[0]
-        assert "controls" in video and "autoplay" not in video             # the sound is the visitor's to start
-        for chapter in ("A tenant writes in", "What it checks", "Today", "Payments", "Access", "Lien files", "Lien sales", "Messages", "Evaluation", "Operations", "Summary"):
-            assert f"</span> {chapter}</button>" in page.text, chapter
-        assert "minutes" in page.text and 'href="/inbox"' in page.text
+        video = page.split('<video id="film"')[1].split(">")[0]
+        assert "controls" in video and "autoplay" not in video and "muted" not in video and "loop" not in video
+        assert "film/gatehouse-walkthrough.mp4" in page and 'class="button primary film-play"' in page
+        moved = visitor.get("/film", follow_redirects=False)                                 # no second page to find the film on
+        assert 'href="/film"' not in page and moved.status_code == 301 and moved.headers["location"] == "/"
+        assert "gatehouse-teaser" not in page and "gatehouse-film" not in page
 
 
 def test_the_film_files_are_there_and_small_enough_to_ship():
-    import json
     from pathlib import Path
     folder = Path(__file__).parent.parent / "desk" / "static" / "film"
     sizes = {p.name: p.stat().st_size for p in folder.iterdir()}
-    assert {"gatehouse-teaser.mp4", "gatehouse-teaser.webm", "gatehouse-teaser.jpg", "gatehouse-walkthrough.mp4",
-            "gatehouse-walkthrough.jpg", "chapters.json"} <= set(sizes)
-    assert sizes["gatehouse-teaser.mp4"] < 6_000_000 and sizes["gatehouse-walkthrough.mp4"] < 25_000_000
-    cuts = json.loads((folder / "chapters.json").read_text())
-    starts = [c["t"] for c in cuts["chapters"]]
-    assert starts[0] == 0 and starts == sorted(starts) and starts[-1] < cuts["total"]
+    assert set(sizes) == {"gatehouse-walkthrough.mp4", "gatehouse-walkthrough.jpg"}
+    assert sizes["gatehouse-walkthrough.mp4"] < 95_000_000 and sizes["gatehouse-walkthrough.jpg"] < 400_000      # the film is 2560x1440; GitHub refuses a file over 100 MB
 
 
-def test_the_walkthrough_answers_a_byte_range_so_a_chapter_can_be_sought(fms_url, sim):
+def test_the_walkthrough_answers_a_byte_range_so_the_player_can_seek(fms_url, sim):
     with TestClient(preview(fms_url)) as visitor:
         got = visitor.get("/static/film/gatehouse-walkthrough.mp4", headers={"Range": "bytes=100-199"})
         assert got.status_code == 206 and len(got.content) == 100
