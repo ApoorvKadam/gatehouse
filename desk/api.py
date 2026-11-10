@@ -33,6 +33,7 @@ from .db import bind_to_fms, make_session_factory, refresh_binding
 from .messaging import inbox, match_pending, outbound_view, play_tenant, receive_text, send_text, unrouted
 from .models import (
     AgentRun, CaseEvent, DelinquencyCase, DeskBinding, Facility, InboundMessage, Lease, LedgerSnapshot, LienEvaluation, PaymentCommand,
+    ReminderCheck,
 )
 from .payments import (
     IdentityClaim, PaymentRefused, PaymentService, check_identity, collected, confirm, propose, tenant_message,
@@ -273,6 +274,19 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
     def facility_queue(facility_id: str, session: Session = Depends(db), _: str = Depends(viewer)):
         check_facility(session, facility_id)
         return {"rows": [r.__dict__ for r in queue(session, facility_id)], "collected": collected(session, adapter.provider, facility_id)}
+
+    @app.get("/api/facilities/{facility_id}/reminder-check")
+    def facility_reminder_check(facility_id: str, session: Session = Depends(db), _: str = Depends(viewer)):
+        """The check in front of a reminder tool: for each past-due lease, whether a collections text may go and why not, as the worker last read
+        it from the FMS. Gatehouse sends nothing; the tool that does can ask here first."""
+        check_facility(session, facility_id)
+        facility = session.scalar(select(Facility).where(Facility.provider_id == facility_id))
+        rows = []
+        for lease in session.scalars(select(Lease).where(Lease.facility_id == facility.id).order_by(Lease.id)) if facility is not None else []:
+            check = session.get(ReminderCheck, lease.id)
+            if check is not None and check.data.get("state"):
+                rows.append({"lease": lease.provider_id, "customer": lease.provider_customer_id, **check.data, "read_at": check.observed_at})
+        return {"rows": rows}
 
     def owns(binding: DeskBinding, text: InboundText) -> bool:
         """A text belongs to this desk when its facility is one the FMS key sees. A text with no facility (a number several

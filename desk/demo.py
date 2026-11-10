@@ -23,6 +23,7 @@ from .lien_files import evaluate_case, record_evidence
 from .messaging import match_pending, receive_text, send_text
 from .models import AccessPolicy, DelinquencyCase, DemoSeed, Facility, InboundMessage, Lease, LedgerSnapshot
 from .payments import IdentityClaim, PaymentService, check_identity, confirm, propose
+from .reminder_check import reconcile_reminder_checks
 from .sales import reconcile_sales
 
 log = logging.getLogger("desk.demo")
@@ -59,6 +60,9 @@ def build(factory: sessionmaker[Session], adapter: FMSAdapter, fms_base_url: str
         for facility in session.scalars(select(Facility).where(Facility.provider_id.in_((ORLANDO, ALBANY))).order_by(Facility.id)):
             reconcile_sales(session, adapter, facility, run_id, feed_url)
         tenant_texts(session, adapter, sim)
+        # after the texts, so a STOP a tenant sent is counted before the world opens
+        for facility in session.scalars(select(Facility).where(Facility.provider_id.in_((ORLANDO, ALBANY))).order_by(Facility.id)):
+            reconcile_reminder_checks(session, adapter, facility)
         session.add(DemoSeed(id=1))
         session.commit()
     sim.close()
