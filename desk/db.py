@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+import threading
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
@@ -12,8 +13,26 @@ class Base(DeclarativeBase):
     pass
 
 
-def utcnow() -> datetime:
+_last_stamp = datetime.min
+_clock_lock = threading.Lock()
+
+
+def _system_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def utcnow() -> datetime:
+    """The desk's clock. It never reads earlier than a stamp it gave before: the case logic compares what it stamped earlier with
+    what it stamps now (a reversal "after the case was last settled"), and a system clock that is set back, as a virtual machine
+    does when it syncs its clock, must not make a later stamp read earlier. A step back costs a few moments of stamps one
+    microsecond apart, nothing more."""
+    global _last_stamp
+    with _clock_lock:
+        now = _system_now()
+        if now <= _last_stamp:
+            now = _last_stamp + timedelta(microseconds=1)
+        _last_stamp = now
+        return now
 
 
 def add_missing_columns(engine) -> None:
