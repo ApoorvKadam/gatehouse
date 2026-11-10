@@ -10,6 +10,7 @@ from desk.adapter.cubby import CubbyAdapter
 from desk.api import create_app
 from desk.config import Settings
 from desk.db import Base
+from desk.models import DelinquencyCase, Lease
 
 from .conftest import FULL_KEY, ORLANDO
 
@@ -19,6 +20,12 @@ def preview(fms_url, **kw):
                         reconcile_every_seconds=60, operator_token="op-token", staff_token="staff-token",
                         public_view=True, demo_seed=True, **kw)
     return create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 5.0), start_worker=False)
+
+
+def account_of(app, unit: str) -> int:
+    """The number the desk gave a unit's account. Numbers follow the order the cases were opened, so a new seeded tenant moves them."""
+    with app.state.session_factory() as s:
+        return s.scalar(select(DelinquencyCase.id).join(Lease, Lease.id == DelinquencyCase.lease_id).where(Lease.unit_name == unit))
 
 
 def counts(app) -> dict:
@@ -111,7 +118,7 @@ def test_a_lien_file_shows_its_state_as_of_its_evaluation_beside_the_balance_now
         # the tenant pays the rest at the counter; Gatehouse sees it on its next read of the FMS
         sim.post("/sim/payments/offline", {"allocations": {"lease_OkfrE0505": 11500}})
         assert desk.post("/api/reconcile").status_code == 200
-        lien = visitor.get("/accounts/2/lien").text
+        lien = visitor.get(f"/accounts/{account_of(app, 'E-505')}/lien").text
         assert "Account changed: re-review</span><span class=\"muted small\">as of" in lien and "Owed on this account, per the FMS: <b>$0.00</b>" in lien
         page = visitor.get("/today").text
         row = page[page.index("Lien file out of date"): page.index("Lien file out of date") + 1500]
@@ -121,8 +128,9 @@ def test_a_lien_file_shows_its_state_as_of_its_evaluation_beside_the_balance_now
 
 
 def test_the_seeded_lien_file_is_not_called_stale_by_its_own_payment(fms_url, sim):
-    with TestClient(preview(fms_url)) as visitor:
-        lien = visitor.get("/accounts/2/lien").text
+    app = preview(fms_url)
+    with TestClient(app) as visitor:
+        lien = visitor.get(f"/accounts/{account_of(app, 'E-505')}/lien").text
         assert "Account changed: re-review</span><span class=\"muted small\">as of" in lien and "not reflected here until the file is evaluated again" in lien
 
 
@@ -189,14 +197,16 @@ def test_the_front_page_says_where_it_fits_in_plain_words(fms_url, sim):
 
 
 def test_the_front_page_shows_every_built_feature_with_a_link_into_it(fms_url, sim):
-    with TestClient(preview(fms_url)) as visitor:
+    app = preview(fms_url)
+    with TestClient(app) as visitor:
         page = visitor.get("/").text
         for heading in ("A payment whose answer was lost is held, not retried.", "Every fact keeps its source.",
                         "A payment that comes back reopens the account.", "A lien file goes back to review when the account has changed.",
                         "Where no rules are reviewed, the file goes to counsel.",
                         "A reminder tool should not text a tenant who asked to stop, or who is on a payment plan."):
             assert heading in page
-        for link in ("/today", "/payments/1", "/payments/2", "/accounts/2/lien", "/accounts/6/lien", "/reminder-check"):
+        florida, albany = (f"/accounts/{account_of(app, unit)}/lien" for unit in ("E-505", "D-310"))
+        for link in ("/today", "/payments/1", "/payments/2", florida, albany, "/reminder-check"):
             assert f'href="{link}"' in page and visitor.get(link).status_code == 200
         assert "cents" not in page   # amounts read as dollars
         # the excerpt is the check's own rows: the tenant who texted STOP, and the arrangement the FMS has not paused
