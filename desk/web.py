@@ -517,6 +517,11 @@ def router(pages: Pages) -> APIRouter:
                                                     WorkItem.kind == sales.LISTED_PAID).order_by(WorkItem.id)).first()
             sale_outside = s.scalars(select(WorkItem).where(WorkItem.kind == sales.OUTSIDE, WorkItem.subject_id == sale.subject_id)
                                      .order_by(WorkItem.id.desc())).first() if sale else None
+            # the check's most telling rows: a tenant who must not be texted, then an arrangement the FMS has not paused
+            by_code = {}
+            for row in pages.reminder_checks(s, home):
+                by_code.setdefault(row["code"], row)
+            check_rows = [by_code[code] for code in ("consent", "unpaused", "lien", "payment") if code in by_code][:2]
             lanes = {}
             if record_case is not None:
                 for e in pages.record(s, s.get(DelinquencyCase, record_case)):
@@ -527,7 +532,7 @@ def router(pages: Pages) -> APIRouter:
                 "returned": returned, "returned_unit": s.get(Lease, returned.lease_id).unit_name if returned else None,
                 "changed": changed, "counsel": counsel, "counsel_state": counsel_state, "record_case": record_case,
                 "record_unit": record_unit, "lanes": lanes, "lane_names": LANES, "access": access, "access_lease": access_lease,
-                "sale": sale, "sale_outside": sale_outside, "sale_words": sales.STATUS_WORDS, "on": on,
+                "sale": sale, "sale_outside": sale_outside, "sale_words": sales.STATUS_WORDS, "on": on, "check_rows": check_rows,
                 "access_view": access_view.data if access_view else None, "access_policy": access_policy, "gate_rules": GATE_RULES,
                 "report": evaluation_report(),
                 "truth": pages.trace.get(s.get(Lease, held.lease_id).provider_id) if held else None,

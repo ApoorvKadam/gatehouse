@@ -236,6 +236,29 @@
 </section>
 {% endif %}
 
+{% if check_rows %}
+<section class="feature">
+  <div class="wrap">
+    <div data-reveal>
+      <p class="kicker" style="--c:var(--lilac)">{% include "icons/message-square.svg" %}Reminder check</p>
+      <h2>A reminder goes to a tenant who asked to stop, or who is on a payment plan.</h2>
+      <p>Your reminder tool decides who to text. Before it does, Gatehouse checks each past-due account against what the FMS and the desk know: a STOP, a payment still being checked, a lien file, a payment arrangement. A tenant who must not be texted, or whose text waits for a person, comes back with the reason. Gatehouse sends nothing.</p>
+      <a class="open" href="/reminder-check">Open the reminder check {% include "icons/arrow-right.svg" %}</a>
+    </div>
+    <div class="frame" data-reveal>
+      <div class="frame-bar"><span><b>Reminder check</b> &middot; {{ facility.name }}</span></div>
+      <div class="frame-body">
+        <dl class="kv">
+          {% for r in check_rows %}
+          <dt>Unit {{ r.unit }}</dt><dd><b>{{ r.label }}.</b> {{ r.why|readable }}</dd>
+          {% endfor %}
+        </dl>
+      </div>
+    </div>
+  </div>
+</section>
+{% endif %}
+
 <section class="feature tight">
   <div class="wrap">
     <div data-reveal>

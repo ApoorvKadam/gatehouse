@@ -193,11 +193,15 @@ def test_the_front_page_shows_every_built_feature_with_a_link_into_it(fms_url, s
         page = visitor.get("/").text
         for heading in ("A payment whose answer was lost is held, not retried.", "Every fact keeps its source.",
                         "A payment that comes back reopens the account.", "A lien file goes back to review when the account has changed.",
-                        "Where no rules are reviewed, the file goes to counsel."):
+                        "Where no rules are reviewed, the file goes to counsel.",
+                        "A reminder goes to a tenant who asked to stop, or who is on a payment plan."):
             assert heading in page
-        for link in ("/today", "/payments/1", "/payments/2", "/accounts/2/lien", "/accounts/6/lien"):
+        for link in ("/today", "/payments/1", "/payments/2", "/accounts/2/lien", "/accounts/6/lien", "/reminder-check"):
             assert f'href="{link}"' in page and visitor.get(link).status_code == 200
         assert "cents" not in page   # amounts read as dollars
+        # the excerpt is the check's own rows: the tenant who texted STOP, and the arrangement the FMS has not paused
+        assert "<b>Must not be texted.</b> This number texted STOP" in page
+        assert "<b>Not paused in the FMS.</b> The FMS has a payment arrangement" in page
 
 
 def test_findings_are_written_in_dollars_and_dates_and_quote_records_as_they_are():
