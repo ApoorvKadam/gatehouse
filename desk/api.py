@@ -31,6 +31,7 @@ from .lien_files import ensure_append_only, evaluate_case, record_evidence, repl
 from .liens import FL_R1, ValidationError
 from .db import bind_to_fms, make_session_factory, refresh_binding
 from .messaging import inbox, match_pending, outbound_view, play_tenant, receive_text, send_text, unrouted
+from .reminder_check import with_texts
 from .models import (
     AgentRun, CaseEvent, DelinquencyCase, DeskBinding, Facility, InboundMessage, Lease, LedgerSnapshot, LienEvaluation, PaymentCommand,
     ReminderCheck,
@@ -287,7 +288,8 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         for lease_id, customer_id, check in found:
             if check.data.get("state"):
                 rows.append({"lease": lease_id, "customer": customer_id, **check.data, "read_at": check.observed_at})
-        return {"rows": rows}
+        # what our agent read for the desk is in the rows; what it read for a visitor is not, because this answer is the desk's
+        return {"rows": with_texts(session, facility, rows) if facility is not None else rows}
 
     def owns(binding: DeskBinding, text: InboundText) -> bool:
         """A text belongs to this desk when its facility is one the FMS key sees. A text with no facility (a number several

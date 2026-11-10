@@ -22,7 +22,7 @@
           <td>
             <span class="chip {{ chips.get(r.code, 'plain') }}">{{ r.label }}</span>
             <p class="work-what">{{ r.why|readable }}</p>
-            {% for other in r.also %}<p class="work-proof">Also: {{ other|readable }}</p>{% endfor %}
+            {% for other in r.also %}<p class="work-proof">{{ other|readable }}</p>{% endfor %}
           </td>
           <td class="num">{{ r.overdue_days if r.overdue_days is not none else 'unknown' }}</td>
           <td class="num amount">{{ money(r.owed) }}</td>

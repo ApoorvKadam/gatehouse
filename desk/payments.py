@@ -714,7 +714,7 @@ class PaymentService:
         if row is None:
             # already reversed when first seen: when that happened is unknown, so no date is recorded
             row = ObservedPayment(provider=self.adapter.provider, provider_payment_id=p.provider_id, amount=p.amount,
-                                  status=p.status, lease_provider_ids=[lease.provider_id],
+                                  status=p.status, lease_provider_ids=[lease.provider_id], paid_at=p.created_at,
                                   status_changed_at=None if p.status in REVERSALS else utcnow())
             self.session.add(row)
             self.session.flush()
@@ -722,6 +722,7 @@ class PaymentService:
         if row.status != p.status:
             row.status_changed_at = utcnow()
         row.status, row.last_seen_at = p.status, utcnow()
+        row.paid_at = p.created_at or row.paid_at
         if lease.provider_id not in row.lease_provider_ids:
             row.lease_provider_ids = row.lease_provider_ids + [lease.provider_id]
         return False

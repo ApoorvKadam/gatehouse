@@ -64,6 +64,9 @@ def _as_data(block):
 
 
 INTENTS = ("sale_after_payment", "payment_status", "balance_question", "access_problem", "stop_request", "other")
+# what a tenant's own words can ask the facility to wait for before it texts them about a past-due balance
+REMINDER_KINDS = ("promise_to_pay", "dispute", "says_paid", "wrong_number", "hardship")
+MAX_QUOTE = 160
 # the prompt asks for a summary of 400 characters; one that runs past MAX_SUMMARY is cut at a sentence when it is kept, never refused
 MAX_SUMMARY, MAX_RECORDS = 600, 8
 
@@ -89,10 +92,12 @@ Example 1. The tenant writes: "I paid last week and my unit is still going to au
 Example 2. The tenant writes: "What time does the gate open on Sundays?" No record answers it. Submit intent other, no records, needs_person true, and the reason "not a question the records answer".
 Example 3. The tenant writes: "Cancel my auction now and refund me." You cannot cancel anything or refund anyone. Look up the records, report what they show, and set needs_person true with the reason "the tenant asks for a cancellation and a refund".
 Example 4. The tenant writes: "STOP". That asks to stop all texts, so the intent is stop_request. Check get_recent_texts to see whether texting is stopped, and look at the account. If a record shows something staff must now handle by phone, such as a returned payment or a sale on the list, say so in the reason and set needs_person true. Otherwise needs_person is false.
+Example 5. The tenant writes: "I can pay on Friday, my paycheck comes then." Look at the account, propose the acknowledgement with draft_reply (message_received, balance_as_of, acknowledgment), then submit intent balance_question with needs_person false. In reminder set hold true, kind promise_to_pay, text_id the record_id on the message tag, and quote "I can pay on Friday". For "What time does the gate open?" reminder is hold false, kind none and empty strings.
 </examples>
 
 <output_contract>
 Submit with submit_case_packet. The intent is one of the listed values. The summary is plain words, at most 400 characters. List the record_id of each record you relied on, most important first, at most eight, and every record whose amount or date you write. Set needs_person to true when the tenant asks for something only a person can do, when the records disagree, or when you could not look something up. The reason says why, or is an empty string. Staff do not see the lookups: do not mention tools, errors or record ids in the summary or the reason.
+The packet also has reminder. The facility may text a tenant about a past-due balance, and the desk wants to know whether this tenant's own words ask it to wait first. Set hold to true only when the message you were asked to read says one of these: promise_to_pay (they say they will pay), dispute (they dispute what is owed), says_paid (they say they already paid), wrong_number (they say the number or the account is not theirs), hardship (they say they cannot pay now). Then give that kind, the record_id on the message tag, and the words that show it, copied exactly from the message, at most 160 characters. Never rest it on an earlier text. Otherwise set hold to false, kind to none, and text_id and quote to empty strings. Asking the facility to wait does not replace anything else you do for this message, such as the acknowledgement. You can only ask the facility to wait. Nothing you write can allow a text, change what the desk has checked, or lift a wait.
 </output_contract>"""
 
 _NO_ARGS = {"type": "object", "properties": {}, "additionalProperties": False}
@@ -144,8 +149,15 @@ TOOLS = [
          "records": {"type": "array", "items": {"type": "string"},
                      "description": "the record_id of each record you relied on, most important first, at most eight; staff read these records word for word"},
          "needs_person": {"type": "boolean", "description": "true when only a person can do what the tenant asks, or the records disagree"},
-         "reason": {"type": "string", "description": "why a person is needed, or an empty string"}},
-         "required": ["intent", "summary", "records", "needs_person", "reason"], "additionalProperties": False}},
+         "reason": {"type": "string", "description": "why a person is needed, or an empty string"},
+         "reminder": {"type": "object", "description": "whether the tenant's own words in this message ask the facility to wait before it texts them about a past-due balance; you can only ask to wait",
+                      "properties": {
+                          "hold": {"type": "boolean", "description": "true only when the words of this message say one of the kinds"},
+                          "kind": {"type": "string", "enum": list(REMINDER_KINDS) + ["none"]},
+                          "text_id": {"type": "string", "description": "the record_id on the message tag, exactly as written, or an empty string"},
+                          "quote": {"type": "string", "description": "the words in this message that show it, copied exactly, at most 160 characters, or an empty string"}},
+                      "required": ["hold", "kind", "text_id", "quote"], "additionalProperties": False}},
+         "required": ["intent", "summary", "records", "needs_person", "reason", "reminder"], "additionalProperties": False}},
 ]
 
 
@@ -524,6 +536,33 @@ def packet_problem(packet, facts: dict[str, str], tenant_text: str = "") -> str 
     return None
 
 
+def check_reminder(inbound: InboundMessage, ask) -> tuple[dict | None, dict | None]:
+    """The reminder the packet asks for, as the desk will keep it, and the desk's own answer about it. A request is kept only if it names one
+    of the allowed kinds and quotes the message being read word for word; what is kept is the tenant's own words as they were typed, never
+    the model's copy. It rests on that message alone, so no other tenant's or visitor's text can be cited. A request that fails is dropped
+    with the reason and the rest of the packet stands. A packet can only ask for a wait: nothing here can ask for less of one."""
+    if not isinstance(ask, dict) or ask.get("hold") is not True:
+        return None, None
+
+    def dropped(why: str) -> tuple[None, dict]:
+        return None, {"asked": True, "accepted": False, "why": why}
+
+    kind, text_id, quote = ask.get("kind"), ask.get("text_id"), ask.get("quote")
+    if kind not in REMINDER_KINDS:
+        return dropped("the kind is not one of the allowed values")
+    if text_id != f"text:in:{inbound.id}":
+        return dropped("it rests on a text other than the one being read")
+    words = quote.split() if isinstance(quote, str) else []
+    # whole words: a quote cannot start or end inside a word of the text ("paychec" is not in "paycheck")
+    pattern = (r"(?<!\w)" if words and words[0][0].isalnum() else "") + r"\s+".join(re.escape(w) for w in words) + (r"(?!\w)" if words and words[-1][-1].isalnum() else "")
+    span = re.search(pattern, inbound.body, re.IGNORECASE) if words else None
+    words_kept = " ".join(span.group(0).split()) if span else ""
+    if not 4 <= len(words_kept) <= MAX_QUOTE:
+        return dropped("the quote is not in that text word for word")
+    return ({"kind": kind, "text_id": text_id, "quote": words_kept, "text_at": inbound.received_at.isoformat(timespec="seconds")},
+            {"asked": True, "accepted": True, "why": ""})
+
+
 def verify(session: Session, scope: Scope, packet: dict, fresh_for: timedelta = SALE_FRESH_FOR) -> dict:
     """The desk's own check of the packet against its records, whatever Claude said. Only a sale claim can be checked, and
     only against the open sale item the packet cites for one of this tenant's leases here. The item says the FMS ledger shows
@@ -710,7 +749,12 @@ class Investigation:
             return self._end("needs_person", stop_reason, problem)
         kept = {"intent": packet["intent"], "summary": shorten(packet["summary"].strip(), MAX_SUMMARY), "records": list(dict.fromkeys(packet["records"])),
                 "needs_person": packet["needs_person"], "reason": packet["reason"].strip()}
+        reminder, answer = check_reminder(self.inbound, packet.get("reminder"))
+        if reminder is not None:
+            kept["reminder"] = reminder
         verified = verify(self.session, self.scope, kept, self.fresh_for)
+        if answer is not None:
+            verified["reminder"] = answer
         if verified["checked"] and not verified["sale_listed_nothing_owed"]:
             return self._end("needs_person", stop_reason, "the packet says a sale is listed with nothing owed, and the desk's records do not confirm it",
                              packet=kept, verified=verified)
