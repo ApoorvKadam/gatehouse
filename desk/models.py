@@ -135,6 +135,9 @@ class ObservedPayment(Base):
     lease_provider_ids: Mapped[list] = mapped_column(JSON, default=list)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    # when the FMS says the payment was made (its createdAt); None when it gave no time. first_seen_at is when the desk looked, which says
+    # nothing about order: a desk that has just started sees every old payment for the first time now
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # when the desk saw the status change; None when the payment was already reversed the first time the desk saw it
     status_changed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     __table_args__ = (UniqueConstraint("provider", "provider_payment_id"),)
@@ -424,7 +427,8 @@ class AgentRun(Base):
         the desk holds them, each with its kind, and the desk's own check apart from both."""
         packet = self.packet or {}
         facts = self.facts or {}
-        return {"notes": {"label": "Case notes", "intent": packet.get("intent"), "summary": plain(packet.get("summary")),
+        return {"reminder": packet.get("reminder"),
+                "notes": {"label": "Case notes", "intent": packet.get("intent"), "summary": plain(packet.get("summary")),
                           "reason": plain(packet.get("reason")), "needs_person": packet.get("needs_person")},
                 "records": [{"id": i, "kind": record_kind(i, facts.get(i)), "text": facts.get(i) if i.startswith("text:") else plain(facts.get(i))} for i in packet.get("records", [])],
                 "verified": self.verified, "actions": [v for v in (action_view(a) for a in self.actions or []) if v is not None]}

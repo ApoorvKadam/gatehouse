@@ -10,8 +10,10 @@ verdicts and never ask the FMS. Quiet hours are not part of a verdict: they depe
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -21,18 +23,24 @@ from .adapter import FMSAdapter, FMSError, NotFound, PermissionDenied, ProviderC
 from .adapter.base import ProviderExemption
 from .cases import IN_FLIGHT, current_case
 from .db import utcnow
+from .investigator import REMINDER_KINDS
 from .liens import dollars
-from .messaging import Verdict, may_text
-from .models import Facility, Lease, LienEvaluation, ObservedPayment, PaymentCommand, ReminderCheck, WorkItem
+from .messaging import STOP_WORDS, Verdict, keyword, may_text, mine
+from .models import AgentRun, Facility, InboundMessage, Lease, LienEvaluation, ObservedPayment, PaymentCommand, ReminderCheck, WorkItem
+from .payments import CLOCK_SKEW
 from .sales import SALE_KINDS
 
 log = logging.getLogger("desk.reminder_check")
 
 CLEAR, HOLD = "clear", "hold"
+# how long a tenant's own words ask the facility to wait, if no payment the FMS confirmed comes first
+HOLD_DAYS = 7
+KIND_WORDS = {"promise_to_pay": "a promise to pay", "dispute": "a dispute of what is owed", "says_paid": "a claim that they already paid",
+              "wrong_number": "a claim that this is not their number or account", "hardship": "a sign they cannot pay now"}
 # what the page and the API call each reason. Only a tenant who must not be texted at all is labelled so; the rest are held for a person or for a fix.
 LABELS = {"consent": "Must not be texted", "lien": "A person decides", "paused": "Texts paused in the FMS", "unpaused": "Not paused in the FMS",
           "tenant_exemption": "A person decides", "payment": "Payment in progress", "unread": "Not checked", "date": "A person decides",
-          "clear": "Clear to text"}
+          "texts": "A person decides", "clear": "Clear to text"}
 UNREAD = "The last reading of this account failed, so the check cannot say a text is safe. It reads again on the next pass."
 # a payment the desk is still working: a text now would tell a tenant who has paid, or is paying, that they owe
 WORKING = IN_FLIGHT + ("NEEDS_STAFF", "NEEDS_REAUTHORIZATION")
@@ -199,3 +207,67 @@ def reconcile_reminder_checks(session: Session, adapter: FMSAdapter, facility: F
             session.delete(stale)
     session.commit()
     return result
+
+
+def _first(name: str | None) -> str:
+    first = (name or "").split(" ")[0]
+    return first if re.fullmatch(r"[A-Za-z][A-Za-z'\-]{0,29}", first) else "The tenant"
+
+
+def with_texts(session: Session, facility: Facility, rows: list[dict], now: datetime | None = None, visitor: str | None = None) -> list[dict]:
+    """Add what the tenants' own words say to the rows read from the FMS. Our agent reads a text when someone explores it; if its accepted
+    reading asked the facility to wait, that tenant's row holds for HOLD_DAYS from the text, or until the FMS confirms a payment made after it.
+    A text that no run has read is noted, never taken to be harmless. The desk sees the desk's texts and runs; a visitor sees those and their
+    own. A reading can only add a hold, so a later run that says nothing cannot lift one."""
+    now = now or utcnow()
+    since = now - timedelta(days=HOLD_DAYS)
+    texts = session.scalars(select(InboundMessage).where(InboundMessage.facility_id == facility.id, InboundMessage.match_state == "matched",
+                                                         InboundMessage.received_at >= since, mine(InboundMessage, visitor))).all()
+    if not texts:
+        return rows
+    runs = session.scalars(select(AgentRun).where(AgentRun.status == "done", mine(AgentRun, visitor), AgentRun.inbound_id.in_([t.id for t in texts]))).all()
+    read = {run.inbound_id for run in runs}
+    paid = list(session.scalars(select(ObservedPayment).where(ObservedPayment.status == "SUCCEEDED", ObservedPayment.paid_at > since)))
+    zone = facility.time_zone
+
+    def local_day(when: datetime) -> date:
+        return when.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(zone)).date()
+
+    out = []
+    for row in rows:
+        mine_t = [t for t in texts if t.customer_provider_id == row.get("customer")]
+        leases = {r["lease"] for r in rows if r.get("customer") == row.get("customer")}
+        holds = []
+        for run in runs:
+            ask = (run.packet or {}).get("reminder")
+            if isinstance(ask, dict) and ask.get("kind") in REMINDER_KINDS and run.inbound_id in {t.id for t in mine_t}:
+                try:
+                    holds.append((datetime.fromisoformat(ask["text_at"]), ask))
+                except (KeyError, ValueError):
+                    continue
+        why, notes = None, []
+        # only a payment the FMS dates clearly after the text ends the wait: later by more than the clock difference the desk already allows
+        # between itself and the FMS. One it gives no time for, or dates before, cannot: when the desk first looked at a payment says
+        # nothing about when it was made (paid_at is never None in `paid`: NULL fails the comparison above)
+        live = [(at, ask) for at, ask in holds if at >= since
+                and not any(p.paid_at > at + CLOCK_SKEW and leases & set(p.lease_provider_ids or []) for p in paid)]
+        if live:
+            at, ask = max(live, key=lambda h: h[0])
+            stop = "" if ask["quote"][-1] in ".!?" else "."          # the tenant's own full stop closes the sentence
+            why = f'{_first(row.get("tenant"))} texted on {day(local_day(at))}: "{ask["quote"]}"{stop} Our agent read it as {KIND_WORDS[ask["kind"]]}. A person decides whether a reminder goes.'
+        unread = [t for t in mine_t if t.id not in read and keyword(t.body) not in STOP_WORDS]
+        if unread:
+            newest = max(unread, key=lambda t: t.received_at)
+            notes.append(f"A text of theirs from {day(local_day(newest.received_at))} has not been read by our agent.")
+        if why is None and not notes:
+            out.append(row)
+            continue
+        row = {**row, "also": list(row.get("also") or [])}
+        if why is not None:
+            if row["state"] == CLEAR:
+                row.update(state=HOLD, code="texts", label=LABELS["texts"], why=why)
+            else:
+                row["also"].append(why)
+        row["also"] += notes
+        out.append(row)
+    return out
