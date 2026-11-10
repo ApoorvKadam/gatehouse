@@ -462,3 +462,23 @@ class ReminderCheck(Base):
     lease_id: Mapped[int] = mapped_column(ForeignKey("leases.id"), primary_key=True)
     observed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     data: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class FmsObservation(Base):
+    """An answer from the FMS that its documentation does not describe, kept once per call, field, kind and value, with how often it came and when.
+    The answer itself is never used as if it were documented; a person reviews the record, and it opens again if the same thing arrives after the
+    review. It holds no payment, customer or account data."""
+
+    __tablename__ = "fms_observations"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider: Mapped[str] = mapped_column(String)
+    endpoint: Mapped[str] = mapped_column(String)
+    field: Mapped[str] = mapped_column(String)
+    kind: Mapped[str] = mapped_column(String)
+    value: Mapped[str] = mapped_column(String)
+    count: Mapped[int] = mapped_column(Integer, default=1)
+    first_seen: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_seen: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    __table_args__ = (UniqueConstraint("provider", "endpoint", "field", "kind", "value"),)

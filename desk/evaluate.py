@@ -31,6 +31,7 @@ from .db import make_session_factory
 from .models import AccessPolicy, Facility, WorkItem
 from . import sales
 from .adapter.base import FMSError
+from .evaluate_drift import AMOUNT_READ, CHARGED_AGAIN, UNLISTED_READ, drift_part
 from .evaluate_reminders import EARLY_PAYMENT, LIFTED, STOP_CLEAR, UNREAD_CLEAR, WRONG_FACT, reminders_part
 from .evaluate_texts import CLAIM, OWN, STOP, TWICE, texts_part
 
@@ -648,6 +649,11 @@ GUARDS = {
     LIFTED: "disagree",
     WRONG_FACT: "disagree",
     EARLY_PAYMENT: "money",
+    # changes in how the FMS answers (desk/evaluate_drift.py): an undocumented status kept as a documented one, an amount read although it is not
+    # whole cents, and a second card charge after an answer the desk could not read
+    UNLISTED_READ: "disagree",
+    AMOUNT_READ: "money",
+    CHARGED_AGAIN: "twice",
 }
 
 
@@ -683,6 +689,10 @@ def evaluate(url: str) -> Report:
     report.rows += [Row("Reminder check", *row) for row in reminder_rows]
     report.red_lines += [red_line("Reminder check", *line) for line in reminder_lines]
     report.controls += [Control(*control) for control in reminder_controls]
+    drift_rows, drift_lines, drift_controls = drift_part(url)
+    report.rows += [Row("FMS changes", *row) for row in drift_rows]
+    report.red_lines += [red_line("FMS changes", *line) for line in drift_lines]
+    report.controls += [Control(*control) for control in drift_controls]
     return report
 
 

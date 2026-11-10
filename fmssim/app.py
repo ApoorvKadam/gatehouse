@@ -18,6 +18,8 @@ from .store import (
 )
 
 PII_FIELDS = ("name", "firstName", "lastName", "contact", "communicationPreferences")
+# ways a vendor changes its answers without notice; each is a control a real FMS does not have
+DRIFTS = {"off", "status", "amount", "created_at"}
 PAYMENT_MODES = {"approve", "decline", "fail", "pending_then_succeed", "pending_then_decline",
                  "late_application", "lose_response", "drop_after_charge", "server_error", "gateway_error", "reject"}
 
@@ -40,6 +42,7 @@ def create_app(database_url: str | None = None, lose_response_seconds: float = 8
     app = FastAPI(title="FMS simulator", docs_url=None, redoc_url=None)
     app.state.session_factory = factory
     app.state.lose_response_seconds = lose_response_seconds
+    app.state.drift = "off"
 
     @app.exception_handler(ApiError)
     async def api_error(_: Request, exc: ApiError) -> JSONResponse:
@@ -85,6 +88,18 @@ def create_app(database_url: str | None = None, lose_response_seconds: float = 8
         return {"paymentId": p.payment_id, "createdAt": iso(p.created_at), "amount": p.amount,
                 "customerId": p.customer_id, "methodType": p.method_type, "status": p.status,
                 "reason": p.reason, "explanation": p.explanation}
+
+    def on_the_wire(p: Payment) -> dict:
+        """A payment as the two payment calls write it. Under a drift the wire form departs from the documentation while the payment, the
+        ledger and /sim/truth stay exactly what happened."""
+        out, drift = payment_json(p), app.state.drift
+        if drift == "status" and out["status"] == "SUCCEEDED":
+            out["status"] = "SETTLED"
+        elif drift == "amount":
+            out["amount"] = f"{p.amount / 100:.2f}"
+        elif drift == "created_at":
+            del out["createdAt"]
+        return out
 
     def settle(session: Session, payment: Payment) -> None:
         """Advance a payment one step, the way a real gateway and ledger catch up over time."""
@@ -184,7 +199,7 @@ def create_app(database_url: str | None = None, lose_response_seconds: float = 8
         for p in rows:
             settle(session, p)
         session.commit()
-        return ok({"payments": [payment_json(p) for p in rows]})
+        return ok({"payments": [on_the_wire(p) for p in rows]})
 
     @app.post("/v1/payment-methods/search")
     def payment_methods_search(body: dict, key: ApiKey = Depends(caller), session: Session = Depends(db)):
@@ -246,7 +261,7 @@ def create_app(database_url: str | None = None, lose_response_seconds: float = 8
                 yield b'{"status": 200, "data": {"payment": '
                 raise ConnectionResetError("connection dropped after charging")
             return StreamingResponse(broken(), media_type="application/json")
-        return ok({"payment": payment_json(payment)})
+        return ok({"payment": on_the_wire(payment)})
 
     # ---------------- simulator controls ----------------
     @app.get("/sim/truth")
@@ -265,7 +280,17 @@ def create_app(database_url: str | None = None, lose_response_seconds: float = 8
         if id_seed is not None and not isinstance(id_seed, str):
             raise ApiError(400, "idSeed must be a string")
         seed.reset(session, id_seed)
+        app.state.drift = "off"
         return ok({"reset": True})
+
+    @app.post("/sim/drift")
+    def sim_drift(body: dict):
+        """The vendor changes how its payment calls answer: a status renamed, an amount in dollars as text, or no createdAt."""
+        kind = body.get("kind")
+        if kind not in DRIFTS:
+            raise ApiError(400, f"kind must be one of {sorted(DRIFTS)}")
+        app.state.drift = kind
+        return ok({"drift": kind})
 
     # test controls answer a bad request with 400 or 404, never a 500 that looks like the simulated server_error mode
     def control_lease(session: Session, lease_id) -> Lease:
