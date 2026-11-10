@@ -302,10 +302,11 @@ class Pages:
         """The worker's last verdict for each past-due account at a facility: the texts that must not go first, since those are what the
         check is for, then the clear ones. Within each, the largest balance first."""
         rows = []
-        for lease in s.scalars(select(Lease).where(Lease.facility_id == facility.id).order_by(Lease.id)):
-            check = s.get(ReminderCheck, lease.id)
-            if check is not None and check.data.get("state") in ("hold", "clear") and isinstance(check.data.get("owed"), int):
-                rows.append({**check.data, "lease": lease.provider_id, "observed_at": check.observed_at})
+        found = s.execute(select(Lease.provider_id, ReminderCheck).join(ReminderCheck, ReminderCheck.lease_id == Lease.id)
+                          .where(Lease.facility_id == facility.id).order_by(Lease.id)).all()
+        for lease_provider_id, check in found:
+            if check.data.get("state") in ("hold", "clear") and isinstance(check.data.get("owed"), int):
+                rows.append({**check.data, "lease": lease_provider_id, "observed_at": check.observed_at})
         return sorted(rows, key=lambda row: (row["state"] != "hold", -row["owed"]))
 
     def today(self, s: Session, facility: Facility) -> list[Item]:

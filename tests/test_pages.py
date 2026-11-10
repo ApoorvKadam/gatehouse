@@ -194,7 +194,7 @@ def test_the_front_page_shows_every_built_feature_with_a_link_into_it(fms_url, s
         for heading in ("A payment whose answer was lost is held, not retried.", "Every fact keeps its source.",
                         "A payment that comes back reopens the account.", "A lien file goes back to review when the account has changed.",
                         "Where no rules are reviewed, the file goes to counsel.",
-                        "A reminder goes to a tenant who asked to stop, or who is on a payment plan."):
+                        "A reminder tool should not text a tenant who asked to stop, or who is on a payment plan."):
             assert heading in page
         for link in ("/today", "/payments/1", "/payments/2", "/accounts/2/lien", "/accounts/6/lien", "/reminder-check"):
             assert f'href="{link}"' in page and visitor.get(link).status_code == 200

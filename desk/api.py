@@ -282,10 +282,11 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         check_facility(session, facility_id)
         facility = session.scalar(select(Facility).where(Facility.provider_id == facility_id))
         rows = []
-        for lease in session.scalars(select(Lease).where(Lease.facility_id == facility.id).order_by(Lease.id)) if facility is not None else []:
-            check = session.get(ReminderCheck, lease.id)
-            if check is not None and check.data.get("state"):
-                rows.append({"lease": lease.provider_id, "customer": lease.provider_customer_id, **check.data, "read_at": check.observed_at})
+        found = session.execute(select(Lease.provider_id, Lease.provider_customer_id, ReminderCheck).join(ReminderCheck, ReminderCheck.lease_id == Lease.id)
+                                .where(Lease.facility_id == facility.id).order_by(Lease.id)).all() if facility is not None else []
+        for lease_id, customer_id, check in found:
+            if check.data.get("state"):
+                rows.append({"lease": lease_id, "customer": customer_id, **check.data, "read_at": check.observed_at})
         return {"rows": rows}
 
     def owns(binding: DeskBinding, text: InboundText) -> bool:
