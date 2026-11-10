@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from .access import CLOSED_BY, GATE_RULES, KIND_NAMES, MISSING, NOT_RESTORED, PHYSICAL, policy_for, facility_today
-from . import sales, spend
+from . import integration, sales, spend
 from .messaging import inbox as inbox_of
 from .db import utcnow
 from .liens import on
@@ -376,6 +376,7 @@ class Pages:
                                   "The FMS ledger shows the balance paid.", "Front desk", f"/accounts/{case.id}", money(owed)))
         items.extend(self.access_items(s, facility))
         items.extend(self.sale_items(s, facility))
+        items.extend(self.integration_items(s))
         for item in items:
             item.what, item.proof = plain(item.what), plain(item.proof)       # Today is read by a person: no provider ids, state codes or raw times
         return sorted(items, key=lambda i: (i.rank, i.since))
@@ -421,6 +422,12 @@ class Pages:
                             w.closing_evidence, w.who_acts, f"/sales/{w.id}",
                             money(o["owed"]) if isinstance(o.get("owed"), int) else ""))
         return out
+
+    def integration_items(self, s: Session) -> list[Item]:
+        """Answers the FMS gave that its documentation does not describe. They belong to the connection, not to a facility, so every facility's
+        Today carries them; there is no page behind a row, because the row holds everything there is to say."""
+        return [Item(1, integration.HEAD, "", 0, r.first_seen, integration.say(r), integration.PROOF, integration.WHO, "", label="The FMS connection")
+                for r in integration.open_observations(s)]
 
     def record(self, s: Session, case: DelinquencyCase) -> list[Entry]:
         commands = {c.id: c for c in s.scalars(select(PaymentCommand).where(PaymentCommand.case_id == case.id)).all()}
