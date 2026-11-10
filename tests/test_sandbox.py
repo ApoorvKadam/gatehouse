@@ -1,4 +1,4 @@
-"""A visitor plays the tenant: types a text as one of three tenants, sees it arrive, and explores it. The text belongs to the visitor alone:
+"""A visitor plays the tenant: types a text as one of four tenants, sees it arrive, and explores it. The text belongs to the visitor alone:
 no one else sees it, opens it, or is touched by what it says, and a STOP it carries stops sends in their own space only. The model is
 scripted here; the desk, the FMS simulator, the limits and the pages are the real ones."""
 from __future__ import annotations
@@ -61,6 +61,15 @@ def test_a_text_typed_as_dana_is_matched_by_her_number_and_seen_only_by_the_visi
         assert type_as(first, "dana", "Why is my unit on the sale list?", "press-0001").json()["id"] == mine["id"]
         with app.state.session_factory() as s:
             assert s.scalar(select(func.count()).select_from(InboundMessage).where(InboundMessage.visitor.is_not(None))) == 1
+
+
+def test_a_text_typed_as_omar_is_matched_to_the_one_past_due_tenant_with_nothing_else_wrong(fms_url, sim):
+    app = live_app(fms_url, Scripted())
+    with TestClient(app) as visitor:
+        visitor.get("/inbox")
+        typed = type_as(visitor, "omar", "Can I pay on Friday?", "press-0001")
+        assert typed.status_code == 200 and typed.json()["match"] == "matched" and typed.json()["facility"] == ORLANDO
+        assert "matched through the FMS to unit F-610" in page_of(visitor, typed.json())
 
 
 def test_the_visitor_supplies_only_the_words_and_the_desk_takes_nothing_else(fms_url, sim):
