@@ -86,14 +86,17 @@ def test_every_past_due_account_gets_a_verdict_and_an_arrangement_that_still_let
     facility = orlando(session, adapter)
     result = reconcile_reminder_checks(session, adapter, facility)
     seen = verdicts(session)
-    assert result.failures == [] and set(seen) == {"lease_WhitB1042", "lease_BellC0207", "lease_RamnA0012", "lease_RamnA0013", "lease_OkfrE0505"}
+    assert result.failures == [] and set(seen) == {"lease_WhitB1042", "lease_BellC0207", "lease_RamnA0012", "lease_RamnA0013", "lease_OkfrE0505",
+                                                   "lease_HaddF0610"}
     own = seen["lease_RamnA0012"]
     assert (own["state"], own["code"], own["label"]) == (HOLD, "unpaused", "Not paused in the FMS")
     assert "payment arrangement on this unit until" in own["why"] and "has not paused collections texts for it" in own["why"]
     sibling = seen["lease_RamnA0013"]
     assert (sibling["state"], sibling["code"]) == (HOLD, "tenant_exemption") and "arrangement on unit A-012" in sibling["why"]
     assert "A person decides" in sibling["why"]
-    assert all(seen[k]["state"] == CLEAR for k in ("lease_WhitB1042", "lease_BellC0207", "lease_OkfrE0505"))
+    assert all(seen[k]["state"] == CLEAR for k in ("lease_WhitB1042", "lease_BellC0207", "lease_OkfrE0505", "lease_HaddF0610"))
+    omar = seen["lease_HaddF0610"]
+    assert (omar["owed"], omar["tenant"], omar["overdue_days"], omar["label"]) == (15000, "Omar", 12, "Clear to text")
     assert seen["lease_BellC0207"]["owed"] == 18500 and seen["lease_BellC0207"]["tenant"] == "Marcus" and seen["lease_BellC0207"]["overdue_days"] > 0
 
 
@@ -178,9 +181,10 @@ def test_the_page_and_the_api_show_who_must_not_be_texted_and_why(fms_url, sim):
         page = visitor.get("/reminder-check").text
         assert "Reminder check at Northstar Storage, Orlando East" in page and "Gatehouse sends nothing" in page
         found = re.search(r"(\d+) of (\d+) past-due accounts should not get a text today", page)
-        assert found and int(found.group(1)) >= 4
+        assert found and int(found.group(1)) == 4 and int(found.group(2)) == 5          # Omar is past due with nothing in the way
         # only the tenant who texted STOP is labelled a must-not; the rest are held for a person or for a fix
         assert page.count("Must not be texted") == 1 and "Not paused in the FMS" in page and page.count('class="chip act"') == 1
+        assert page.count("Clear to text") == 1 and "Unit F-610" in page and "Nothing in the records says this tenant should not be texted." in page
         for reason in ("has not paused collections texts for it", "This number texted STOP", "A lien file has begun for this account",
                        "arrangement on unit A-012"):
             assert reason in page, reason

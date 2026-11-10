@@ -209,15 +209,17 @@ def new_york_file(session: Session, adapter: FMSAdapter) -> None:
 
 
 def tenant_texts(session: Session, adapter: FMSAdapter, sim: httpx.Client) -> None:
-    """Four people text Orlando's number. Each text goes through the simulator, which answers with the SMS Received payload
+    """Five people text Orlando's number. Each text goes through the simulator, which answers with the SMS Received payload
     Cubby would send, and the desk keeps it the way its webhook receiver does:
     - a stranger asks about gate hours; Cubby texts only customers, so the desk cannot answer through it;
+    - Omar, twelve days behind on rent with nothing else wrong, asks for the gate hours too, so a visitor can play him;
     - Marcus texts STOP, and when the desk later tries to tell him about his returned payment, Gatehouse refuses;
     - Priya asks about her payment plan, and the front desk answers;
     - Dana asks why her unit is on the sale list after she paid, which is the sale story above from her side."""
     orlando = session.scalar(select(Facility).where(Facility.provider_id == ORLANDO))
     now = utcnow()
     for phone, body, minutes_ago in (
+            ("+14075550158", "Hi, what are the gate hours this week?", 260),
             ("+13215550177", "Hi, what time does the gate open on Sundays?", 190),
             ("+14075550187", "STOP", 95),
             ("+14075550119", "Hi, is my payment plan for A-012 still active? I got a reminder text.", 40),

@@ -8,7 +8,7 @@ Gatehouse finds that work, keeps the evidence, and closes an item only when the 
 
 [![A tenant says she paid and her unit is still going to auction; Gatehouse reads the case and the desk writes the reply from the records](desk/static/film/gatehouse-walkthrough.jpg)](desk/static/film/gatehouse-walkthrough.mp4)
 
-A three-minute walkthrough of the screens, recorded on the live preview with one live run of our agent. The overview plays it with sound. Click the frame to open the video here. The music is "Closer" from Mixkit, used under Mixkit's free music licence.
+A three-minute walkthrough of the screens, recorded on the live preview with one live run of our agent. The overview plays it with sound. Click the frame to open the file here, and View raw to play it. The music is "Closer" from Mixkit, used under Mixkit's free music licence.
 
 ## Where it fits
 
@@ -90,7 +90,7 @@ The agent may also propose an acknowledgement for the tenant. It does not write 
 
 The case notes are written by a language model from the records the desk holds. The desk checks what it can and shows the records beside the notes: the sale the notes rely on must be open and read lately, and every amount and date in the notes must appear in a record. A run costs about a fifth of a cent. The preview allows ten explorations per visitor per day and one dollar a day in all.
 
-On the preview a visitor can also play the tenant: pick Dana, Priya or an unknown sender and type a text. The desk keeps it the way it keeps a text from the webhook, and matches it to a tenant by the number it comes from, never by what it says. The visitor supplies only the words. The text is shown only to the visitor who typed it. A STOP they type stops sends in their own space and nowhere else, and an exploration of their text never asks the FMS for a new task.
+On the preview a visitor can also play the tenant: pick Dana, Priya, Omar or an unknown sender and type a text. The desk keeps it the way it keeps a text from the webhook, and matches it to a tenant by the number it comes from, never by what it says. The visitor supplies only the words. The text is shown only to the visitor who typed it. A STOP they type stops sends in their own space and nowhere else, and an exploration of their text never asks the FMS for a new task.
 
 ## Reminder check
 

@@ -40,8 +40,12 @@ CUSTOMERS = [
     ("cust_PriyaRmn01", NORTHSTAR, "Priya", "Raman", "+14075550119", "priya.raman@example.com"),
     ("cust_TeoVarga01", NORTHSTAR, "Teodor", "Varga", "+15185550164", "teo.varga@example.com"),
     ("cust_GinaOkfr01", NORTHSTAR, "Gina", "Okafor", "+14075550133", "gokafor@example.com"),
+    ("cust_OmarHadd01", NORTHSTAR, "Omar", "Haddad", "+14075550158", "omar.haddad@example.com"),
     ("cust_HBRuizLu01", HARBOR, "Lucia", "Ruiz", "+18135550101", "lucia.ruiz@example.com"),
 ]
+
+# Omar's rent went unpaid twelve days before the world is built, whatever day that is: nothing is wrong with his account but the balance
+RECENT = date.today() - timedelta(days=12)
 
 # lease id, facility, customer, unit, monthly rent (cents), open charges [(category, description, cents, accrues_on)]
 LEASES = [
@@ -59,6 +63,8 @@ LEASES = [
      [("RENT", None, 14000, date(2026, 10, 1)), ("FEE", "Late fee", 2500, None)]),
     ("lease_HBRuiz101", "fac_HBtampa0001", "cust_HBRuizLu01", "101", 11000,
      [("RENT", None, 11000, date(2026, 10, 1))]),
+    ("lease_HaddF0610", "fac_NSorlando01", "cust_OmarHadd01", "F-610", 15000,
+     [("RENT", None, 15000, RECENT)]),
 ]
 
 PAYMENT_METHODS = [
@@ -68,6 +74,7 @@ PAYMENT_METHODS = [
     ("pm_TeoVisa0077", "cust_TeoVarga01", "0077"),
     ("pm_GinaVisa3030", "cust_GinaOkfr01", "3030"),
     ("pm_LuciVisa9090", "cust_HBRuizLu01", "9090"),
+    ("pm_OmarVisa7777", "cust_OmarHadd01", "7777"),
 ]
 
 
@@ -76,7 +83,8 @@ ACCESS_RULES = [("fac_NSorlando01", 30), ("fac_NSalbany001", 30), ("fac_HBtampa0
 # one gate code per customer at their facility
 ACCESS_CODES = [("cust_DanaWhit01", "fac_NSorlando01", "4127"), ("cust_MarcBell01", "fac_NSorlando01", "8830"),
                 ("cust_PriyaRmn01", "fac_NSorlando01", "2265"), ("cust_TeoVarga01", "fac_NSalbany001", "7741"),
-                ("cust_GinaOkfr01", "fac_NSorlando01", "5196"), ("cust_HBRuizLu01", "fac_HBtampa0001", "3302")]
+                ("cust_GinaOkfr01", "fac_NSorlando01", "5196"), ("cust_HBRuizLu01", "fac_HBtampa0001", "3302"),
+                ("cust_OmarHadd01", "fac_NSorlando01", "5519")]
 # the office's lock stock: serial, combination
 LOCKS = {"fac_NSorlando01": [("NSO-OL-101", "4821"), ("NSO-OL-102", "7310"), ("NSO-OL-103", "0954"), ("NSO-OL-104", "6628"),
                              ("NSO-OL-105", "3197"), ("NSO-OL-106", "8402")],
