@@ -3,6 +3,8 @@ only if it quotes the tenant's text word for word, shows the tenant's words and 
 hold and never lift one. The model is scripted here; the desk, the simulator and the pages are the real ones."""
 from __future__ import annotations
 
+import html
+import re
 from datetime import timedelta
 
 import pytest
@@ -219,6 +221,19 @@ def test_a_text_no_run_has_read_is_noted_and_never_taken_to_be_harmless(factory)
         assert row["state"] == "clear" and len(row["also"]) == 1 and "has not been read by our agent" in row["also"][0]
 
 
+def test_a_text_someone_already_answered_is_not_noted_as_unread(factory):  # noqa: F811
+    with factory() as s:
+        m = add_text(s, "Hi, can you call me about my account?", hours_ago=3)
+        s.add(OutboundMessage(facility_id=facility_of(s).id, inbound_id=m.id, customer_provider_id=GINA, phone=PHONE, body="Yes, we will.", author="front desk",
+                              state="sent", created_at=utcnow()))
+        s.commit()
+        [row] = with_texts(s, facility_of(s), rows_for())
+        assert row["also"] == []
+        add_text(s, "And please call before noon.", hours_ago=1)                     # a later text nobody has touched is still noted
+        [row] = with_texts(s, facility_of(s), rows_for())
+        assert len(row["also"]) == 1 and "has not been read by our agent" in row["also"][0]
+
+
 def test_a_visitors_reading_holds_that_visitors_view_only(factory):  # noqa: F811
     with factory() as s:
         read_and_hold(s, visitor="v1")
@@ -300,6 +315,14 @@ def test_reading_omars_text_and_asking_for_nothing_takes_the_unread_note_off_a_r
         assert after["state"] == "clear" and after["also"] == []
 
 
+def test_the_seeded_text_staff_answered_carries_no_note_and_omars_unanswered_one_does(fms_url, sim):
+    with TestClient(agent_preview(fms_url, Scripted())) as client:
+        for row in check_rows(client, "Priya"):
+            assert not any("has not been read" in line for line in row["also"]), row["also"]
+        [omar] = check_rows(client, "Omar")
+        assert any("has not been read by our agent" in line for line in omar["also"])
+
+
 def test_a_tenant_who_owes_nothing_has_no_row_for_a_hold_to_sit_on(fms_url, sim):
     model = Scripted()
     with TestClient(agent_preview(fms_url, model)) as client:
@@ -335,3 +358,70 @@ def test_the_same_reply_to_a_tenant_who_promises_to_pay_does_carry_the_balance(f
     with factory() as s:
         m, reply = reply_to_gina(s, adapter, "I can pay on Friday, my paycheck comes then.", "promise_to_pay", "I can pay on Friday", "promise-1")
         assert reply["outcome"] == "sent" and "owed on unit E-505" in reply["body"]
+
+
+# ---------------------------------------------------------------- what the case notes say about it
+
+
+def reminder_line(client, text_id: int) -> str:
+    """The Reminder paragraph of one message's case notes, as the page shows it, without its markup."""
+    found = re.search(r'<p class="reading-reason"><b>Reminder:</b>(.*?)</p>', client.get(f"/inbox?text={text_id}").text, re.S)
+    return html.unescape(re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", found.group(1)))).strip() if found else ""
+
+
+def test_the_case_notes_say_what_the_agent_asked_for_and_that_the_check_holds_it(fms_url, sim):
+    model = Scripted()
+    with TestClient(agent_preview(fms_url, model)) as client:
+        priya = message_ids(client)["Priya Raman"]
+        assert reminder_line(client, priya) == ""                                             # nothing to say before a run, or about a run that asked for nothing
+        explore_opening_text(client, model, "Priya Raman", {"hold": True, "kind": "dispute", "quote": "I got a reminder text"})
+        line = reminder_line(client, priya)
+        assert line == ('Our agent read their words as a dispute of what is owed: "I got a reminder text". It asked the facility to wait before '
+                        'texting them, and the check now holds their texts for a person. Open the Reminder check')
+        assert f'href="/reminder-check?facility={ORLANDO}"' in client.get(f"/inbox?text={priya}").text            # the wait stands, so there is a row to open
+
+
+def test_the_case_notes_do_not_claim_a_hold_for_a_tenant_who_owes_nothing(fms_url, sim):
+    model = Scripted()
+    with TestClient(agent_preview(fms_url, model)) as client:
+        explore_opening_text(client, model, "Dana Whitfield", {"hold": True, "kind": "says_paid", "quote": "I paid my balance over the phone"})
+        line = reminder_line(client, message_ids(client)["Dana Whitfield"])
+        assert 'Our agent read their words as a claim that they already paid: "I paid my balance over the phone". None of their units is past due' in line
+        assert "holds their texts" not in line and "Open the Reminder check" not in line          # no row to open for a tenant who owes nothing
+
+
+def test_the_case_notes_say_when_the_wait_has_ended_and_escape_the_tenants_words(fms_url, sim):
+    app = agent_preview(fms_url, Scripted())
+    with TestClient(app) as client:
+        with app.state.session_factory() as s:
+            body = "<b>I will pay</b> on Friday"
+            old = add_text(s, body, hours_ago=24 * (HOLD_DAYS + 1), customer="cust_PriyaRmn01", name="Priya Raman")
+            s.add(AgentRun(inbound_id=old.id, model="m", effort="low", status="done", finished_at=utcnow(),
+                           packet={"intent": "balance_question", "summary": "x", "records": [], "needs_person": False, "reason": "",
+                                   "reminder": {"kind": "promise_to_pay", "text_id": f"text:in:{old.id}", "quote": body, "text_at": old.received_at.isoformat(timespec="seconds")}}))
+            s.commit()
+            old_id = old.id
+        page = client.get(f"/inbox?text={old_id}").text
+        assert "&lt;b&gt;I will pay&lt;/b&gt; on Friday" in page and "<b>I will pay</b>" not in page
+        assert "The wait it asked for has ended." in reminder_line(client, old_id)
+        assert "Open the Reminder check" not in reminder_line(client, old_id)
+
+
+def test_a_payment_the_fms_posts_after_the_hold_ends_it_through_the_real_path(fms_url, sim):
+    """Not hand-made rows: the text is an hour old, a payment is posted in the simulator, the desk reads it on its next pass, and the row clears."""
+    model = Scripted()
+    app = agent_preview(fms_url, model)
+    with TestClient(app) as client:
+        with app.state.session_factory() as s:
+            old = add_text(s, "I can pay on Friday, my paycheck comes then.", hours_ago=1, customer="cust_OmarHadd01", name="Omar Haddad")
+            old_id = old.id
+        model.turns = [[tool("submit_case_packet", {"intent": "balance_question", "summary": "The tenant says when they will pay.", "records": [f"text:in:{old_id}"],
+                                                  "needs_person": False, "reason": "", "reminder": ask(text_id=f"text:in:{old_id}", quote="I can pay on Friday")}, id_="a1")]]
+        done = client.post(f"/api/inbox/{old_id}/investigate", json={"request_id": "request-pay-01"}, headers={"X-Desk-Token": TOKEN})
+        assert done.status_code == 200 and done.json()["status"] == "done", done.text
+        [held] = check_rows(client, "Omar")
+        assert held["state"] == "hold" and held["code"] == "texts" and held["held_by"] == [old_id]
+        assert sim.post("/sim/payments/offline", {"allocations": {"lease_HaddF0610": 5000}}).status_code == 200
+        assert client.post("/api/reconcile", headers={"X-Desk-Token": TOKEN}).status_code == 200
+        [after] = check_rows(client, "Omar")
+        assert after["state"] == "clear" and "held_by" not in after

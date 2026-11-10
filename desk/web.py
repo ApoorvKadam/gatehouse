@@ -29,7 +29,7 @@ from .models import (
 )
 from .payments import tenant_message
 from .messaging import in_quiet_hours
-from .reminder_check import with_texts
+from .reminder_check import hold_note, with_texts
 from .sequence import sequence
 from .wording import TROUBLES, plain, words
 
@@ -570,15 +570,18 @@ def router(pages: Pages) -> APIRouter:
             if current is None:
                 raise HTTPException(404, "No such facility")
             # a visitor is shown the texts from the webhook and their own; a text of someone else's is answered as not found, never as another text
-            texts = inbox_of(s, current, limit=30, visitor=spend.visitor_of(request) if pages.live else None)
+            visitor = spend.visitor_of(request) if pages.live else None
+            texts = inbox_of(s, current, limit=30, visitor=visitor)
             selected = next((t for t in texts if t["id"] == text), None) if text is not None else (texts[0] if texts else None)
             if text is not None and selected is None:
                 raise HTTPException(404, "Message not found")
+            # the Reminder check is read only for a message whose notes carry a request, since only then is there something to say about it
+            hold = hold_note(selected, pages.reminder_checks(s, current, visitor=visitor)) if selected and (selected.get("investigation") or {}).get("reminder") else None
             checked = pages.guard is not None and pages.guard.on
             check = {"sitekey": pages.guard.sitekey, "verified": pages.guard.valid(request.cookies.get(spend.COOKIE)) is not None} if pages.live and checked else None
             page = templates.TemplateResponse(request, "inbox.html", {
                 "facilities": facilities, "facility": current, "texts": texts, "selected": selected, "local": local, "sequence": sequence, "nav": "inbox",
-                "live": pages.live, "check": check})
+                "live": pages.live, "check": check, "hold": hold})
             if pages.live and not checked and spend.COOKIE not in request.cookies:
                 # the cookie tells this browser from another, so texts typed here are seen here and counted here
                 page.set_cookie(spend.COOKIE, spend.new_cookie(), max_age=86400, httponly=True, samesite="lax", secure=spend.is_https(request))
