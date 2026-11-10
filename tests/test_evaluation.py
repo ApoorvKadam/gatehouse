@@ -28,7 +28,7 @@ def test_the_evaluation_runs_clean_and_its_wrong_builds_are_caught(tmp_path):
     assert {"A build that treats a failed reading as clear", "A build that dates a payment by when the desk first looked"} <= {c["name"] for c in report["controls"] if c["caught"]}
     # the FMS changes part: its three red lines are counted over real readings, and both wrong builds are caught
     drift = {l["line"]: l for l in report["red_lines"] if l["module"] == "FMS changes"}
-    assert len(drift) == 3 and all(l["count"] == 0 and l["checked"] >= 1 for l in drift.values())
+    assert len(drift) == 3 and all(l["count"] == 0 and l["checked"] >= 2 for l in drift.values())
     assert {"Maps a status", "Coerces an amount"} <= {c["short"] for c in report["controls"] if c["caught"]}
     # every scenario, red line and wrong build names its kind of trouble, from the fixed list the page colours, and every wrong build has
     # the short name its mark shows

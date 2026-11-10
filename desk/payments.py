@@ -253,7 +253,7 @@ class PaymentService:
             # it could be a pending payment under a new name: charging now could charge twice, so a person checks first
             why = f"payment {unknown[0].provider_id} on this lease is {unknown[0].status!r} at the FMS, a status the desk does not know"
             self._not_submitted(command, why)
-            raise PaymentRefused(why + "; a person checks it before any new payment")
+            raise PaymentRefused(why + "; no new payment starts until the FMS reports a status the desk knows")
         pending = [p.provider_id for p in known if p.status == "PENDING"]
         if pending:
             # a payment still pending at the FMS, from anyone, may yet succeed: charging now could charge twice

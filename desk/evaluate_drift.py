@@ -98,13 +98,14 @@ def exp_renamed_on_submission(run: Run, session, adapter, case, judge: Judge) ->
     Run.settle(session, adapter, passes=2)
     judge_statuses(session, judge)
     cards = sum(1 for p in truth(run) if p["methodType"] != "CASH")
-    judge.charged[1] += 1
+    judge.charged[1] += 2                                  # the first request and the tenant's second one
     judge.charged[0] += max(0, cards - 1)
     return {"held": unknown and staff and refused, "cards": cards, "noted": noted(session, adapter, "make payment", "status", "unlisted value")}
 
 
 def exp_amount(run: Run, session, adapter, case, judge: Judge) -> dict:
     take(session, adapter, case)
+    run.sim("/sim/payments/offline", {"allocations": {DANA: 3000}})     # and one at the counter, so two payments are on the wire
     drift(run, "amount")
     real = truth(run)
     try:
@@ -161,7 +162,7 @@ def drift_part(url: str):
          "keeps the payment with no time of its own, so it cannot end a reminder hold", told, no_time["kept"] and no_time["noted"]),
     ]
     lines = [(UNLISTED_READ, judge.unlisted[0], judge.unlisted[1], "statuses kept"), (AMOUNT_READ, judge.amount[0], judge.amount[1], "payments"),
-             (CHARGED_AGAIN, judge.charged[0], judge.charged[1], "payment answers")]
+             (CHARGED_AGAIN, judge.charged[0], judge.charged[1], "payment requests")]
     # each wrong build is the same experiment with one check taken out; its red line must rise
     a, b = Judge(), Judge()
     with broken(CubbyAdapter, "_payment", maps_an_unlisted_status(CubbyAdapter._payment)):

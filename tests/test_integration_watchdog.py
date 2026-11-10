@@ -49,7 +49,7 @@ def test_an_amount_that_is_not_whole_cents_is_refused_never_rounded(session, ada
     drift(sim, "amount")
     with pytest.raises(FMSError, match="unreadable payment"):
         adapter.payments_for_lease(DANA)
-    assert adapter.take_anomalies() == [Anomaly("payments search", "amount", "not whole cents", "100.00")]
+    assert adapter.take_anomalies() == [Anomaly("payments search", "amount", "not whole cents", "text")]
 
 
 def test_a_payment_with_no_time_is_kept_and_noted(session, adapter, sim):

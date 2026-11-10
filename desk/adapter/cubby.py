@@ -74,7 +74,7 @@ class CubbyAdapter:
     # ------------------------------------------------------------------ answers the documentation does not describe
     def _note(self, endpoint: str, field: str, kind: str, value) -> None:
         """Keep a note that an answer departed from the documentation; the worker writes the notes down (desk/integration.py)."""
-        self.restore_anomalies([Anomaly(endpoint, field, kind, _safe(value))])
+        self.restore_anomalies([Anomaly(endpoint, field, kind, value if kind == "not whole cents" else _safe(value))])
 
     def take_anomalies(self) -> list[Anomaly]:
         """The notes kept since the last call, a repeat once per time it came, which are then forgotten here."""
@@ -100,7 +100,8 @@ class CubbyAdapter:
             self._note(endpoint, "amount", "missing", "")
             raise ValueError("the payment has no amount")
         if isinstance(p["amount"], bool) or not isinstance(p["amount"], int):
-            self._note(endpoint, "amount", "not whole cents", p["amount"])
+            # the shape, never the amount: one record per kind of change, and no payment amount in the record
+            self._note(endpoint, "amount", "not whole cents", "text" if isinstance(p["amount"], str) else "decimal" if isinstance(p["amount"], float) else "other")
             raise ValueError(f"amount {p['amount']!r} is not whole cents")
         if "createdAt" not in p:
             self._note(endpoint, "createdAt", "missing", "")             # both calls document it, and a payment with no time cannot end a hold
