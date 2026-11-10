@@ -14,7 +14,9 @@ from urllib.parse import urlsplit
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm.exc import StaleDataError
-from pydantic import BaseModel, Field
+from typing import Annotated
+
+from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
@@ -24,7 +26,7 @@ from .cases import queue, sync_facility
 from .config import Settings
 from .guard import ASK, LIFETIME, SLOW_DOWN, UNSET, Guard, Unreachable
 from .conversation import Conversation
-from . import spend
+from . import integration, spend
 from .investigator import CALL_TIMEOUT, SALE_FRESH_FOR, investigate, run_view
 from .investigator import progress as run_progress
 from .lien_files import ensure_append_only, evaluate_case, record_evidence, replay
@@ -107,6 +109,10 @@ class StaffResolutionIn(BaseModel):
     fms_payment_id: str | None = Field(default=None, description="required when charged: the FMS payment that is this attempt")
     ledger_checked: bool = Field(default=False, description="when charged: the person checked the FMS ledger shows this payment applied")
     note: str = Field(min_length=10, description="what was checked, where, and by whom")
+
+
+class ReviewIn(BaseModel):
+    note: Annotated[str, StringConstraints(strip_whitespace=True, min_length=10, max_length=500)] = Field(description="what was checked and what was decided: the contract confirmed, the adapter changed, or the change expected")
 
 
 def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = None, start_worker: bool = True,
@@ -619,6 +625,19 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         except PaymentRefused as exc:
             raise HTTPException(409, str(exc)) from exc
         return command_json(command)
+
+    @app.get("/api/integration")
+    def integration_open(session: Session = Depends(db), _: str = Depends(viewer)):
+        """Answers the FMS gave that its documentation does not describe, not yet reviewed (or seen again since). No payment, customer or account data."""
+        return {"open": [{"id": r.id, "endpoint": r.endpoint, "field": r.field, "kind": r.kind, "value": r.value, "count": r.count,
+                          "first_seen": r.first_seen.isoformat(), "last_seen": r.last_seen.isoformat()} for r in integration.open_observations(session)]}
+
+    @app.post("/api/integration/{observation_id}/review")
+    def integration_review(observation_id: int, body: ReviewIn, session: Session = Depends(db), _: str = Depends(operator)):
+        row = integration.review(session, observation_id, body.note)
+        if row is None:
+            raise HTTPException(404, "no such record")
+        return {"id": row.id, "reviewed_at": row.reviewed_at.isoformat(), "open": integration.is_open(row)}
 
     @app.post("/api/reconcile")
     def reconcile(session: Session = Depends(db), _: str = Depends(operator)):

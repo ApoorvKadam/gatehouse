@@ -33,6 +33,8 @@ log = logging.getLogger("desk.payments")
 
 REVERSALS = {"DIRECT_DEBIT_RETURN": "RETURNED", "REFUNDED": "REFUNDED", "REFUND_INITIATED": "REFUND_PENDING", "DISPUTED": "DISPUTED"}
 WATCHED_AFTER_SUCCESS = ("CONFIRMED", "REFUND_PENDING", "DISPUTED")
+# every payment status the desk acts on; any other is held for a person, never guessed
+KNOWN_STATUSES = frozenset({"SUCCEEDED", "DECLINED", "FAILED", "REJECTED", "PENDING", *REVERSALS})
 # The finality rule: settled payments and paid cases are re-read for this long. Card networks allow disputes up to
 # about 120 days after a transaction and ACH allows unauthorized-debit returns for 60 days; 180 days covers both
 # with room. A payment that comes back after that is found by the next delinquency sync, not by this watch.
@@ -246,6 +248,12 @@ class PaymentService:
         command.balance_before, command.prepaid_before = ledger.total_due, ledger.prepaid
         command.entries_paid_before = {e["bookEntryId"]: e.get("amountPaid", 0) for e in ledger.raw.get("bookEntries", [])}
         command.fms_payments_before = {p.provider_id: p.status for p in known}
+        unknown = [p for p in known if p.status not in KNOWN_STATUSES]
+        if unknown:
+            # it could be a pending payment under a new name: charging now could charge twice, so a person checks first
+            why = f"payment {unknown[0].provider_id} on this lease is {unknown[0].status!r} at the FMS, a status the desk does not know"
+            self._not_submitted(command, why)
+            raise PaymentRefused(why + "; no new payment starts until the FMS reports a status the desk knows")
         pending = [p.provider_id for p in known if p.status == "PENDING"]
         if pending:
             # a payment still pending at the FMS, from anyone, may yet succeed: charging now could charge twice

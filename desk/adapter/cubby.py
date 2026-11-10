@@ -4,17 +4,24 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
+from collections import Counter
 from datetime import datetime, timezone
 
 import httpx
 
 from .base import (
-    AccessCheck, FMSError, InboundText, NotFound, PermissionDenied, ProviderAccessCode, ProviderCustomer, ProviderExemption,
+    AccessCheck, Anomaly, FMSError, InboundText, NotFound, PermissionDenied, ProviderAccessCode, ProviderCustomer, ProviderExemption,
     ProviderLease, ProviderAuctionEntry, ProviderLedger, ProviderLock, ProviderPayment, ProviderTask, SmsOutcome, SmsPreference,
     SubmitOutcome, TaskCreateOutcome,
 )
 
 AUCTION_STATUSES = ("LISTED", "NO_BIDS", "SOLD", "PAYMENT_RECEIVED", "COMPLETE", "CANCELLED")
+# the payment statuses Cubby's documentation lists for each call. Make Payment returns four; the later states (refunded, disputed, returned)
+# appear only on Payments Search, so one of them in a Make Payment answer is outside that call's documentation too.
+PAYMENT_SEARCH_STATUSES = ("SUCCEEDED", "DECLINED", "REJECTED", "FAILED", "REFUND_INITIATED", "REFUNDED", "DISPUTED", "DIRECT_DEBIT_RETURN", "PENDING")
+MAKE_PAYMENT_STATUSES = ("SUCCEEDED", "DECLINED", "FAILED", "PENDING")
+MAX_NOTES = 200
 
 
 def _text(value, optional: bool = False) -> bool:
@@ -30,10 +37,11 @@ def _parse_time(value: str | None) -> datetime | None:
     return parsed.astimezone(timezone.utc).replace(tzinfo=None) if parsed.tzinfo else parsed
 
 
-def _payment(p: dict, amount: int = 0) -> ProviderPayment:
-    return ProviderPayment(provider_id=p.get("paymentId", ""), amount=int(p.get("amount", amount)), status=p.get("status", ""),
-                           reason=p.get("reason"), created_at=_parse_time(p.get("createdAt")),
-                           method_type=p.get("methodType"), customer_provider_id=p.get("customerId"))
+def _safe(value) -> str:
+    """A value for a note, kept only when it is shaped like a status code or a number, so an answer cannot put a name or other free text in the
+    record; anything else is recorded as "(other text)"."""
+    text = str(value)
+    return text if re.fullmatch(r"[A-Z][A-Z0-9_]{0,31}|-?\d{1,12}(?:\.\d{1,4})?|", text) else "(other text)"
 
 
 def _json(response: httpx.Response) -> dict:
@@ -57,9 +65,49 @@ class CubbyAdapter:
     def __init__(self, base_url: str, api_key: str, timeout_seconds: float = 5.0, transport: httpx.BaseTransport | None = None):
         self._http = httpx.Client(base_url=base_url, headers={"Authorization": f"Bearer {api_key}"},
                                   timeout=timeout_seconds, transport=transport)
+        self._notes: Counter[Anomaly] = Counter()
+        self._notes_lock = threading.Lock()
 
     def close(self) -> None:
         self._http.close()
+
+    # ------------------------------------------------------------------ answers the documentation does not describe
+    def _note(self, endpoint: str, field: str, kind: str, value) -> None:
+        """Keep a note that an answer departed from the documentation; the worker writes the notes down (desk/integration.py)."""
+        self.restore_anomalies([Anomaly(endpoint, field, kind, value if kind == "not whole cents" else _safe(value))])
+
+    def take_anomalies(self) -> list[Anomaly]:
+        """The notes kept since the last call, a repeat once per time it came, which are then forgotten here."""
+        with self._notes_lock:
+            taken, self._notes = self._notes, Counter()
+        return list(taken.elements())
+
+    def restore_anomalies(self, notes: list[Anomaly]) -> None:
+        """Keep notes (again, when saving them failed). Repeats are counted, so only the number of different notes is bounded."""
+        with self._notes_lock:
+            for note in notes:
+                if note in self._notes or len(self._notes) < MAX_NOTES:
+                    self._notes[note] += 1
+
+    def _payment(self, p: dict, endpoint: str, listed: tuple[str, ...], amount: int = 0) -> ProviderPayment:
+        """A payment as the FMS sent it, checked against what its documentation says the call returns. A status the documentation does not list is
+        noted and kept exactly as written, never mapped to a known one: the payment service holds a payment with such a status for a person.
+        An amount that is missing or not whole cents is refused, never guessed or rounded."""
+        status = p.get("status", "")
+        if status not in listed:
+            self._note(endpoint, "status", "unlisted value", status)
+        if "amount" not in p:
+            self._note(endpoint, "amount", "missing", "")
+            raise ValueError("the payment has no amount")
+        if isinstance(p["amount"], bool) or not isinstance(p["amount"], int):
+            # the shape, never the amount: one record per kind of change, and no payment amount in the record
+            self._note(endpoint, "amount", "not whole cents", "text" if isinstance(p["amount"], str) else "decimal" if isinstance(p["amount"], float) else "other")
+            raise ValueError(f"amount {p['amount']!r} is not whole cents")
+        if "createdAt" not in p:
+            self._note(endpoint, "createdAt", "missing", "")             # both calls document it, and a payment with no time cannot end a hold
+        return ProviderPayment(provider_id=p.get("paymentId", ""), amount=p["amount"], status=status,
+                               reason=p.get("reason"), created_at=_parse_time(p.get("createdAt")),
+                               method_type=p.get("methodType"), customer_provider_id=p.get("customerId"))
 
     # ------------------------------------------------------------------ reads
     def _read(self, path: str, where: dict) -> dict:
@@ -164,7 +212,7 @@ class CubbyAdapter:
         if not isinstance(data.get("payments"), list):
             raise FMSError("/v1/payments/search: the answer has no payments list")
         try:
-            return [_payment(p) for p in data["payments"]]
+            return [self._payment(p, "payments search", PAYMENT_SEARCH_STATUSES) for p in data["payments"]]
         except (ValueError, TypeError) as exc:
             raise FMSError(f"/v1/payments/search: unreadable payment ({exc})") from exc
 
@@ -324,7 +372,7 @@ class CubbyAdapter:
             # wrongly holding it costs a staff check. So it is looked up, and staff can release it.
             return SubmitOutcome(kind="lost", detail=f"HTTP {response.status_code}", errors=errors)
         try:
-            payment = _payment((payload.get("data") or {}).get("payment") or {}, amount)
+            payment = self._payment((payload.get("data") or {}).get("payment") or {}, "make payment", MAKE_PAYMENT_STATUSES, amount)
         except (ValueError, TypeError):
             return SubmitOutcome(kind="lost", detail="a 200 answer whose payment could not be read")
         kind = {"SUCCEEDED": "accepted", "DECLINED": "declined", "FAILED": "declined", "PENDING": "pending"}.get(payment.status)

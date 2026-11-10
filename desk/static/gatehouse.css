@@ -201,7 +201,7 @@ td.num, th.num { text-align: right; }
 .worklist { border: 1px solid var(--frame); border-radius: 10px; overflow: hidden; margin-top: var(--s5); }
 .worklist table td { padding: var(--s4) var(--s3); }
 .worklist tr:hover td { background: var(--hover); }
-.work-head a { color: var(--ink); font-weight: 600; font-size: var(--t-body); }
+.work-head a, .work-head b { color: var(--ink); font-weight: 600; font-size: var(--t-body); }
 .work-what { color: var(--ink-2); margin-top: 4px; }
 .work-proof { color: var(--ink-2); }
 .worklist th:nth-child(1) { width: 50%; } .worklist th:nth-child(2) { width: 30%; } .worklist th:nth-child(3) { width: 12%; } .worklist th:nth-child(4) { width: 8%; }
