@@ -285,3 +285,10 @@ def test_the_page_says_when_it_is_quiet_hours_at_the_facility(fms_url, sim, monk
         assert "It is quiet hours at this facility" in visitor.get("/reminder-check").text
         monkeypatch.setattr("desk.web.utcnow", lambda: datetime(2026, 11, 10, 17, 0))                       # noon in New York
         assert "It is quiet hours" not in visitor.get("/reminder-check").text
+
+
+def test_the_simulator_can_hold_a_payment_dated_earlier_than_the_desk_has_looked(fms_url, sim):
+    """The control the evaluation uses for a desk that has just started and sees old payments for the first time."""
+    made = sim.post("/sim/payments/offline", {"allocations": {"lease_OkfrE0505": 1000}, "createdAt": "2026-11-09T10:00:00Z"}).json()["data"]["payment"]
+    assert made["createdAt"].startswith("2026-11-09T10:00:00")
+    assert sim.post("/sim/payments/offline", {"allocations": {"lease_OkfrE0505": 1000}, "createdAt": "yesterday"}).status_code == 400

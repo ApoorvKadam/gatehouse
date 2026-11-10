@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 from fastapi import Depends, FastAPI, Header, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
@@ -319,6 +319,13 @@ def create_app(database_url: str | None = None, lose_response_seconds: float = 8
         payment = Payment(payment_id=new_id("payment"), customer_id=leases[0].customer_id,
                           facility_id=leases[0].facility_id, amount=sum(allocations.values()), method_type="CASH",
                           status="SUCCEEDED", reason="Approved", allocations=allocations, applied=True)
+        if body.get("createdAt"):
+            # a payment taken earlier that a reader has not looked at yet: a control the real FMS does not have, like receivedAt on an inbound text
+            try:
+                taken = datetime.fromisoformat(str(body["createdAt"]).replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ApiError(400, "createdAt must be an ISO time") from exc
+            payment.created_at = taken.astimezone(timezone.utc).replace(tzinfo=None) if taken.tzinfo else taken
         session.add(payment)
         for lease in leases:
             apply_to_lease(session, lease, allocations[lease.lease_id], utcnow())

@@ -104,11 +104,13 @@ The worker reads all of it from the FMS on each pass and keeps one verdict per a
 
 ## Evaluation
 
-Every image build runs `python -m desk.evaluate` against its own throwaway simulator and writes the report that the `/evaluation` page shows. It has four parts: payments, access, lien sales, and texts typed as a tenant. A part holds scenarios (what the FMS did, what Gatehouse did, who hears what), red lines and wrong builds.
+Every image build runs `python -m desk.evaluate` against its own throwaway simulator and writes the report that the `/evaluation` page shows. It has five parts: payments, access, lien sales, texts typed as a tenant, and the reminder check. A part holds scenarios (what the FMS did, what Gatehouse did, who hears what), red lines and wrong builds.
 
 A red line is something that must never happen. Examples are a duplicate charge, a write to the FMS other than a task, a text sent after STOP, and one visitor's text reaching another. Each is counted from the simulator's record or the desk's rows, never from what the desk believes. It is shown with what it was counted over, for example 0 of 174 requests. A line above zero fails the build, and so does a line that nothing was checked against.
 
 A wrong build is the same run with one check taken out, such as a build that cannot tell visitors apart. The checks must catch it, or the build fails.
+
+The reminder check part runs eleven scenarios: STOP, a payment arrangement the FMS has not paused, a lien file, a payment in progress, an FMS that cannot be read, a clear account, a promise to pay in the tenant's own words, an attempt to lift the hold, a payment made before the text, a payment made after it, and a text that says wrong number. Its five red lines are counted from the simulator's record: a tenant who texted STOP shown clear, an account shown clear after a failed reading, a hold lifted, a fact about the account texted to a wrong number, and a hold ended by a payment dated before the text. Its two wrong builds treat a failed reading as clear and date a payment by when the desk first looked at it.
 
 ### Our agent's reading of tenants' texts, measured
 
