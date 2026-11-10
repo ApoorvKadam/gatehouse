@@ -26,7 +26,8 @@ from .db import utcnow
 from .investigator import REMINDER_KINDS
 from .liens import dollars
 from .messaging import STOP_WORDS, Verdict, keyword, may_text, mine
-from .models import AgentRun, Facility, InboundMessage, Lease, LienEvaluation, ObservedPayment, PaymentCommand, ReminderCheck, WorkItem
+from .models import (AgentRun, Facility, InboundMessage, Lease, LienEvaluation, ObservedPayment, OutboundMessage, PaymentCommand, ReminderCheck,
+                     WorkItem)
 from .payments import CLOCK_SKEW
 from .sales import SALE_KINDS
 
@@ -214,6 +215,23 @@ def _first(name: str | None) -> str:
     return first if re.fullmatch(r"[A-Za-z][A-Za-z'\-]{0,29}", first) else "The tenant"
 
 
+def hold_note(text: dict, rows: list[dict]) -> dict | None:
+    """What a message's case notes say about the wait our agent asked for on it, set against the Reminder check as it is now: the wait stands
+    on a row, it has ended (seven days passed, or the FMS showed a payment), or none of the tenant's units is past due, so nothing is held.
+    Only a wait that stands has a row to look at, so only then is there a link."""
+    ask = (text.get("investigation") or {}).get("reminder")
+    if not ask:
+        return None
+    theirs = [r for r in rows if r.get("customer") and r["customer"] == text["match"]["customer_id"]]
+    read = f'Our agent read their words as {KIND_WORDS[ask["kind"]]}: "{ask["quote"]}"'
+    stop = "" if ask["quote"][-1] in ".!?" else "."
+    if any(text["id"] in r.get("held_by", []) for r in theirs):
+        return {"line": f"{read}{stop} It asked the facility to wait before texting them, and the check now holds their texts for a person.", "stands": True}
+    if theirs:
+        return {"line": f"{read}{stop} The wait it asked for has ended.", "stands": False}
+    return {"line": f"{read}{stop} None of their units is past due, so there is nothing to hold.", "stands": False}
+
+
 def with_texts(session: Session, facility: Facility, rows: list[dict], now: datetime | None = None, visitor: str | None = None) -> list[dict]:
     """Add what the tenants' own words say to the rows read from the FMS. Our agent reads a text when someone explores it; if its accepted
     reading asked the facility to wait, that tenant's row holds for HOLD_DAYS from the text, or until the FMS confirms a payment made after it.
@@ -226,7 +244,9 @@ def with_texts(session: Session, facility: Facility, rows: list[dict], now: date
     if not texts:
         return rows
     runs = session.scalars(select(AgentRun).where(AgentRun.status == "done", mine(AgentRun, visitor), AgentRun.inbound_id.in_([t.id for t in texts]))).all()
-    read = {run.inbound_id for run in runs}
+    # a text is looked at when our agent read it or when someone answered it: only a text nobody has touched is noted
+    read = {run.inbound_id for run in runs} | set(session.scalars(select(OutboundMessage.inbound_id).where(
+        OutboundMessage.inbound_id.in_([t.id for t in texts]), OutboundMessage.state.in_(("sent", "outcome_unknown")))))
     paid = list(session.scalars(select(ObservedPayment).where(ObservedPayment.status == "SUCCEEDED", ObservedPayment.paid_at > since)))
     zone = facility.time_zone
 
@@ -263,6 +283,8 @@ def with_texts(session: Session, facility: Facility, rows: list[dict], now: date
             out.append(row)
             continue
         row = {**row, "also": list(row.get("also") or [])}
+        if live:
+            row["held_by"] = sorted(int(ask["text_id"].rsplit(":", 1)[1]) for _, ask in live)       # the messages whose wait stands on this row
         if why is not None:
             if row["state"] == CLEAR:
                 row.update(state=HOLD, code="texts", label=LABELS["texts"], why=why)
