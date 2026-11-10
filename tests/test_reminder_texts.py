@@ -66,34 +66,35 @@ def test_a_request_that_quotes_the_tenants_text_is_kept_with_the_tenants_own_wor
         assert run.status == "done"
         kept = run.packet["reminder"]
         assert (kept["kind"], kept["text_id"], kept["quote"]) == ("promise_to_pay", f"text:in:{m.id}", "I can pay on Friday")      # the tenant's casing, one space
-        assert run.verified["reminder"] == {"asked": True, "accepted": True, "why": ""}
+        assert run.verified["reminder"] == {"asked": True, "accepted": True, "why": "", "kind": "promise_to_pay"}
         assert run_view(run)["reminder"] == kept
 
 
 QUOTE = "I can pay on Friday"
 BAD_QUOTE, BAD_KIND, BAD_TEXT = "the quote is not in that text word for word", "the kind is not one of the allowed values", "it rests on a text other than the one being read"
+# what each refused request was, as the desk answers: the reason, and the kind the agent said the words mean (None when the kind itself was refused)
 CASES = {
-    "another quote": (lambda m: ask(text_id=f"text:in:{m.id}", quote="I will pay Monday"), BAD_QUOTE),
-    "a changed quote": (lambda m: ask(text_id=f"text:in:{m.id}", quote="I can pay on Friday!!"), BAD_QUOTE),
-    "no quote": (lambda m: ask(text_id=f"text:in:{m.id}", quote=""), BAD_QUOTE),
-    "a quote that ends inside a word": (lambda m: ask(text_id=f"text:in:{m.id}", quote="my paychec"), BAD_QUOTE),
-    "a quote that starts inside a word": (lambda m: ask(text_id=f"text:in:{m.id}", quote="ay on Friday"), BAD_QUOTE),
-    "a made-up kind": (lambda m: ask(kind="threat", text_id=f"text:in:{m.id}", quote=QUOTE), BAD_KIND),
-    "the none kind with hold true": (lambda m: ask(kind="none", text_id=f"text:in:{m.id}", quote=QUOTE), BAD_KIND),
-    "a text the run never read": (lambda m: ask(text_id="text:in:99999", quote=QUOTE), BAD_TEXT),
-    "a record that is not a text": (lambda m: ask(text_id="payment:1", quote=QUOTE), BAD_TEXT),
-    "an id with extra words": (lambda m: ask(text_id="text:in:1; drop table", quote=QUOTE), BAD_TEXT),
+    "another quote": (lambda m: ask(text_id=f"text:in:{m.id}", quote="I will pay Monday"), BAD_QUOTE, "promise_to_pay"),
+    "a changed quote": (lambda m: ask(text_id=f"text:in:{m.id}", quote="I can pay on Friday!!"), BAD_QUOTE, "promise_to_pay"),
+    "no quote": (lambda m: ask(text_id=f"text:in:{m.id}", quote=""), BAD_QUOTE, "promise_to_pay"),
+    "a quote that ends inside a word": (lambda m: ask(text_id=f"text:in:{m.id}", quote="my paychec"), BAD_QUOTE, "promise_to_pay"),
+    "a quote that starts inside a word": (lambda m: ask(text_id=f"text:in:{m.id}", quote="ay on Friday"), BAD_QUOTE, "promise_to_pay"),
+    "a made-up kind": (lambda m: ask(kind="threat", text_id=f"text:in:{m.id}", quote=QUOTE), BAD_KIND, None),
+    "the none kind with hold true": (lambda m: ask(kind="none", text_id=f"text:in:{m.id}", quote=QUOTE), BAD_KIND, None),
+    "a text the run never read": (lambda m: ask(text_id="text:in:99999", quote=QUOTE), BAD_TEXT, "promise_to_pay"),
+    "a record that is not a text": (lambda m: ask(text_id="payment:1", quote=QUOTE), BAD_TEXT, "promise_to_pay"),
+    "an id with extra words": (lambda m: ask(text_id="text:in:1; drop table", quote=QUOTE), BAD_TEXT, "promise_to_pay"),
 }
 
 
 @pytest.mark.parametrize("case", list(CASES))
 def test_a_request_that_fails_is_dropped_with_the_reason_and_the_rest_of_the_packet_stands(factory, case):  # noqa: F811
-    build, why = CASES[case]
+    build, why, asked = CASES[case]
     with factory() as s:
         m = add_text(s, "I can pay on Friday, my paycheck comes then.")
         run, _ = submit(m, build(m), "r1", s)
         assert run.status == "done" and run.packet["intent"] == "balance_question" and "reminder" not in run.packet
-        assert run.verified["reminder"] == {"asked": True, "accepted": False, "why": why}
+        assert run.verified["reminder"] == {"asked": True, "accepted": False, "why": why, "kind": asked}
 
 
 def test_a_long_run_of_spaces_in_the_text_does_not_make_a_short_quote_too_long(factory):  # noqa: F811
@@ -122,7 +123,7 @@ def test_a_request_can_rest_only_on_the_text_being_read(factory):  # noqa: F811
                   add_text(s, "I will pay on Friday, not matched yet.", matched=False)]
         for text in others:
             kept, answer = check_reminder(mine, ask(text_id=f"text:in:{text.id}", quote="I will pay on Friday"))
-            assert kept is None and answer == {"asked": True, "accepted": False, "why": BAD_TEXT}
+            assert kept is None and answer == {"asked": True, "accepted": False, "why": BAD_TEXT, "kind": "promise_to_pay"}
         # quoting the other text's words under this message's id fails the quote check instead
         kept, answer = check_reminder(mine, ask(text_id=f"text:in:{mine.id}", quote="I will pay on Friday"))
         assert kept is None and answer["why"] == BAD_QUOTE
@@ -425,3 +426,13 @@ def test_a_payment_the_fms_posts_after_the_hold_ends_it_through_the_real_path(fm
         assert client.post("/api/reconcile", headers={"X-Desk-Token": TOKEN}).status_code == 200
         [after] = check_rows(client, "Omar")
         assert after["state"] == "clear" and "held_by" not in after
+
+
+def test_a_reply_to_a_wrong_number_text_carries_no_account_fact_even_when_the_request_is_refused(factory, adapter):  # noqa: F811
+    """The agent read the text as a wrong number but misquoted it, so the desk drops the request. The reading still stands for the reply."""
+    with factory() as s:
+        m, reply = reply_to_gina(s, adapter, "This is not my account, you have the wrong number.", "wrong_number", "this is not my phone number", "wrong-2")
+        run = s.scalar(select(AgentRun).where(AgentRun.inbound_id == m.id))
+        assert run.verified["reminder"] == {"asked": True, "accepted": False, "why": BAD_QUOTE, "kind": "wrong_number"} and "reminder" not in run.packet
+        assert reply["outcome"] == "not_sent" and reply["body"] == ""
+        assert {(d["label"], d["why"]) for d in reply["dropped"]} == {("Balance", "they say it is not their number or account")}
