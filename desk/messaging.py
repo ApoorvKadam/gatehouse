@@ -260,11 +260,11 @@ def stop_text(session: Session, phone: str, visitor: str | None = None) -> Inbou
     return _stop_among(session, phone, InboundMessage.visitor == visitor)
 
 
-def can_text(session: Session, facility: Facility, customer: ProviderCustomer | None, now: datetime, *,
-             reply_to: InboundMessage | None = None) -> Verdict:
-    """May the desk text this customer now? Cubby texts the number it holds for the customer and the desk has to look at
-    every preference, so the checks are here. `customer` is the tenant as the FMS shows them at this moment, or None when
-    nobody is named. Gatehouse sends account messages and never promotions, so the marketing flag is not consulted.
+def may_text(session: Session, customer: ProviderCustomer | None, *, reply_to: InboundMessage | None = None,
+             zone: str = "America/New_York") -> Verdict:
+    """May the desk text this customer at all, at any hour? Cubby texts the number it holds for the customer and the desk has to
+    look at every preference, so the checks are here. `zone` is the facility's, so a date in a reason is the date there. `customer` is the
+    tenant as the FMS shows them at this moment, or None when nobody is named. Gatehouse sends account messages and never promotions, so the marketing flag is not consulted.
     The carrier refuses a number that texted STOP; the desk's own record is a second layer, not the first."""
     if customer is None:
         return Verdict(False, "Cubby texts only a customer on file, so a person has to answer this number.")
@@ -275,8 +275,8 @@ def can_text(session: Session, facility: Facility, customer: ProviderCustomer | 
                               f"not the number that texted (ending {last4(reply_to.phone)}).")
     stop = stop_text(session, customer.phone, reply_to.visitor if reply_to is not None else None)
     if stop is not None:
-        return Verdict(False, f"This number texted {keyword(stop.body)} on {stop.received_at:%b} {stop.received_at.day}. "
-                              "It stays off until they text START.")
+        sent = stop.received_at.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(zone))
+        return Verdict(False, f"This number texted {keyword(stop.body)} on {sent:%b} {sent.day}. It stays off until they text START.")
     sms = customer.sms
     if sms is None:
         return Verdict(False, "The FMS shows no text preferences for this tenant, so Gatehouse cannot tell whether texts are allowed.")
@@ -286,13 +286,27 @@ def can_text(session: Session, facility: Facility, customer: ProviderCustomer | 
         if sms.reason == "OPTED_OUT":
             return Verdict(False, "The FMS records this tenant as opted out of texts.")
         return Verdict(False, "The FMS has this tenant's texts switched off.")
-    if reply_to is not None and now - reply_to.received_at <= REPLY_WINDOW:
-        return Verdict(True)
-    # a text the tenant did not just ask for
-    local = now.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(facility.time_zone)).time()
-    if local >= QUIET_FROM or local < QUIET_UNTIL:
-        return Verdict(False, "Quiet hours at this facility: no text it starts goes out between 9 PM and 8 AM local time.")
     return Verdict(True)
+
+
+def in_quiet_hours(facility: Facility, now: datetime) -> bool:
+    local = now.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(facility.time_zone)).time()
+    return local >= QUIET_FROM or local < QUIET_UNTIL
+
+
+def can_text(session: Session, facility: Facility, customer: ProviderCustomer | None, now: datetime, *,
+             reply_to: InboundMessage | None = None) -> Verdict:
+    """May the desk text this customer now: the tenant may be texted at all, and either has just written (an answer to that is not a
+    text out of the blue) or it is not quiet hours at the facility."""
+    verdict = may_text(session, customer, reply_to=reply_to, zone=facility.time_zone)
+    if not verdict.ok:
+        return verdict
+    if reply_to is not None and now - reply_to.received_at <= REPLY_WINDOW:
+        return verdict
+    # a text the tenant did not just ask for
+    if in_quiet_hours(facility, now):
+        return Verdict(False, "Quiet hours at this facility: no text it starts goes out between 9 PM and 8 AM local time.")
+    return verdict
 
 
 # ---------------------------------------------------------------- outbound

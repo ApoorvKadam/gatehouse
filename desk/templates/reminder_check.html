@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Reminder check, {{ facility.name }} | Gatehouse{% endblock %}
+{% block main %}
+<div class="wrap">
+  <div class="head">
+    <h1>Reminder check at {{ facility.name }}</h1>
+    {% if rows %}<p>{{ holds }} of {{ rows|length }} past-due {{ 'account' if rows|length == 1 else 'accounts' }} should not get a text today</p>{% endif %}
+  </div>
+  <p class="lede">Your reminder tool decides who to text. This is the check in front of it: for every past-due account, whether a collections text may go, and the reason when one may not. Gatehouse sends nothing.</p>
+  {% if quiet %}<p class="lede">It is quiet hours at this facility, 9 PM to 8 AM, so no text should go out now whatever the rows say.</p>{% endif %}
+  {% if rows %}
+  <div class="worklist check">
+    <table>
+      <thead><tr><th>Account</th><th>Check</th><th class="num">Days late</th><th class="num">Owes</th></tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td>
+            <div class="work-head">Unit {{ r.unit }}</div>
+            {% if r.tenant %}<span class="muted small">{{ r.tenant }}</span>{% endif %}
+          </td>
+          <td>
+            <span class="chip {{ chips.get(r.code, 'plain') }}">{{ r.label }}</span>
+            <p class="work-what">{{ r.why|readable }}</p>
+            {% for other in r.also %}<p class="work-proof">Also: {{ other|readable }}</p>{% endfor %}
+          </td>
+          <td class="num">{{ r.overdue_days if r.overdue_days is not none else 'unknown' }}</td>
+          <td class="num amount">{{ money(r.owed) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">No account at this facility is past due.</p>
+  {% endif %}
+</div>
+{% endblock %}

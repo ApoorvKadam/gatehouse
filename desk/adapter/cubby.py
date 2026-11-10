@@ -204,7 +204,8 @@ class CubbyAdapter:
         if not isinstance(rows, list):
             raise FMSError("/v1/delinquency-exemptions/search: the answer has no delinquencyExemptions list")
         return [ProviderExemption(lease_provider_id=r["leaseId"], reason=r.get("reason") or "", end_date=r.get("endDate") or "",
-                                  pause_overlock=bool(r.get("pauseOverlock")), note=r.get("note")) for r in rows]
+                                  pause_overlock=bool(r.get("pauseOverlock")), note=r.get("note"),
+                                  pause_collections_messages=bool(r.get("pauseCollectionsMessages"))) for r in rows]
 
     def tasks_for(self, scope: str, value: str) -> list[ProviderTask]:
         rows = self._read("/v1/tasks/search", {scope: value}).get("tasks")

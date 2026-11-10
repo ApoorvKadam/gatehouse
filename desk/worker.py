@@ -19,6 +19,7 @@ from .db import refresh_binding
 from .investigator import fail_stranded_runs
 from .messaging import file_unrouted, hold_stranded, match_pending
 from .payments import PaymentService
+from .reminder_check import reconcile_reminder_checks
 from .sales import reconcile_sales
 
 log = logging.getLogger("desk.worker")
@@ -50,6 +51,14 @@ def run_once(factory: sessionmaker[Session], adapter: FMSAdapter, run_id: str = 
             failures += len(sales.failures)
             if sales.opened or sales.closed:
                 log.info("sales at %s: %d opened, %d closed", facility.provider_id, sales.opened, sales.closed)
+            try:
+                checked_texts = reconcile_reminder_checks(session, adapter, facility)
+                failures += len(checked_texts.failures)
+            except Exception:
+                # the reminder check is read by a page and an API; a bug in it must not stop the texts from being matched or the sales read
+                session.rollback()
+                failures += 1
+                log.exception("reminder check at %s failed", facility.provider_id)
             try:
                 matched = match_pending(session, adapter, facility)
             except FMSError as exc:

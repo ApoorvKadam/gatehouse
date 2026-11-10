@@ -205,6 +205,7 @@ td.num, th.num { text-align: right; }
 .work-what { color: var(--ink-2); margin-top: 4px; }
 .work-proof { color: var(--ink-2); }
 .worklist th:nth-child(1) { width: 50%; } .worklist th:nth-child(2) { width: 30%; } .worklist th:nth-child(3) { width: 12%; } .worklist th:nth-child(4) { width: 8%; }
+.worklist.check th:nth-child(1) { width: 18%; } .worklist.check th:nth-child(2) { width: 62%; } .worklist.check th:nth-child(3) { width: 10%; } .worklist.check th:nth-child(4) { width: 10%; }
 .work-proof b { display: block; color: var(--ink-3); font-size: var(--t-xs); font-weight: 600; margin-bottom: 2px; }
 .amount { font-weight: 600; }
 .empty { padding: var(--s6); color: var(--ink-2); }
