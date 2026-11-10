@@ -235,7 +235,8 @@ def exp_wrong_number(app, model, url: str, judge: Judge) -> dict:
         model.turns = [[tool("get_account", id_="a1")], [tool("draft_reply", {"components": [part("message_received"), part("balance_as_of", f"lease:{lease_id}"),
                                                                                          part("acknowledgment")]}, id_="a2")],
                        *says(text["id"], "wrong_number", quote)]
-        refused.append(explore(client, text["id"]).json().get("verified", {}).get("reminder", {}).get("accepted") is False)
+        outcome = explore(client, text["id"]).json()
+        refused.append(((outcome.get("verified") or {}).get("reminder") or {}).get("accepted") is False)       # a run that did not finish has no answer
         judge.fact[1] += 1
     sent = [m for m in httpx.get(f"{url}/sim/messages/truth", params={"facilityId": ORLANDO}, headers=AUTH, timeout=15).json()["data"]["messages"]
             if m["direction"] == "OUTBOUND" and m["phone"] == OMAR_PHONE]
