@@ -344,6 +344,8 @@ class InboundMessage(Base):
     # a text a visitor typed to play the tenant belongs to that visitor and is seen, counted and answered only inside their own
     # space. A text that came from the webhook has none, and nothing a visitor does can reach it.
     visitor: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    # a file sent with the text, by its sample key (desk/intake.py). Cubby's webhook carries no media, so only the desk's own inbox sets it.
+    attachment: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class OutboundMessage(Base):
@@ -417,6 +419,8 @@ class AgentRun(Base):
     facts: Mapped[dict] = mapped_column(JSON, default=dict)
     packet: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     verified: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # the file sent with the text: what our agent read off it (the tenant's claim) and the desk's own comparison with the FMS
+    file: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # what the desk did for this run after it checked the packet: for now, the staff review it asked the FMS for or linked. The model
     # only asks; the desk decides, acts and reads the result back from the FMS.
     actions: Mapped[list] = mapped_column(JSON, default=list)
