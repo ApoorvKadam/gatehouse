@@ -78,7 +78,7 @@ REVERSED = {
 # the chip a reason takes on the Reminder check: red only for a tenant who must not be texted, amber for what needs a fix or a wait
 CHECK_CHIPS = {"consent": "act", "unpaused": "wait", "payment": "wait", "unread": "wait", "clear": "done"}
 RENT_CHIPS = {"hold": "act", "not_applied": "act", "wrong_charge": "act", "review": "wait", "cannot_tell": "plain", "clear": "done", "verified": "done"}
-STEP_CHIPS = {"done": "done", "wrong": "act", "unproven": "wait", "waiting": "plain", "unknown": "plain"}
+STEP_CHIPS = {"done": "done", "wrong": "act", "unproven": "wait", "waiting": "plain", "unknown": "plain", "seen": "plain"}
 EVIDENCE_NAMES = {"notice": "Lien notice", "mail_deposit": "Certificate of mailing", "posting": "Notice posted",
                   "publication": "Newspaper publication", "legal_check": "Legal check", "email_delivery": "Email delivery"}
 
@@ -329,7 +329,7 @@ class Pages:
             if r["state"] in rent_changes.TODAY:
                 rank, head, proof, who = rent_changes.TODAY[r["state"]]
                 since = datetime.fromisoformat(r["since"]) if r.get("since") else r["observed_at"]
-                out.append(Item(rank, head, r["unit"], 0, since, r["why"], proof, who, f"/rent-changes#unit-{r['unit']}",
+                out.append(Item(rank, head, r["unit"], 0, since, r["why"], proof, who, f"/rent-changes?facility={facility.provider_id}#unit-{r['unit']}",
                                 money(r["new"]) if isinstance(r.get("new"), int) else money(r["rent"]) if isinstance(r.get("rent"), int) else ""))
         return out
 

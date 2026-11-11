@@ -42,14 +42,15 @@ NOTICE_WHY = "No record the FMS keeps says a rent notice was sent, so every noti
 # the verdicts, in the order the page lists them, and what the page calls each
 ORDER = ("hold", "not_applied", "wrong_charge", "review", "cannot_tell", "clear", "verified")
 LABELS = {"hold": "A person decides", "not_applied": "Not applied", "wrong_charge": "Billed at another amount", "review": "Review",
-          "cannot_tell": "Cannot tell yet", "clear": "Nothing in the way", "verified": "Applied and billed"}
+          "cannot_tell": "Cannot tell yet", "clear": "Nothing in the way", "verified": "Billed at the FMS rent"}
 # the rows that are unfinished work, as Today shows them: (rank, heading, what proves it done, who acts)
-TODAY = {"hold": (2, "Rent increase on an account a person must weigh", "A person decides the increase stands, or it is cancelled in the FMS.",
-                  "Collections lead"),
+TODAY = {"hold": (2, "Rent increase on an account a person must weigh",
+                  "Leases Search no longer shows the increase, or the lien file or sale on the account is closed.", "Collections lead"),
          "not_applied": (2, "Rent change not applied", "Leases Search shows the new rent, or no change scheduled for a date that has passed.",
-                         "Office manager"),
-         "wrong_charge": (2, "Rent billed at another amount", "A later full period billed at the rent the FMS reports, or a recorded reason.",
-                          "Office manager")}
+                         "Front desk"),
+         "wrong_charge": (2, "Rent billed at another amount",
+                          "The ledger's RENT charges for that period add up to the rent the FMS reports, for example after a correcting charge.",
+                          "Front desk")}
 
 
 def in_lease_cycle(amount: int, facility_cycle: str | None, lease_cycle: str | None) -> int | None:
@@ -128,15 +129,23 @@ def upcoming(f: RentFacts, when: date, acct: Account, today: date) -> dict:
     return {"state": state, "why": why, "also": rest, "pct": pct, "steps": steps}
 
 
-def first_full_period(entries: list[dict], since: date) -> dict | None:
-    """The first RENT charge whose period starts on or after the change date: a period that straddles the date may mix both rents."""
-    rent = []
+def first_full_period(entries: list[dict], since: date) -> tuple[date, date | None, int] | None:
+    """The first billing period that starts on or after the change date (a period that straddles the date may mix both rents), with every
+    RENT charge for it added up, so a correcting charge counts. None when no such charge is billed yet, or one has an amount of another shape."""
+    periods: dict[date, list[dict]] = {}
     for e in entries:
         d = e.get("details") or {}
         start = parse_day(d.get("accruesOn"))
         if e.get("type") == "CHARGE" and d.get("category") == "RENT" and start is not None and start >= since:
-            rent.append((start, e))
-    return min(rent, key=lambda pair: pair[0])[1] if rent else None
+            periods.setdefault(start, []).append(e)
+    if not periods:
+        return None
+    start = min(periods)
+    charges = periods[start]
+    if not all(isinstance(e.get("amount"), int) and not isinstance(e.get("amount"), bool) for e in charges):
+        return None
+    through = max((t for t in (parse_day((e.get("details") or {}).get("accruesThrough")) for e in charges) if t), default=None)
+    return start, through, sum(e["amount"] for e in charges)
 
 
 def completed(f: RentFacts, since: date, entries: list[dict] | None, today: date) -> dict:
@@ -144,7 +153,7 @@ def completed(f: RentFacts, since: date, entries: list[dict] | None, today: date
     steps = [("Scheduled", "done", f"Completed on {day(since)}, per the FMS."),
              ("Notice", "unproven", NOTICE)]
     expected = f.roll_rent if f.roll_rent is not None else (in_lease_cycle(f.rent, f.facility_cycle, f.lease_cycle) if f.rent is not None else None)
-    steps.append(("Applied", "done" if f.rent is not None else "unknown",
+    steps.append(("Applied", "seen" if f.rent is not None else "unknown",
                   f"The FMS rent is now {dollars(f.rent)}" + (f", {dollars(expected)} per billing period of this lease." if expected not in (None, f.rent) else ".")
                   if f.rent is not None else "The FMS rent could not be read."))
 
@@ -158,15 +167,11 @@ def completed(f: RentFacts, since: date, entries: list[dict] | None, today: date
                     "Cannot tell from the rent alone; a person compares the bill with the discount.")
     if entries is None:
         return tell("cannot_tell", "The ledger could not be read on this pass.", "Cannot tell yet.")
-    charge = first_full_period(entries, since)
-    if charge is None:
+    found = first_full_period(entries, since)
+    if found is None:
         return tell("cannot_tell", "No full billing period after the change has been billed yet.", "Waiting for the first full period.")
-    d = charge.get("details") or {}
-    period = f"{day(parse_day(d.get('accruesOn')))} to {day(parse_day(d.get('accruesThrough')))}" if parse_day(d.get("accruesThrough")) else \
-        f"from {day(parse_day(d.get('accruesOn')))}"
-    amount = charge.get("amount")
-    if not isinstance(amount, int) or isinstance(amount, bool):
-        return tell("cannot_tell", "The ledger sent a charge amount Gatehouse does not read.", "Cannot tell.")
+    start, through, amount = found
+    period = f"{day(start)} to {day(through)}" if through else f"from {day(start)}"
     if amount == expected:
         return tell("verified", f"The first full period after the change, {period}, was billed {dollars(amount)}, the rent the FMS reports.",
                     f"{period}: {dollars(amount)}, as expected.")
@@ -174,17 +179,15 @@ def completed(f: RentFacts, since: date, entries: list[dict] | None, today: date
                 f"{dollars(expected)} for that period.", f"{period}: {dollars(amount)}, expected {dollars(expected)}.")
 
 
-def overdue_schedule(f: RentFacts, when: date, entries: list[dict] | None) -> dict:
-    """A change still scheduled for a date that has passed."""
+def overdue_schedule(f: RentFacts, when: date, entries: list[dict] | None, today: date) -> dict:
+    """A change still scheduled for a date that has passed. If the rent is already the new one, the change is applied and the bill is checked
+    from the scheduled date; otherwise it was not applied."""
     if f.rent is not None and f.rent == f.scheduled_amount:
-        why = f"The rent is already {dollars(f.rent)}, but the FMS still shows the change as scheduled for {day(when)}."
-    else:
-        why = (f"The FMS still shows this change as scheduled for {day(when)}, which has passed, and the rent is still "
-               f"{dollars(f.rent) if f.rent is not None else 'unreadable'}.")
-    charge = first_full_period(entries or [], when)
-    also = []
-    if charge is not None and isinstance(charge.get("amount"), int) and f.scheduled_amount is not None:
-        also.append(f"The period from {day(parse_day((charge.get('details') or {}).get('accruesOn')))} was billed {dollars(charge['amount'])}.")
+        return completed(f, when, entries, today)
+    why = (f"The FMS still shows this change as scheduled for {day(when)}, which has passed, and the rent is still "
+           f"{dollars(f.rent) if f.rent is not None else 'unreadable'}.")
+    found = first_full_period(entries or [], when)
+    also = [f"The period from {day(found[0])} was billed {dollars(found[2])}."] if found is not None else []
     steps = [("Scheduled", "done", f"The FMS shows {dollars(f.scheduled_amount)} from {day(when)}." if f.scheduled_amount is not None else
               f"The FMS shows a change on {day(when)}."),
              ("Notice", "unproven", NOTICE),
@@ -214,15 +217,16 @@ def reconcile_rent_changes(session: Session, adapter: FMSAdapter, facility: Faci
     exemptions: dict[str, list[ProviderExemption]] = {}
     for f in facts:
         when, last = parse_day(f.scheduled_date), parse_day(f.last_change)
-        if when is None and (last is None or (today - last).days > SHOWN_FOR):
-            continue
         pl = leases.get(f.lease_provider_id)
-        if pl is None:
+        if pl is None or (when is None and last is None):
             continue
         lease = ensure_lease(session, facility, pl, adapter.provider)
+        before = session.get(RentChangeCheck, lease.id)
+        if when is None and (today - last).days > SHOWN_FOR and not (before and (before.data or {}).get("state") in TODAY):
+            continue        # an old change drops off the page; one still waiting for a person stays until its fact arrives
         try:
             customer = adapter.customer(f.customer_provider_id) if f.customer_provider_id else None
-            if when is not None and when > today:
+            if when is not None and when >= today:
                 if f.customer_provider_id not in exemptions:
                     exemptions[f.customer_provider_id] = adapter.exemptions_for_customer(f.customer_provider_id)
                 acct = Account(owed=pl.total_due, lien=_lien_or_sale(session, lease),
@@ -230,7 +234,7 @@ def reconcile_rent_changes(session: Session, adapter: FMSAdapter, facility: Faci
                 row = upcoming(f, when, acct, today)
             else:
                 entries = (adapter.ledger(f.lease_provider_id).raw.get("bookEntries") or [])
-                row = overdue_schedule(f, when, entries) if when is not None else completed(f, last, entries, today)
+                row = overdue_schedule(f, when, entries, today) if when is not None else completed(f, last, entries, today)
         except FMSError as exc:
             result.failures.append(f"{f.lease_provider_id}: {exc}")
             kept.add(lease.id)          # the last good row stands until a reading succeeds

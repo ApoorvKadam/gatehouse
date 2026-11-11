@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from desk.adapter.base import RentFacts
 from desk.models import Facility, Lease, RentChangeCheck
-from desk.rent_changes import NOTICE, NOTICE_WHY, completed, in_lease_cycle, reconcile_rent_changes
+from desk.rent_changes import NOTICE, NOTICE_WHY, Account, completed, in_lease_cycle, overdue_schedule, reconcile_rent_changes, upcoming
 
 from .conftest import ORLANDO
 from .test_investigator import factory  # noqa: F401
@@ -84,7 +84,7 @@ def test_the_page_today_and_the_api_show_the_work_in_plain_words(fms_url, sim, a
             reconcile_rent_changes(s, adapter, facility)
         page = html.unescape(visitor.get("/rent-changes").text)
         assert "Rent changes at Northstar Storage, Orlando East" in page and 'href="/rent-changes"' in page
-        assert "Billed at another amount" in page and "Not applied" in page and "Applied and billed" in page and "Cannot tell yet" in page
+        assert "Billed at another amount" in page and "Not applied" in page and "Billed at the FMS rent" in page and "Cannot tell yet" in page
         assert "Gatehouse sets no price and changes no rent." in page and page.count(NOTICE_WHY) == 1
         assert "lease_" not in page and "not_applied" not in page and "wrong_charge" not in page and "cannot_tell" not in page
         today = html.unescape(visitor.get("/today").text)
@@ -92,3 +92,31 @@ def test_the_page_today_and_the_api_show_the_work_in_plain_words(fms_url, sim, a
             assert head in today, head
         api = visitor.get(f"/api/facilities/{ORLANDO}/rent-changes").json()
         assert {r["unit"] for r in api["rent_changes"]} >= {"G-118", "H-204", "M-611"}
+
+
+def rent(amount, start, through, paid=0):
+    return {"type": "CHARGE", "amount": amount, "amountPaid": paid, "details": {"category": "RENT", "accruesOn": start, "accruesThrough": through}}
+
+
+def test_a_correcting_charge_for_the_same_period_closes_a_wrong_bill():
+    from datetime import date
+    f = RentFacts("lease_x", "cust_x", "H-1", "MONTHLY", "MONTHLY", 15500, None, None)
+    billed = [rent(14000, "2026-10-07", "2026-11-06")]
+    assert completed(f, date(2026, 10, 7), billed, date(2026, 11, 11))["state"] == "wrong_charge"
+    corrected = billed + [rent(1500, "2026-10-07", "2026-11-06")]
+    assert completed(f, date(2026, 10, 7), corrected, date(2026, 11, 11))["state"] == "verified"
+
+
+def test_a_change_past_its_date_with_the_rent_already_new_is_applied_and_its_bill_checked():
+    from datetime import date
+    applied = RentFacts("lease_x", "cust_x", "M-1", "MONTHLY", "MONTHLY", 11800, "2026-11-06", 11800)
+    assert overdue_schedule(applied, date(2026, 11, 6), [rent(11800, "2026-11-06", "2026-12-05")], date(2026, 11, 11))["state"] == "verified"
+    stuck = RentFacts("lease_x", "cust_x", "M-1", "MONTHLY", "MONTHLY", 11000, "2026-11-06", 11800)
+    assert overdue_schedule(stuck, date(2026, 11, 6), [rent(11000, "2026-11-06", "2026-12-05")], date(2026, 11, 11))["state"] == "not_applied"
+
+
+def test_a_change_due_today_is_still_upcoming(factory, adapter):  # noqa: F811
+    from datetime import date
+    f = RentFacts("lease_x", "cust_x", "J-1", "MONTHLY", "MONTHLY", 10000, "2026-11-11", 10700)
+    row = upcoming(f, date(2026, 11, 11), Account(), date(2026, 11, 11))
+    assert row["state"] == "clear" and "has passed" not in row["why"]
