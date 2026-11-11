@@ -392,6 +392,28 @@ def test_a_figure_or_a_date_that_no_record_shows_sends_the_packet_back_and_the_c
         assert investigate(s, again, dana, "request-0024", again=True)[0].status == "done"
 
 
+def test_notes_in_the_first_person_go_back_once_and_never_cost_the_review_or_the_reply(factory):
+    reads = [tool("get_account", id_="a1"), tool("get_sale_status", {"lease_id": DANA_LEASE}, id_="a2"), tool("get_payments", {"lease_id": DANA_LEASE}, id_="a3")]
+    with factory() as s:
+        dana = text_of(s, "Dana Whitfield")
+        mine = dana_packet(s)
+        mine["summary"] = "Dana says she paid $240.00; the receipt was not reviewed by me."
+        # sent back once, and the corrected packet is the one kept
+        model = Scripted(reads, [tool("submit_case_packet", mine, id_="b1")], [tool("submit_case_packet", dana_packet(s), id_="b2")])
+        run, _ = investigate(s, model, dana, "request-fp-1")
+        assert run.status == "done" and run.turns == 3 and "by me" not in run.packet["summary"]
+        assert run.trace[1]["calls"][0]["error"] == "the summary or the reason speaks in the first person"
+        # the same slip twice: the final packet is kept, so the sale still goes to a person
+        twice = Scripted(reads, [tool("submit_case_packet", mine, id_="b3")], [tool("submit_case_packet", mine, id_="b4")])
+        run, _ = investigate(s, twice, dana, "request-fp-2", again=True)
+        assert run.status == "done" and run.verified["sale_listed_nothing_owed"]
+        # but a final packet that also invents a figure is refused for the figure, which the style check does not hide
+        both = dict(mine, summary="I see Dana paid $300 on Dec 25.")
+        worst = Scripted(reads, [tool("submit_case_packet", both, id_="b5")], [tool("submit_case_packet", both, id_="b6")])
+        run, _ = investigate(s, worst, dana, "request-fp-3", again=True)
+        assert run.status == "needs_person" and "amount or date" in run.error
+
+
 def test_a_sale_claim_is_confirmed_only_by_the_open_sale_item_the_packet_cites(factory):
     with factory() as s:
         dana = text_of(s, "Dana Whitfield")
@@ -756,6 +778,20 @@ def test_a_failed_model_call_is_recorded_not_raised(factory):
 
 
 # ---------------------------------------------------------------- the packet check on its own, and the cost
+
+
+def test_notes_that_speak_of_the_agent_itself_are_sent_back_and_the_tenants_own_words_are_not():
+    facts = {"lease:1": "Unit B-1042. The FMS ledger showed $240.00 owed on Nov 8, 2026, 03:05 UTC."}
+    good = packet("payment_status", ["lease:1"], True, "a person checks the payment")
+    for said in ("The attached file is not visible to me.", "The records I can read show no plan.", "The receipt was not reviewed by me.",
+                 "My reading found nothing."):
+        assert packet_problem({**good, "summary": said}, facts) == "the summary or the reason speaks in the first person", said
+    assert packet_problem({**good, "reason": "I could not check the file."}, facts) == "the summary or the reason speaks in the first person"
+    for said in ('The tenant wrote "Here is my receipt, I paid it." and sent a file.', "Tenant says \u201cmy paycheck comes Friday\u201d.",
+                 "Unit I-12 is not the tenant's.", "The tenant sent a file with the text."):
+        assert packet_problem({**good, "summary": said}, facts) is None, said
+    assert "never about yourself" in NOT_ACCEPTED
+
 
 
 def test_what_makes_a_packet_acceptable():
