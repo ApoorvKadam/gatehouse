@@ -42,7 +42,7 @@ Sources:
 | ![The overview, opening on the film](docs/screens/overview.png) **Overview.** What Gatehouse is, with the film and each built part. | ![Today's worklist](docs/screens/today.png) **Today.** Every open item at a facility, worst first, with what proves it done. |
 | ![A held payment](docs/screens/payment.png) **A held payment.** What the tenant agreed to, what was sent and heard back, and what the FMS shows now. | ![The account record](docs/screens/record.png) **The record.** Four lanes: what the FMS said, what Gatehouse observed and concluded, and what a person decided. |
 | ![A Florida lien file](docs/screens/lien.png) **A lien file.** Every requirement with its basis and evidence, and what changed since the last evaluation. | ![An access item](docs/screens/access.png) **An access item.** The recorded rule, the FMS task, and what the FMS shows unit by unit. |
-| ![Messages, with our agent's case notes](docs/screens/messages.png) **Messages.** A tenant's text, the steps it went through, and the case notes our agent wrote under them. | ![The reminder check](docs/screens/reminder-check.png) **Reminder check.** Which past-due tenants a collections text should not go to, and why, including what a tenant's own text asks for. |
+| ![Messages, with our agent's case notes](docs/screens/messages.png) **Messages.** A tenant's text and the receipt they sent, the steps it went through, what the receipt says beside what the FMS shows, and the case notes our agent wrote. | ![The reminder check](docs/screens/reminder-check.png) **Reminder check.** Which past-due tenants a collections text should not go to, and why, including what a tenant's own text asks for. |
 
 ## What is built and what is next
 

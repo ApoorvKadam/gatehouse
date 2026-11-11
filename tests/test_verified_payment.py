@@ -1,7 +1,7 @@
 """Taking a payment from the past-due queue: each test is one way this goes wrong in real FMS integrations."""
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import delete, select
@@ -32,6 +32,15 @@ def pay(session, adapter, lease_provider_id, method, amount, balance_seen=None):
     seen = adapter.ledger(lease_provider_id).total_due if balance_seen is None else balance_seen
     auth = Authorization.new(identity_verified=True, balance_seen=seen, amount=amount)
     return PaymentService(session, adapter).take_payment(case.id, method, auth), case, auth
+
+
+def age_snapshots(session, lease, minutes):
+    """Move the lease's ledger snapshots back in time, so a test that compares them with a time the FMS gave does not depend on two clocks."""
+    for snap in session.scalars(select(LedgerSnapshot).where(LedgerSnapshot.lease_id == lease.id)):
+        snap.observed_at -= timedelta(minutes=minutes)
+        if snap.read_at is not None:
+            snap.read_at -= timedelta(minutes=minutes)
+    session.commit()
 
 
 def settle(session, adapter, times=6):
@@ -857,8 +866,12 @@ def test_two_outside_payments_cannot_lean_on_one_posting(session, fms_url, sim):
             return real + [replace(real[0], provider_id="payment_counter02", amount=10000)]
 
     plain = CubbyAdapter(fms_url, "sim_org_northstar_full", timeout_seconds=5.0)
-    case, _ = case_for(session, plain, DANA)
-    sim.post("/sim/payments/offline", {"allocations": {DANA: 10000}})
+    case, lease = case_for(session, plain, DANA)
+    # the desk stamps its snapshot with its own clock and the FMS dates the payment with its clock: ten minutes between them keeps the order
+    # whatever the machine's clock does, and the payment is dated five seconds back, the order a clock step produced once in a full suite
+    age_snapshots(session, lease, minutes=10)
+    taken = (datetime.now(timezone.utc) - timedelta(seconds=5)).replace(tzinfo=None).isoformat()
+    sim.post("/sim/payments/offline", {"allocations": {DANA: 10000}, "createdAt": taken})
     with pytest.raises(PaymentRefused, match="not visibly on the ledger"):
         PaymentService(session, TwoCounter(fms_url, "sim_org_northstar_full", timeout_seconds=5.0)).take_payment(
             case.id, "pm_DanaVisa4242", Authorization.new(True, 14000, 14000))
