@@ -24,11 +24,11 @@
     </nav>
     {% if facilities and nav in ('today', 'inbox', 'reminder-check') %}
     <form method="get" action="/{{ nav }}">
-      <label for="facility">Facility</label>
-      <select id="facility" name="facility">
+      <label for="facility" class="visually-hidden">Facility</label>
+      <select id="facility" name="facility" onchange="this.form.submit()">
         {% for f in facilities %}<option value="{{ f.provider_id }}" {% if facility and f.id == facility.id %}selected{% endif %}>{{ f.name }} ({{ f.jurisdiction }})</option>{% endfor %}
       </select>
-      <button class="button" type="submit">Show</button>
+      <button class="button no-js-only" type="submit">Show</button>
     </form>
     {% endif %}
   </div>

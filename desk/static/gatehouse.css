@@ -142,7 +142,8 @@ p { margin: 0; }
 .brand { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); font-family: var(--display); font-weight: 600; font-size: 1.625rem; letter-spacing: -0.02em; }
 .brand:hover { text-decoration: none; }
 .top nav { display: flex; gap: var(--s6); font-size: var(--t-body); }
-.top nav a { color: var(--ink-2); padding: 25px 0 23px; border-bottom: 2px solid transparent; }
+.top nav a { color: var(--ink-2); padding: 25px 0 23px; border-bottom: 2px solid transparent; white-space: nowrap; }
+.js .no-js-only { display: none; }      /* the facility list applies itself when scripts run */
 .top nav a:hover { color: var(--ink); text-decoration: none; }
 .top nav a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--ink); font-weight: 600; }
 .top form { margin-left: auto; display: flex; gap: var(--s2); align-items: center; font-size: var(--t-sm); color: var(--ink-2); }
@@ -342,8 +343,15 @@ dl.kv dd { margin: 0; }
 .steps.in::after, .no-motion .steps::after { transform: scaleX(1); }
 @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 currentColor; } 50% { box-shadow: 0 0 0 4px transparent; } }
 
+@media (max-width: 1360px) {
+  .top .wrap { gap: var(--s5); }
+  .top nav { gap: var(--s5); }
+  .top select { max-width: 17rem; }
+}
+
 @media (max-width: 900px) {
   .top .wrap { flex-wrap: wrap; height: auto; padding-top: var(--s2); padding-bottom: var(--s2); gap: var(--s2) var(--s5); }
+  .top nav { flex-wrap: wrap; column-gap: var(--s4); row-gap: 0; }
   .top nav a { padding: 10px 0; }
   select, .button { min-height: 44px; }
   .top form { margin-left: 0; width: 100%; }
