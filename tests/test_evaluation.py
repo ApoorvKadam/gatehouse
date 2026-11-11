@@ -17,11 +17,11 @@ def test_the_evaluation_runs_clean_and_its_wrong_builds_are_caught(tmp_path):
     out = tmp_path / "evaluation.json"
     assert evaluate.main(["--out", str(out)]) == 0
     report = json.loads(out.read_text())
-    assert report["ok"] and all(r["passed"] for r in report["rows"]) and len(report["rows"]) >= 53
+    assert report["ok"] and all(r["passed"] for r in report["rows"]) and len(report["rows"]) >= 59
     assert all(r["count"] == 0 for r in report["red_lines"]) and all(c["caught"] for c in report["controls"])
     # every red line says what it was counted over, and nothing is counted over nothing
     assert all(r["checked"] > 0 and r["of"] for r in report["red_lines"])
-    assert {r["module"] for r in report["rows"]} == {"Payments", "Access", "Lien sales", "Texts", "Reminder check", "FMS changes", "Files"}
+    assert {r["module"] for r in report["rows"]} == {"Payments", "Access", "Lien sales", "Texts", "Reminder check", "FMS changes", "Files", "Rent changes"}
     # the Reminder check's five red lines are counted over real judged rows, failed readings, attempts, texts and payments, and its two wrong builds are caught
     checks = {l["line"]: l for l in report["red_lines"] if l["module"] == "Reminder check"}
     assert set(checks) == set(reminders.LINES) and all(l["count"] == 0 and l["checked"] >= 2 for l in checks.values())

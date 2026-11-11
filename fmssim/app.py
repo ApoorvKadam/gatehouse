@@ -397,10 +397,14 @@ def create_app(database_url: str | None = None, lose_response_seconds: float = 8
 
     @app.post("/sim/charges")
     def sim_charge(body: dict, session: Session = Depends(db)):
-        """Post a new charge to a lease (a late fee, or a balance change between two reads)."""
+        """Post a new charge to a lease (a late fee, or a balance change between two reads). A rent charge may name its period and what of it
+        is already paid."""
         lease = control_lease(session, body.get("leaseId"))
+        amount = control_int(body.get("amount"), "amount")
+        paid = control_int(body.get("amountPaid"), "amountPaid") if body.get("amountPaid") is not None else 0
+        period = [date.fromisoformat(body[k]) if isinstance(body.get(k), str) else None for k in ("accruesOn", "accruesThrough")]
         session.add(BookEntry(book_entry_id=new_id("be"), lease_id=lease.lease_id, category=body.get("category", "FEE"),
-                              description=body.get("description"), amount=control_int(body.get("amount"), "amount")))
+                              description=body.get("description"), amount=amount, amount_paid=paid, accrues_on=period[0], accrues_through=period[1]))
         session.commit()
         return ok({"totalDue": lease_total_due(session, lease.lease_id)})
 
