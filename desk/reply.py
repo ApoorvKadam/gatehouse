@@ -117,14 +117,19 @@ def resolve(session: Session, inv, kind: str, record_id: str) -> tuple[Part | No
             return None, "the sale date could not be worked out"
         return Part(kind, REPLY_PHRASES[kind].format(unit=lease.unit_name, when=_day(on)), "the sale"), ""
     if kind == "rent_change":
-        # only a change still to come, that nothing in the records stands in front of: a held one is a person's to weigh, one past its date
-        # was not applied, and a completed one is told by a person, who can say what the bill was
+        # said only to a tenant who asked about rent, and only for a change still to come that no person is weighing (clear, or shown for
+        # review); a held change, one past its date and a completed one are a person's to explain. The amount is per facility billing cycle,
+        # so a lease billed on another cycle, or one whose cycle cannot be read, gets no figure it is never billed.
+        if (run.packet or {}).get("intent") != "rent_question":
+            return None, "the tenant did not ask about rent"
         lease = next((l for l in scope.leases if l.id == number), None)
         data = ((session.get(RentChangeCheck, number) or RentChangeCheck()).data or {}) if lease is not None else {}
         if lease is None or not data.get("date"):
             return None, "the desk has no rent change reading for that unit"
         if data.get("state") not in ("clear", "review") or not isinstance(data.get("new"), int):
             return None, "that rent change is not one the desk tells a tenant about on its own"
+        if not data.get("lease_cycle") or data.get("lease_cycle") != data.get("facility_cycle"):
+            return None, "the lease is billed on another cycle than the amount the FMS keeps"
         on = datetime.fromisoformat(data["date"])
         return Part(kind, REPLY_PHRASES[kind].format(unit=lease.unit_name, amount=dollars(data["new"]), when=_day(on)), "the rent change"), ""
     return None, "the desk cannot write that part"

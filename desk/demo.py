@@ -230,7 +230,7 @@ def tenant_texts(session: Session, adapter: FMSAdapter, sim: httpx.Client) -> No
             ("+14075550142", "I paid my balance over the phone the other day and now I got a notice that my unit is going to auction. "
                              "Can you check this please?", 12),
             ("+14075550142", "Here is the receipt they gave me for that payment.", 9),
-            ("+14075550176", "I just saw my rent is going up to $160 next month. Nobody told me anything about this.", 5)):
+            ("+14075550176", "I just saw my rent is going up to $160 next month. Nobody told me anything about this.", 25)):
         answer = sim.post("/sim/messages/inbound", json={"facilityId": ORLANDO, "from": phone, "body": body,
                                                          "receivedAt": (now - timedelta(minutes=minutes_ago)).isoformat()})
         answer.raise_for_status()

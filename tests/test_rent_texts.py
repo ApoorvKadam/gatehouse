@@ -56,3 +56,31 @@ def test_a_held_or_past_rent_change_is_left_to_a_person(factory, adapter):  # no
         reply = next(a for a in run.actions if a["kind"] == "reply")
         assert "set to change" not in reply.get("body", "")
         assert "not one the desk tells a tenant about" in str(reply.get("dropped"))
+
+
+def run_with(s, adapter, text, lease, intent: str, request_id: str):
+    model = Scripted(
+        [tool("get_rent_change", {"lease_id": lease.provider_id}, id_="g1")],
+        [tool("draft_reply", {"components": [{"kind": "message_received", "record_id": ""},
+                                             {"kind": "rent_change", "record_id": f"rentcheck:{lease.id}"}]}, id_="g2")],
+        [tool("submit_case_packet", {**packet(intent, [f"rentcheck:{lease.id}"], True, "a person answers", "Ana writes to the facility."),
+                                     "reminder": {"hold": False, "kind": "none", "text_id": "", "quote": ""}}, id_="g3")])
+    run, _ = investigate(s, model, text, request_id, adapter=adapter)
+    return next(a for a in run.actions if a["kind"] == "reply")
+
+
+def test_the_rent_sentence_goes_only_to_a_tenant_who_asked_about_rent(factory, adapter):  # noqa: F811
+    with factory() as s:
+        text, lease = ana(s)
+        reply = run_with(s, adapter, text, lease, "balance_question", "request-rent-3")
+        assert "set to change" not in reply.get("body", "") and "did not ask about rent" in str(reply.get("dropped"))
+
+
+def test_no_figure_goes_to_a_lease_billed_on_another_cycle(factory, adapter):  # noqa: F811
+    with factory() as s:
+        text, lease = ana(s)
+        check = s.get(RentChangeCheck, lease.id)
+        check.data = {**check.data, "lease_cycle": "DAYS_28"}
+        s.commit()
+        reply = run_with(s, adapter, text, lease, "rent_question", "request-rent-4")
+        assert "set to change" not in reply.get("body", "") and "another cycle" in str(reply.get("dropped"))

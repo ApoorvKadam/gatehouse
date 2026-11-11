@@ -244,6 +244,7 @@ def reconcile_rent_changes(session: Session, adapter: FMSAdapter, facility: Faci
         since = old.get("since") if old.get("state") == row["state"] and old.get("since") else utcnow().isoformat()
         check.observed_at = utcnow()
         check.data = {**row, "label": LABELS[row["state"]], "unit": f.unit_name, "rent": f.rent, "new": f.scheduled_amount,
+                      "facility_cycle": f.facility_cycle, "lease_cycle": f.lease_cycle,
                       "date": (when or last).isoformat(), "since": since, "tenant": customer.first_name if customer else None}
         session.merge(check)
         kept.add(lease.id)
