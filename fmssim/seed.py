@@ -84,7 +84,12 @@ ACCESS_RULES = [("fac_NSorlando01", 30), ("fac_NSalbany001", 30), ("fac_HBtampa0
 ACCESS_CODES = [("cust_DanaWhit01", "fac_NSorlando01", "4127"), ("cust_MarcBell01", "fac_NSorlando01", "8830"),
                 ("cust_PriyaRmn01", "fac_NSorlando01", "2265"), ("cust_TeoVarga01", "fac_NSalbany001", "7741"),
                 ("cust_GinaOkfr01", "fac_NSorlando01", "5196"), ("cust_HBRuizLu01", "fac_HBtampa0001", "3302"),
-                ("cust_OmarHadd01", "fac_NSorlando01", "5519")]
+                ("cust_OmarHadd01", "fac_NSorlando01", "5519"),
+                # the paid-up tenants with rent changes
+                ("cust_LenaPark01", "fac_NSorlando01", "6604"), ("cust_SamOrtiz01", "fac_NSorlando01", "3871"),
+                ("cust_MiaChen001", "fac_NSorlando01", "9142"), ("cust_NoorAli001", "fac_NSorlando01", "2058"),
+                ("cust_RaviMenon1", "fac_NSorlando01", "7713"), ("cust_AnaCosta01", "fac_NSorlando01", "4480"),
+                ("cust_EliBrooks1", "fac_NSorlando01", "1396")]
 # the office's lock stock: serial, combination
 LOCKS = {"fac_NSorlando01": [("NSO-OL-101", "4821"), ("NSO-OL-102", "7310"), ("NSO-OL-103", "0954"), ("NSO-OL-104", "6628"),
                              ("NSO-OL-105", "3197"), ("NSO-OL-106", "8402")],
