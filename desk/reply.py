@@ -10,7 +10,7 @@ import logging
 import re
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -128,7 +128,11 @@ def resolve(session: Session, inv, kind: str, record_id: str) -> tuple[Part | No
         if intent != "rent_question":
             return None, "the tenant did not ask about rent"
         lease = next((l for l in scope.leases if l.id == number), None)
-        data = ((session.get(RentChangeCheck, number) or RentChangeCheck()).data or {}) if lease is not None else {}
+        check = session.get(RentChangeCheck, number) if lease is not None else None
+        data = (check.data or {}) if check is not None else {}
+        if check is not None and check.observed_at is not None and utcnow() - check.observed_at > RENT_FRESH_FOR:
+            # the worker reads every rent change on each pass; a reading it could not renew may describe a change the FMS has since cancelled
+            return None, "the desk has not read that rent change again lately"
         if lease is None or not data.get("date"):
             return None, "the desk has no rent change reading for that unit"
         if data.get("state") not in ("clear", "review") or not isinstance(data.get("new"), int):
@@ -141,6 +145,9 @@ def resolve(session: Session, inv, kind: str, record_id: str) -> tuple[Part | No
             return None, "that rent change is not still to come"
         return Part(kind, REPLY_PHRASES[kind].format(unit=lease.unit_name, amount=dollars(data["new"]), when=_day(on)), "the rent change"), ""
     return None, "the desk cannot write that part"
+
+
+RENT_FRESH_FOR = timedelta(minutes=10)      # as for a listed sale: the reading must be from the worker's last few passes
 
 
 def mark_step(session: Session, run: AgentRun, name: str) -> None:
