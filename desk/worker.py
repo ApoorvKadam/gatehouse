@@ -21,6 +21,7 @@ from .investigator import fail_stranded_runs
 from .messaging import file_unrouted, hold_stranded, match_pending
 from .payments import PaymentService
 from .reminder_check import reconcile_reminder_checks
+from .rent_changes import reconcile_rent_changes
 from .sales import reconcile_sales
 
 log = logging.getLogger("desk.worker")
@@ -60,6 +61,13 @@ def run_once(factory: sessionmaker[Session], adapter: FMSAdapter, run_id: str = 
                 session.rollback()
                 failures += 1
                 log.exception("reminder check at %s failed", facility.provider_id)
+            try:
+                failures += len(reconcile_rent_changes(session, adapter, facility).failures)
+            except Exception:
+                # like the reminder check, a page reads it; a bug in it must not stop the texts or the sales
+                session.rollback()
+                failures += 1
+                log.exception("rent change check at %s failed", facility.provider_id)
             try:
                 matched = match_pending(session, adapter, facility)
             except FMSError as exc:

@@ -18,11 +18,12 @@
       <a href="/" {% if nav == 'front' %}aria-current="page"{% endif %}>Overview</a>
       <a href="/today" {% if nav == 'today' %}aria-current="page"{% endif %}>Today</a>
       <a href="/reminder-check" {% if nav == 'reminder-check' %}aria-current="page"{% endif %}>Reminder check</a>
+      <a href="/rent-changes" {% if nav == 'rent-changes' %}aria-current="page"{% endif %}>Rent changes</a>
       <a href="/inbox" {% if nav == 'inbox' %}aria-current="page"{% endif %}>Messages</a>
       <a href="/evaluation" {% if nav == 'evaluation' %}aria-current="page"{% endif %}>Evaluation</a>
       <a href="/operations" {% if nav == 'operations' %}aria-current="page"{% endif %}>Operations</a>
     </nav>
-    {% if facilities and nav in ('today', 'inbox', 'reminder-check') %}
+    {% if facilities and nav in ('today', 'inbox', 'reminder-check', 'rent-changes') %}
     <form method="get" action="/{{ nav }}">
       <label for="facility" class="visually-hidden">Facility</label>
       <select id="facility" name="facility" onchange="this.form.submit()">

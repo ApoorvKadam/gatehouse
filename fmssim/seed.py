@@ -84,7 +84,12 @@ ACCESS_RULES = [("fac_NSorlando01", 30), ("fac_NSalbany001", 30), ("fac_HBtampa0
 ACCESS_CODES = [("cust_DanaWhit01", "fac_NSorlando01", "4127"), ("cust_MarcBell01", "fac_NSorlando01", "8830"),
                 ("cust_PriyaRmn01", "fac_NSorlando01", "2265"), ("cust_TeoVarga01", "fac_NSalbany001", "7741"),
                 ("cust_GinaOkfr01", "fac_NSorlando01", "5196"), ("cust_HBRuizLu01", "fac_HBtampa0001", "3302"),
-                ("cust_OmarHadd01", "fac_NSorlando01", "5519")]
+                ("cust_OmarHadd01", "fac_NSorlando01", "5519"),
+                # the paid-up tenants with rent changes
+                ("cust_LenaPark01", "fac_NSorlando01", "6604"), ("cust_SamOrtiz01", "fac_NSorlando01", "3871"),
+                ("cust_MiaChen001", "fac_NSorlando01", "9142"), ("cust_NoorAli001", "fac_NSorlando01", "2058"),
+                ("cust_RaviMenon1", "fac_NSorlando01", "7713"), ("cust_AnaCosta01", "fac_NSorlando01", "4480"),
+                ("cust_EliBrooks1", "fac_NSorlando01", "1396")]
 # the office's lock stock: serial, combination
 LOCKS = {"fac_NSorlando01": [("NSO-OL-101", "4821"), ("NSO-OL-102", "7310"), ("NSO-OL-103", "0954"), ("NSO-OL-104", "6628"),
                              ("NSO-OL-105", "3197"), ("NSO-OL-106", "8402")],
@@ -120,6 +125,86 @@ def seed_access(session: Session) -> None:
             lock.status, lock.attached_to = "OPERATOR_USE", unit_id_of(lease)
 
 
+# Rent changes. Six current tenants at Orlando East, each with a rent change the operator scheduled or completed, plus schedules on three
+# accounts the other checks already know. Every date counts from the facility's today, so the world reads the same whichever day it is built.
+RENT_CUSTOMERS = [
+    ("cust_LenaPark01", NORTHSTAR, "Lena", "Park", "+14075550171", "lena.park@example.com"),
+    ("cust_SamOrtiz01", NORTHSTAR, "Sam", "Ortiz", "+14075550172", "sam.ortiz@example.com"),
+    ("cust_MiaChen001", NORTHSTAR, "Mia", "Chen", "+14075550173", "mia.chen@example.com"),
+    ("cust_NoorAli001", NORTHSTAR, "Noor", "Ali", "+14075550174", "noor.ali@example.com"),
+    ("cust_RaviMenon1", NORTHSTAR, "Ravi", "Menon", "+14075550175", "ravi.menon@example.com"),
+    ("cust_AnaCosta01", NORTHSTAR, "Ana", "Costa", "+14075550176", "ana.costa@example.com"),
+    ("cust_EliBrooks1", NORTHSTAR, "Eli", "Brooks", "+14075550177", "eli.brooks@example.com"),
+]
+
+
+def add_months(d: date, n: int) -> date:
+    y, m = divmod(d.month - 1 + n, 12)
+    year, month = d.year + y, m + 1
+    for day in (d.day, 30, 29, 28):
+        try:
+            return d.replace(year=year, month=month, day=day)
+        except ValueError:
+            continue
+    raise ValueError(d)
+
+
+def next_period(start: date, cycle: str) -> date:
+    return start + timedelta(days=28) if cycle == "DAYS_28" else add_months(start, 1)
+
+
+def rent_tenant(session: Session, lease_id: str, customer_id: str, unit: str, rent: int, periods: list[tuple[date, int]], *, cycle: str = "MONTHLY",
+                scheduled: tuple[date, int] | None = None, last_change: date | None = None, discount: int = 0) -> None:
+    """A tenant who is paid up: each period's RENT charge billed and paid, a discount billed as its own credit."""
+    end = next_period(periods[-1][0], cycle) - timedelta(days=1)
+    session.add(Lease(lease_id=lease_id, facility_id="fac_NSorlando01", customer_id=customer_id, unit_name=unit, move_in_date=periods[0][0] - timedelta(days=300),
+                      monthly_rental_amount=rent, billing_cycle=cycle, paid_through_date=end, delinquency_start_date=None,
+                      rent_change_scheduled_date=scheduled[0] if scheduled else None, rent_change_new_rent_amount=scheduled[1] if scheduled else None,
+                      last_rent_change_date=last_change, rent_discount=discount))
+    for i, (start, cents) in enumerate(periods):
+        when = datetime.combine(start, datetime.min.time()).replace(hour=9)
+        through = next_period(start, cycle) - timedelta(days=1)
+        session.add(BookEntry(book_entry_id=f"be_r{lease_id[6:]}{i:02d}", lease_id=lease_id, category="RENT", amount=cents, amount_paid=cents,
+                              entry_time=when, payment_time=when, accrues_on=start, accrues_through=through))
+        if discount:
+            session.add(BookEntry(book_entry_id=f"be_d{lease_id[6:]}{i:02d}", lease_id=lease_id, category="DISCOUNTS", description="Loyalty discount",
+                                  amount=-discount, amount_paid=-discount, entry_time=when, payment_time=when, accrues_on=start, accrues_through=through))
+
+
+def seed_rent_changes(session: Session) -> None:
+    t = facility_today(session, "fac_NSorlando01")
+    session.add_all(Customer(customer_id=c, org_id=o, first_name=fn, last_name=ln, phone=ph, email=em) for c, o, fn, ln, ph, em in RENT_CUSTOMERS)
+    session.flush()
+    # completed 40 days ago, the first full period at the new rent: verified
+    d = t - timedelta(days=40)
+    rent_tenant(session, "lease_ParkG0118", "cust_LenaPark01", "G-118", 13500, [(add_months(d, -1), 12500), (d, 13500), (add_months(d, 1), 13500)], last_change=d)
+    # completed 35 days ago, but the first full period was billed at the old rent
+    d = t - timedelta(days=35)
+    rent_tenant(session, "lease_OrtzH0204", "cust_SamOrtiz01", "H-204", 15500, [(add_months(d, -1), 14000), (d, 14000), (add_months(d, 1), 15500)], last_change=d)
+    # a 28-day lease at a monthly facility: $300.00 a month is billed as $276.92 every 28 days, which is right
+    d = t - timedelta(days=45)
+    rent_tenant(session, "lease_ChenL0520", "cust_MiaChen001", "L-520", 30000, [(d - timedelta(days=28), 24923), (d, 27692), (d + timedelta(days=28), 27692)],
+                cycle="DAYS_28", last_change=d)
+    # scheduled for five days ago and still scheduled; the rent and the bill are unchanged
+    d = t - timedelta(days=5)
+    rent_tenant(session, "lease_AliM00611", "cust_NoorAli001", "M-611", 11000, [(add_months(d, -1), 11000), (d, 11000)], scheduled=(d, 11800))
+    # upcoming: a 7 percent increase on a tenant in good standing
+    rent_tenant(session, "lease_MennJ0330", "cust_RaviMenon1", "J-330", 10000, [(add_months(t, -1), 10000), (t, 10000)], scheduled=(t + timedelta(days=21), 10700),
+                last_change=t - timedelta(days=400))
+    # upcoming: 28 percent, four months after the last increase
+    rent_tenant(session, "lease_CostK0412", "cust_AnaCosta01", "K-412", 12500, [(add_months(t, -1), 12500), (t, 12500)], scheduled=(t + timedelta(days=30), 16000),
+                last_change=t - timedelta(days=120))
+    # completed 50 days ago on a discounted lease: what the bill should be cannot be told from the rent alone
+    d = t - timedelta(days=50)
+    rent_tenant(session, "lease_BrksP0815", "cust_EliBrooks1", "P-815", 12000, [(add_months(d, -1), 11000), (d, 12000), (add_months(d, 1), 12000)],
+                last_change=d, discount=1200)
+    # schedules on accounts the other checks already hold: a lien file, a past-due balance, a payment arrangement
+    for lease_id, days, amount in (("lease_OkfrE0505", 25, 15400), ("lease_HaddF0610", 18, 15900), ("lease_RamnA0012", 28, 10200)):
+        lease = session.get(Lease, lease_id)
+        lease.rent_change_scheduled_date, lease.rent_change_new_rent_amount = t + timedelta(days=days), amount
+    session.flush()
+
+
 def reset(session: Session, id_seed: str | None = None) -> None:
     restart_ids(id_seed)
     for table in reversed(Base.metadata.sorted_tables):
@@ -142,6 +227,7 @@ def reset(session: Session, id_seed: str | None = None) -> None:
                 accrues_on=accrues_on, accrues_through=(accrues_on.replace(day=28) if accrues_on else None)))
     session.add_all(PaymentMethod(payment_method_id=pm, customer_id=c, last4=l4) for pm, c, l4 in PAYMENT_METHODS)
     session.flush()
+    seed_rent_changes(session)
     seed_access(session)
     session.commit()
 

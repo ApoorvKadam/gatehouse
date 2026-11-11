@@ -97,6 +97,11 @@ class Lease(Base):
     prepaid_balance: Mapped[int] = mapped_column(Integer, default=0)
     delinquency_start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     overlock_needed: Mapped[bool] = mapped_column(Boolean, default=False)
+    # a rent change the operator scheduled (the amount is per facility billing cycle) and the date of the last one completed
+    rent_change_scheduled_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    rent_change_new_rent_amount: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_rent_change_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    rent_discount: Mapped[int] = mapped_column(Integer, default=0)      # a standing discount, per facility cycle; billed as a DISCOUNTS credit
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 

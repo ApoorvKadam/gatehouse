@@ -59,8 +59,9 @@ HEAD = "FMS answer not as documented"
 PROOF = "A person checks the FMS documentation against what it now sends, then changes the adapter or records that the change is expected."
 WHO = "Engineering"
 # the calls and fields in the words a person reads
-CALLS = {"payments search": "A payment search", "make payment": "A payment request"}
-FIELDS = {"status": "payment status", "amount": "amount", "createdAt": "the time the payment was made"}
+CALLS = {"payments search": "A payment search", "make payment": "A payment request", "leases search": "A lease search", "rent roll": "The rent roll"}
+FIELDS = {"status": "payment status", "amount": "amount", "createdAt": "the time the payment was made", "monthlyRentalAmount": "rent",
+          "rentChangeNewRentAmount": "scheduled rent", "effectiveRate": "net rent"}
 # what the desk does about each kind of departure, checked against the code that does it
 CONSEQUENCE = {
     ("payments search", "unlisted value"): ("Gatehouse keeps it as written and never reads it as paid or failed. No new payment starts on that lease until the FMS "
@@ -70,6 +71,8 @@ CONSEQUENCE = {
     ("make payment", "not whole cents"): "Gatehouse never rounds an amount: the payment is held as outcome unknown and never sent again.",
     ("payments search", "missing"): "Gatehouse never guesses an amount, so it does not read that lease's payments until the FMS sends one.",
     ("make payment", "missing"): "Gatehouse never guesses an amount: the payment is held as outcome unknown and never sent again.",
+    ("leases search", "not whole cents"): "Gatehouse never rounds an amount, so the rent change check says it cannot tell for that lease.",
+    ("rent roll", "not whole cents"): "Gatehouse never rounds an amount, so the rent change check says it cannot tell for that lease.",
 }
 KEPT_WITHOUT_TIME = "A payment first seen without it has no time of its own, so it cannot end a reminder hold."
 
