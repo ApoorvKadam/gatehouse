@@ -204,7 +204,7 @@ def create_app(database_url: str | None = None, lose_response_seconds: float = 8
         for lease in session.scalars(select(Lease).where(Lease.facility_id.in_(list(facilities))).order_by(Lease.unit_name)):
             f, c = facilities[lease.facility_id], session.get(Customer, lease.customer_id)
             entry = {"facilityId": f.facility_id, "facilityName": f.name, "status": "RENTED", "unitId": unit_id_of(lease), "unitName": lease.unit_name,
-                     "customerId": lease.customer_id, "customerName": f"{c.first_name} {c.last_name}" if c else None,
+                     "customerId": lease.customer_id,
                      "totalDue": lease_total_due(session, lease.lease_id), "prepaid": lease.prepaid_balance,
                      "monthlyRentalAmount": in_lease_cycle(lease.monthly_rental_amount, f.billing_cycle, lease.billing_cycle),
                      "effectiveRate": in_lease_cycle(lease.monthly_rental_amount - lease.rent_discount, f.billing_cycle, lease.billing_cycle),
@@ -212,6 +212,8 @@ def create_app(database_url: str | None = None, lose_response_seconds: float = 8
                      "billingCycle": lease.billing_cycle, "moveInDate": iso(lease.move_in_date), "paidThroughDate": iso(lease.paid_through_date)}
             if lease.last_rent_change_date:
                 entry["lastRentChangeDate"] = iso(lease.last_rent_change_date)
+            if key.pii and c is not None:
+                entry["customerName"] = f"{c.first_name} {c.last_name}"        # a key without personal data sees ids only, as on every other call
             entries.append(entry)
         return ok({"entries": entries})
 
