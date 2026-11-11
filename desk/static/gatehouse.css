@@ -34,9 +34,9 @@
   --amber: #8a5700;      /* waiting on a source */
   /* chip colors: the error, warning and success pairs from Astryx's neutral theme (MIT, see astryx-LICENSE.txt).
      Each is a pale surface with the text color made for it, at 4.5:1 or better */
-  --chip-act: #ffc4be;   --chip-act-ink: #76000c;
-  --chip-wait: #fae19e;  --chip-wait-ink: #4b3900;
-  --chip-done: #bce0bb;  --chip-done-ink: #00490b;
+  --chip-act: #f7b3a9;   --chip-act-ink: #680710;
+  --chip-wait: #f4cf6e;  --chip-wait-ink: #3b2c00;
+  --chip-done: #a3d6a1;  --chip-done-ink: #053d10;
   --navy: #22345a;       /* what the FMS said */
   --lilac: #6f63b8;      /* what Gatehouse observed */
   --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px; --s8: 72px;
@@ -174,14 +174,14 @@ footer .wrap { padding-top: var(--s5); padding-bottom: var(--s6); display: flex;
 .lede { color: var(--ink-2); margin: var(--s4) 0 var(--s5); font-size: var(--t-lg); line-height: 1.6; }
 
 /* state chips: the only use of state color */
-.chip { display: inline-flex; align-items: center; gap: 6px; font-size: var(--t-xs); font-weight: 600; padding: 3px 8px; border-radius: 999px; white-space: nowrap; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: var(--t-xs); font-weight: 600; padding: 4px 10px; border-radius: 999px; white-space: nowrap; box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 28%, transparent); }
 .chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .chip .icon { width: 14px; height: 14px; margin-left: -2px; }
 .chip:has(.icon)::before { display: none; }
 .chip.act { color: var(--chip-act-ink); background: var(--chip-act); }
 .chip.done { color: var(--chip-done-ink); background: var(--chip-done); }
 .chip.wait { color: var(--chip-wait-ink); background: var(--chip-wait); }
-.chip.plain { color: var(--ink-2); background: var(--band); }
+.chip.plain { color: var(--ink-2); background: color-mix(in srgb, var(--ink) 8%, var(--paper)); }
 
 /* framed product views */
 .frame { border: 1px solid var(--frame); border-radius: 12px; background: var(--card); box-shadow: var(--shadow); overflow: hidden; }
@@ -191,7 +191,7 @@ footer .wrap { padding-top: var(--s5); padding-bottom: var(--s6); display: flex;
 
 /* tables */
 table { width: 100%; border-collapse: collapse; font-size: var(--t-sm); }
-th { text-align: left; font-size: var(--t-xs); font-weight: 600; color: var(--ink-3); padding: var(--s2) var(--s3); border-bottom: 1px solid var(--rule); white-space: nowrap; }
+th { text-align: left; font-size: var(--t-sm); font-weight: 600; color: var(--ink-2); padding: var(--s2) var(--s3); border-bottom: 1px solid var(--rule); white-space: nowrap; }
 td { padding: var(--s3); border-bottom: 1px solid var(--rule); vertical-align: top; }
 tr:last-child td { border-bottom: 0; }
 td.num, th.num { text-align: right; }
@@ -223,7 +223,7 @@ td.num, th.num { text-align: right; }
 
 /* the record: four lanes, one row per moment */
 .docket { table-layout: fixed; border: 1px solid var(--frame); border-radius: 10px; border-collapse: separate; border-spacing: 0; overflow: hidden; }
-.docket th { background: var(--bar); color: var(--ink); font-size: var(--t-xs); padding: var(--s3); border-bottom: 1px solid var(--frame); }
+.docket th { background: var(--bar); color: var(--ink); font-size: var(--t-sm); padding: var(--s3); border-bottom: 1px solid var(--frame); }
 .docket th .lane-dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; vertical-align: 0; }
 .docket th.when, .docket td.when { width: 9rem; }
 .docket td { border-left: 1px solid var(--rule); font-size: var(--t-sm); }
@@ -912,7 +912,7 @@ footer .foot { display: grid; grid-template-columns: minmax(0, 2fr) repeat(3, mi
   @media (prefers-reduced-motion: no-preference) {
     /* every scroll: frames, panels and cards rise into place with the scroll, and go back with it */
     .feature .frame, .panel, .bento .bx, .lt-film, .lt-stats > div, .site-note, .next-cols li, .lt-close h2 {
-      animation: rise linear both; animation-timeline: view(); animation-range: entry 0% cover 28%; }
+      animation: rise linear both; animation-timeline: view(); animation-range: entry 0% entry 260px; }
     .js .feature .frame[data-reveal], .js .bento[data-reveal] { opacity: 1; transform: none; }
     .scroll-line { animation: line linear both; animation-timeline: scroll(root); }
   }
@@ -921,5 +921,28 @@ footer .foot { display: grid; grid-template-columns: minmax(0, 2fr) repeat(3, mi
 @keyframes vt-in { from { opacity: 0; transform: translateY(40px); } }
 @keyframes tick { to { transform: translateX(-100%); } }
 @keyframes title-in { from { opacity: 0; transform: translateY(36px); } }
-@keyframes rise { from { opacity: .3; transform: translateY(80px) scale(.95); } }
+@keyframes rise { from { opacity: .25; transform: translateY(64px); } }
 @keyframes line { to { transform: scaleX(1); } }
+
+.foot-note { grid-column: 1 / -1; border-top: 1px solid var(--rule); padding-top: var(--s4); color: var(--ink-3); font-size: var(--t-sm); }
+.foot-note b { color: var(--ink); font-weight: 600; margin-right: 6px; }
+
+/* the guard */
+.guard { position: relative; width: var(--size, 120px); height: var(--size, 120px); padding: 0; border: 0; background: none; cursor: pointer; flex: none; }
+.guard:focus-visible { outline: 2px solid var(--blue); outline-offset: 4px; border-radius: 50%; }
+.guard-body { position: absolute; inset: 0; display: block; transform-origin: 50% 90%; }
+.guard-face, .guard-react { position: absolute; inset: 0; background-size: 300% 300%; background-repeat: no-repeat; }
+.guard-react { opacity: 0; }
+.guard.reacting .guard-react { opacity: 1; }
+.guard.reacting .guard-face { opacity: 0; }
+.foot-brand .guard { margin: -8px 0 4px -6px; }
+.lt-close-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--s7); align-items: center; }
+.lt-guard { display: grid; justify-items: center; gap: var(--s3); max-width: 300px; text-align: center; }
+.lt-guard p { font-family: var(--display); font-style: italic; font-size: 1.125rem; line-height: 1.35; color: inherit; opacity: .9; }
+@media (max-width: 760px) { .lt-close-grid { grid-template-columns: 1fr; } }
+.work-who { font-size: var(--t-sm); color: var(--ink-2); }
+/* a row answers the pointer: it lifts a little and a blue rule slides in on its left */
+@media (prefers-reduced-motion: no-preference) {
+  tbody tr { transition: background-color 160ms linear, box-shadow 260ms var(--spring); }
+  tbody tr:hover { background: color-mix(in srgb, var(--blue) 5%, var(--card)); box-shadow: inset 3px 0 0 var(--blue); }
+}

@@ -430,12 +430,15 @@
   </div>
 </section>
 <section class="lt-close">
-  <div class="wrap">
+  <div class="wrap lt-close-grid">
+    <div>
     <h2>See the work the FMS has not closed yet.</h2>
     <div class="actions">
       <a class="button lt-light" href="/today">Open today's work {% include "icons/arrow-right.svg" %}</a>
       <a class="button lt-ghost" href="/evaluation">Read the evaluation</a>
     </div>
+    </div>
+    <div class="lt-guard">{% set guard_size = 220 %}{% include "guard.html" %}<p>The guard keeps watch at the gate. Nothing gets past it on someone's word.</p></div>
   </div>
 </section>
 {% endblock %}
