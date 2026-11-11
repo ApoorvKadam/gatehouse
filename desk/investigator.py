@@ -713,7 +713,12 @@ class Investigation:
         self.trace.append(entry)
         self.row.trace = deepcopy(self.trace)
         self.session.commit()
-        response = self._ask(kwargs, worst)
+        try:
+            response = self._ask(kwargs, worst)
+        except Exception:
+            # the file is left to a person; the text is still read
+            log.warning("agent run %s: the file could not be read", self.row.id, exc_info=True)
+            response = None
         found = None
         if response is not None:
             self._count(response, worst)

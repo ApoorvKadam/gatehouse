@@ -53,7 +53,7 @@ def test_the_seeded_receipt_is_read_apart_from_the_text_and_compared_with_the_fm
         assert '"image"' in json.dumps(reading["messages"]) and '"image"' not in json.dumps(text["messages"], default=str)
         assert run.file["verdict"] == "matches" and run.file["claims"]["amount_cents"] == 24000
         assert "The receipt says $240.00 paid, on unit B-1042" in run.file["lines"][0]
-        assert "confirms nothing on its own" in run.file["lines"][1]
+        assert "Only the amount was compared" in run.file["lines"][1] and "confirms nothing on its own" in run.file["lines"][1]
         assert state(s) == before                       # a matching receipt settles nothing
         assert run.status == "done" and run.turns == 2
 
@@ -121,3 +121,20 @@ def test_a_visitor_playing_a_tenant_is_offered_the_samples_and_nothing_else(fms_
         page = html.unescape(visitor.get("/inbox").text)
         assert all(label in page for label in intake.SAMPLES.values()) and '<option value="">No file</option>' in page
         assert '<input type="file"' not in page
+
+
+class FailsFirst(Scripted):
+    """The provider refuses the file's call; every later call is played back as usual."""
+
+    def create(self, **kwargs):
+        if not self.calls:
+            self.calls.append(kwargs)
+            raise type("BadRequest", (Exception,), {"status_code": 400})("refused")
+        return super().create(**kwargs)
+
+
+def test_a_file_call_that_fails_leaves_the_file_to_a_person_and_the_text_is_still_read(factory):
+    with factory() as s:
+        m = receipt_text(s)
+        run, _ = investigate(s, FailsFirst(then_packet(m)), m, "req-file-fails")
+        assert run.file["verdict"] == "unread" and run.status == "done"

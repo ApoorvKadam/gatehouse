@@ -56,8 +56,8 @@ SYSTEM = """<role>You read one file that a tenant sent to a self-storage facilit
 </rules>"""
 ASK = "Report what this file shows."
 # the line the text's reading gets when a file came with the text: it never sees the file, and staff see the file's reading apart
-FILE_NOTE = ("<file_note>The tenant also sent a file. The desk reads it separately and shows it to staff beside your notes. You cannot see it: "
-             "write your notes from the text and the records, and leave the file out of them.</file_note>")
+FILE_NOTE = ("<file_note>A file came with this text. The desk handles the file separately. Write your notes from the text and the records "
+             "only.</file_note>")
 
 
 @lru_cache(maxsize=None)
@@ -81,7 +81,7 @@ def claims(raw: dict) -> dict:
             "amount_cents": amount if isinstance(amount, int) and not isinstance(amount, bool) and 0 < amount <= MAX_AMOUNT else None,
             "card_last4": last4 if isinstance(last4, str) and re.fullmatch(r"\d{4}", last4) else None,
             "unit": unit.strip().upper() if isinstance(unit, str) and re.fullmatch(r"\s*[A-Za-z0-9-]{1,12}\s*", unit) else None,
-            "date_written": date.strip() if isinstance(date, str) and re.fullmatch(r"[\w ,./:-]{1,30}", date.strip()) else None,
+            "date_written": date.strip() if isinstance(date, str) and re.fullmatch(r"[\w ,./:-]{1,30}", date.strip()) and re.search(r"\d", date) else None,
             "carries_instructions": raw.get("carries_instructions") is True}
 
 
@@ -117,8 +117,9 @@ def compare(session: Session, leases: list[Lease], zone: str, found: dict) -> di
         if seen:
             op = seen[-1]
             verdict = "matches"
-            lines = [claim, f"The FMS reports a {money(op.amount)} payment on this tenant's account, status {words(op.status)}, first seen by Gatehouse on "
-                            f"{when(op.first_seen_at, zone)}. The receipt supports a staff check of that payment; it confirms nothing on its own."]
+            made = f"made on {when(op.paid_at, zone)}" if op.paid_at else "with no time of its own"
+            lines = [claim, f"The FMS reports a {money(op.amount)} payment on this tenant's account, {made}, status {words(op.status)}. Only the amount "
+                            "was compared. The receipt supports a staff check of that payment; it confirms nothing on its own."]
         else:
             verdict = "no_match"
             lines = [claim, f"No payment the FMS reports for this tenant is {money(found['amount_cents'])}. A person checks with the card processor "
