@@ -90,6 +90,8 @@ def test_the_page_today_and_the_api_show_the_work_in_plain_words(fms_url, sim, a
         today = html.unescape(visitor.get("/today").text)
         for head in ("Rent billed at another amount", "Rent change not applied", "Rent increase on an account a person must weigh"):
             assert head in today, head
+        operations = html.unescape(visitor.get("/operations").text)
+        assert "Rent changes" in operations.split("Open work by part", 1)[-1][:2000]      # counted as its own part, not as collections
         api = visitor.get(f"/api/facilities/{ORLANDO}/rent-changes").json()
         assert {r["unit"] for r in api["rent_changes"]} >= {"G-118", "H-204", "M-611"}
 

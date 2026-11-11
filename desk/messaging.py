@@ -131,7 +131,7 @@ def file_unrouted(session: Session, routes: Mapping[str, str] | None, served: Co
 
 # Who a visitor may play: the key the form sends and the number that text comes from. The numbers are seeded tenants', so the FMS
 # matches the text to a tenant by its number, as it matches any text; what the text says decides nothing about who sent it.
-PLAYERS = {"dana": "+14075550142", "priya": "+14075550119", "omar": "+14075550158", "unknown": "+13215550177"}
+PLAYERS = {"dana": "+14075550142", "priya": "+14075550119", "omar": "+14075550158", "ana": "+14075550176", "unknown": "+13215550177"}
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 

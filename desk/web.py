@@ -539,6 +539,13 @@ def router(pages: Pages) -> APIRouter:
             for row in pages.reminder_checks(s, home):
                 by_code.setdefault(row["code"], row)
             check_rows = [by_code[code] for code in ("consent", "unpaused", "lien", "payment") if code in by_code][:2]
+            # the rent check's most telling rows: a first bill at another amount, a change that never took, a 28-day lease read in its own cycle
+            by_state = {}
+            for row in pages.rent_checks(s, home):
+                if row["state"] == "verified" and row.get("lease_cycle") == row.get("facility_cycle"):
+                    continue            # the plain verified rows say less than the one billed on another cycle
+                by_state.setdefault(row["state"], row)
+            rent_rows = [by_state[k] for k in ("wrong_charge", "not_applied", "verified") if k in by_state]
             lanes = {}
             if record_case is not None:
                 for e in pages.record(s, s.get(DelinquencyCase, record_case)):
@@ -549,7 +556,7 @@ def router(pages: Pages) -> APIRouter:
                 "returned": returned, "returned_unit": s.get(Lease, returned.lease_id).unit_name if returned else None,
                 "changed": changed, "counsel": counsel, "counsel_state": counsel_state, "record_case": record_case,
                 "record_unit": record_unit, "lanes": lanes, "lane_names": LANES, "access": access, "access_lease": access_lease,
-                "sale": sale, "sale_outside": sale_outside, "sale_words": sales.STATUS_WORDS, "on": on, "check_rows": check_rows,
+                "sale": sale, "sale_outside": sale_outside, "sale_words": sales.STATUS_WORDS, "on": on, "check_rows": check_rows, "rent_rows": rent_rows,
                 "access_view": access_view.data if access_view else None, "access_policy": access_policy, "gate_rules": GATE_RULES,
                 "report": evaluation_report(),
                 "truth": pages.trace.get(s.get(Lease, held.lease_id).provider_id) if held else None,
@@ -759,7 +766,7 @@ def router(pages: Pages) -> APIRouter:
                 for i in pages.today(s, f):
                     part = ("Payments" if i.link.startswith("/payments/") else "Lien files" if i.link.endswith("/lien")
                             else "Access" if i.link.startswith("/access/") else "Lien sales" if i.link.startswith("/sales/")
-                            else "Collections")
+                            else "Rent changes" if i.link.startswith("/rent-changes") else "Collections")
                     groups.setdefault((part, i.head), []).append(i)
                     by_part[part] += 1
                     by_who[i.who] += 1

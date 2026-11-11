@@ -119,7 +119,7 @@ def rents_part(url: str):
          nobody, state("J-330") == "clear"),
     ]
     found = judge(rows)
-    lines = [(line, found[line][0], found[line][1], "rows" if line in (NOTICE_SENT, UNPROVEN) else "leases") for line in LINES]
+    lines = [(line, found[line][0], found[line][1], {NOTICE_SENT: "rows", UNPROVEN: "checks"}.get(line, "leases")) for line in LINES]
 
     def caught(target, name, replacement, line) -> bool:
         with broken(target, name, replacement):

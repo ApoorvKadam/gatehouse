@@ -24,6 +24,7 @@ from .messaging import match_pending, receive_text, send_text
 from .models import AccessPolicy, DelinquencyCase, DemoSeed, Facility, InboundMessage, Lease, LedgerSnapshot
 from .payments import IdentityClaim, PaymentService, check_identity, confirm, propose
 from .reminder_check import reconcile_reminder_checks
+from .rent_changes import reconcile_rent_changes
 from .sales import reconcile_sales
 
 log = logging.getLogger("desk.demo")
@@ -63,6 +64,7 @@ def build(factory: sessionmaker[Session], adapter: FMSAdapter, fms_base_url: str
         # after the texts, so a STOP a tenant sent is counted before the world opens
         for facility in session.scalars(select(Facility).where(Facility.provider_id.in_((ORLANDO, ALBANY))).order_by(Facility.id)):
             reconcile_reminder_checks(session, adapter, facility)
+            reconcile_rent_changes(session, adapter, facility)
         session.add(DemoSeed(id=1))
         session.commit()
     sim.close()
@@ -216,7 +218,8 @@ def tenant_texts(session: Session, adapter: FMSAdapter, sim: httpx.Client) -> No
     - Marcus texts STOP, and when the desk later tries to tell him about his returned payment, Gatehouse refuses;
     - Priya asks about her payment plan, and the front desk answers;
     - Dana asks why her unit is on the sale list after she paid, which is the sale story above from her side, and then sends her
-      card receipt. Cubby's webhook carries no media, so the file reaches the facility's own inbox and the desk keeps it with the text."""
+      card receipt. Cubby's webhook carries no media, so the file reaches the facility's own inbox and the desk keeps it with the text;
+    - Ana, whose rent goes up 28 percent next month, asks how much it will be and from when."""
     orlando = session.scalar(select(Facility).where(Facility.provider_id == ORLANDO))
     now = utcnow()
     for phone, body, minutes_ago in (
@@ -226,7 +229,8 @@ def tenant_texts(session: Session, adapter: FMSAdapter, sim: httpx.Client) -> No
             ("+14075550119", "Hi, is my payment plan for A-012 still active? I got a reminder text.", 40),
             ("+14075550142", "I paid my balance over the phone the other day and now I got a notice that my unit is going to auction. "
                              "Can you check this please?", 12),
-            ("+14075550142", "Here is the receipt they gave me for that payment.", 9)):
+            ("+14075550142", "Here is the receipt they gave me for that payment.", 9),
+            ("+14075550176", "Hi, I heard my rent is going up next month. How much will it be, and from when?", 25)):
         answer = sim.post("/sim/messages/inbound", json={"facilityId": ORLANDO, "from": phone, "body": body,
                                                          "receivedAt": (now - timedelta(minutes=minutes_ago)).isoformat()})
         answer.raise_for_status()
