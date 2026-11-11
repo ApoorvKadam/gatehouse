@@ -192,7 +192,8 @@ def test_the_front_page_says_where_it_fits_in_plain_words(fms_url, sim):
         page = visitor.get("/").text
         assert "Where it fits" in page and "It does not replace what you run." in page
         for failure in ("A card is charged and the FMS never shows it", "A tenant paid and is still locked out", "A paid unit is still listed",
-                        "A STOP that a later message would ignore"):
+                        "A STOP that a later message would ignore", "A tenant's receipt taken as proof that a payment arrived",
+                        "An FMS answer that stops matching its documentation"):
             assert failure in page, failure
 
 
