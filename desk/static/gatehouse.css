@@ -349,9 +349,18 @@ dl.kv dd { margin: 0; }
   .top select { max-width: 17rem; }
 }
 
+/* below a wide laptop the brand and the facility list share the first row and the menu gets a row of its own */
+@media (max-width: 1279px) {
+  .top .wrap { flex-wrap: wrap; height: auto; row-gap: 0; padding-top: var(--s3); }
+  .top nav { order: 3; flex: 1 0 100%; flex-wrap: wrap; column-gap: var(--s5); }
+  .top nav a { padding: 12px 0 10px; }
+  .top form { margin-left: auto; }
+}
+
 @media (max-width: 900px) {
   .top .wrap { flex-wrap: wrap; height: auto; padding-top: var(--s2); padding-bottom: var(--s2); gap: var(--s2) var(--s5); }
-  .top nav { flex-wrap: wrap; column-gap: var(--s4); row-gap: 0; }
+  .top { position: static; }      /* a two-row header would cover too much of a phone screen */
+  .top nav { column-gap: var(--s4); }
   .top nav a { padding: 10px 0; }
   select, .button { min-height: 44px; }
   .top form { margin-left: 0; width: 100%; }
