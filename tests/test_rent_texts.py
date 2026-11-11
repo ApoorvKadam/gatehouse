@@ -155,3 +155,15 @@ def test_no_rent_sentence_goes_out_once_the_date_has_passed(factory, adapter):  
         reading(s, lease, date="2026-01-05")
         reply = run_with(s, adapter, text, lease, "rent_question", "request-rent-7")
         assert "set to change" not in reply.get("body", "") and "not still to come" in str(reply.get("dropped"))
+
+
+def test_a_rent_reading_the_worker_could_not_renew_is_not_told_to_a_tenant(factory, adapter):  # noqa: F811
+    from datetime import timedelta
+    from desk.db import utcnow
+    with factory() as s:
+        text, lease = ana(s)
+        check = s.get(RentChangeCheck, lease.id)
+        check.observed_at = utcnow() - timedelta(hours=3)        # the FMS reads failed since; the change may have been cancelled
+        s.commit()
+        reply = run_with(s, adapter, text, lease, "rent_question", "request-rent-8")
+        assert "set to change" not in reply.get("body", "") and "not read that rent change again lately" in str(reply.get("dropped"))
