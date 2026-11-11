@@ -120,7 +120,11 @@ def resolve(session: Session, inv, kind: str, record_id: str) -> tuple[Part | No
         # said only to a tenant who asked about rent, and only for a change still to come that no person is weighing (clear, or shown for
         # review); a held change, one past its date and a completed one are a person's to explain. The amount is per facility billing cycle,
         # so a lease billed on another cycle, or one whose cycle cannot be read, gets no figure it is never billed.
-        if (run.packet or {}).get("intent") != "rent_question":
+        intent = (run.packet or {}).get("intent")
+        if intent == "rent_notice_dispute":
+            # a tenant who says they were not told is not answered with the amount; a person reviews the notice first
+            return None, "the tenant disputes the notice, so a person answers"
+        if intent != "rent_question":
             return None, "the tenant did not ask about rent"
         lease = next((l for l in scope.leases if l.id == number), None)
         data = ((session.get(RentChangeCheck, number) or RentChangeCheck()).data or {}) if lease is not None else {}

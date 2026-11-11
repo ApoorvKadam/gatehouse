@@ -84,3 +84,10 @@ def test_no_figure_goes_to_a_lease_billed_on_another_cycle(factory, adapter):  #
         s.commit()
         reply = run_with(s, adapter, text, lease, "rent_question", "request-rent-4")
         assert "set to change" not in reply.get("body", "") and "another cycle" in str(reply.get("dropped"))
+
+
+def test_a_tenant_who_says_they_were_not_told_is_not_answered_with_the_amount(factory, adapter):  # noqa: F811
+    with factory() as s:
+        text, lease = ana(s)
+        reply = run_with(s, adapter, text, lease, "rent_notice_dispute", "request-rent-5")
+        assert "set to change" not in reply.get("body", "") and "disputes the notice" in str(reply.get("dropped"))
