@@ -27,7 +27,7 @@ def test_the_seeded_text_is_answered_from_the_rent_change_record(factory, adapte
                                                  {"kind": "rent_change", "record_id": f"rentcheck:{lease.id}"},
                                                  {"kind": "acknowledgment", "record_id": ""}]}, id_="r3")],
             [tool("submit_case_packet", {**packet("rent_question", [f"rentcheck:{lease.id}"], True, "she says she was not told; a person answers",
-                                                  "Ana asks why her rent goes up to $160.00 and says nobody told her."),
+                                                  "Ana asks how much her rent will be; it goes to $160.00."),
                                          "reminder": {"hold": False, "kind": "none", "text_id": "", "quote": ""}}, id_="r4")])
         run, _ = investigate(s, model, text, "request-rent-1", adapter=adapter)
         assert run.status == "done", run.error

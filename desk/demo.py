@@ -219,7 +219,7 @@ def tenant_texts(session: Session, adapter: FMSAdapter, sim: httpx.Client) -> No
     - Priya asks about her payment plan, and the front desk answers;
     - Dana asks why her unit is on the sale list after she paid, which is the sale story above from her side, and then sends her
       card receipt. Cubby's webhook carries no media, so the file reaches the facility's own inbox and the desk keeps it with the text;
-    - Ana, whose rent goes up 28 percent next month, says nobody told her."""
+    - Ana, whose rent goes up 28 percent next month, asks how much it will be and from when."""
     orlando = session.scalar(select(Facility).where(Facility.provider_id == ORLANDO))
     now = utcnow()
     for phone, body, minutes_ago in (
@@ -230,7 +230,7 @@ def tenant_texts(session: Session, adapter: FMSAdapter, sim: httpx.Client) -> No
             ("+14075550142", "I paid my balance over the phone the other day and now I got a notice that my unit is going to auction. "
                              "Can you check this please?", 12),
             ("+14075550142", "Here is the receipt they gave me for that payment.", 9),
-            ("+14075550176", "I just saw my rent is going up to $160 next month. Nobody told me anything about this.", 25)):
+            ("+14075550176", "Hi, I heard my rent is going up next month. How much will it be, and from when?", 25)):
         answer = sim.post("/sim/messages/inbound", json={"facilityId": ORLANDO, "from": phone, "body": body,
                                                          "receivedAt": (now - timedelta(minutes=minutes_ago)).isoformat()})
         answer.raise_for_status()
