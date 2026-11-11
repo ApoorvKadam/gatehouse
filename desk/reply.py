@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .adapter import FMSError
+from .db import utcnow
 from .liens import dollars
 from .messaging import SMS_LIMIT, send_text
 from .models import AgentRun, InboundMessage, Lease, LedgerSnapshot, OutboundMessage, PaymentCommand, RentChangeCheck, WorkItem
@@ -135,6 +136,9 @@ def resolve(session: Session, inv, kind: str, record_id: str) -> tuple[Part | No
         if not data.get("lease_cycle") or data.get("lease_cycle") != data.get("facility_cycle"):
             return None, "the lease is billed on another cycle than the amount the FMS keeps"
         on = datetime.fromisoformat(data["date"])
+        if data.get("scheduled") is False or on.date() <= _at(utcnow(), facility_zone).date():
+            # a reading kept from before its date is not a change still to come; the next pass says what happened
+            return None, "that rent change is not still to come"
         return Part(kind, REPLY_PHRASES[kind].format(unit=lease.unit_name, amount=dollars(data["new"]), when=_day(on)), "the rent change"), ""
     return None, "the desk cannot write that part"
 

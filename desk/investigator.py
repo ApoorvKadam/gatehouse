@@ -27,7 +27,7 @@ from .models import (
     AccessView, AgentRequest, AgentRun, DelinquencyCase, Facility, InboundMessage, Lease, LedgerSnapshot, LienEvaluation, ObservedPayment, OutboundMessage,
     PaymentCommand, RentChangeCheck, WorkItem,
 )
-from .rent_changes import day as rent_day, parse_day
+from .rent_changes import PER_WORDS, day as rent_day, parse_day
 from .reply import NEEDS_RECORD, after_failure, answer, cited, mark_step
 from .sales import KIND_NAMES, LISTED_KINDS, LISTED_PAID, OUTSIDE, SALE_KINDS
 from .staff_review import staff_review
@@ -83,7 +83,7 @@ A text that is only one of these words asks the facility to stop all texts: {sto
 </trusted_facts>
 
 <allowed_actions>
-Read records with get_account, get_payments, get_sale_status, get_lien_file, get_access, get_rent_change and get_recent_texts. When the tenant asks about a rent increase or a rent notice, read get_rent_change; no record shows whether a notice was sent, so never write that one was or was not. If the tenant says they were not told about a rent change, the intent is rent_notice_dispute: a person reviews the notice, so do not propose rent_change; open with message_received and close with acknowledgment. The lookups that take a lease_id accept only the lease_id values that get_account returns. When get_sale_status shows an open sale item for this tenant's unit that is still listed, you may ask for a staff review of it with request_staff_review, once, passing that item's record_id. Gatehouse decides whether to act, acts only after it has checked your packet, and reads the result back from the FMS; you do not see the result, so never write that a review was requested or done. When the tenant is waiting for an answer that the records can give, propose an acknowledgement with draft_reply, once, after any request for a staff review. List the parts that answer them, in the order a person would say them: payment_applied (a desk payment record, payment:..., that says the payment is confirmed; never an FMS-reported payment), balance_as_of (an account record, cite its lease: record_id), sale_status (a sale item record that get_sale_status returned, cite its record_id), rent_change (a rent change record that get_rent_change returned, cite its record_id; only when the tenant asks about their rent), staff_review (only if you asked for one), and acknowledgment (a closing line). Use message_received to open. Give an empty record_id for the parts that need none. Do not propose a reply to a STOP. The desk leaves out any part it cannot confirm, so you do not see the text or whether it was sent: never write that a reply was sent. Finish by calling submit_case_packet once.
+Read records with get_account, get_payments, get_sale_status, get_lien_file, get_access, get_rent_change and get_recent_texts. When the tenant asks about a rent increase or a rent notice, read get_rent_change; no record shows whether a notice was sent, so never write that one was or was not. If the tenant says they were not told about a rent change, the intent is rent_notice_dispute: a person reviews the notice and answers them, so do not propose a reply and set needs_person. The lookups that take a lease_id accept only the lease_id values that get_account returns. When get_sale_status shows an open sale item for this tenant's unit that is still listed, you may ask for a staff review of it with request_staff_review, once, passing that item's record_id. Gatehouse decides whether to act, acts only after it has checked your packet, and reads the result back from the FMS; you do not see the result, so never write that a review was requested or done. When the tenant is waiting for an answer that the records can give, propose an acknowledgement with draft_reply, once, after any request for a staff review. List the parts that answer them, in the order a person would say them: payment_applied (a desk payment record, payment:..., that says the payment is confirmed; never an FMS-reported payment), balance_as_of (an account record, cite its lease: record_id), sale_status (a sale item record that get_sale_status returned, cite its record_id), rent_change (a rent change record that get_rent_change returned, cite its record_id; only when the tenant asks about their rent), staff_review (only if you asked for one), and acknowledgment (a closing line). Use message_received to open. Give an empty record_id for the parts that need none. Do not propose a reply to a STOP. The desk leaves out any part it cannot confirm, so you do not see the text or whether it was sent: never write that a reply was sent. Finish by calling submit_case_packet once.
 </allowed_actions>
 
 <prohibited_claims>
@@ -342,18 +342,29 @@ class Lookups:
         return {"lease_id": lease.provider_id, "evaluation": self._record(f"lien:{evaluation.id}", text)}
 
     def get_rent_change(self, lease: Lease) -> dict:
-        """The desk's own rent change reading of one unit, in words: the amounts, the date and the verdict, never a claim about a notice."""
+        """The desk's own rent change reading of one unit, in words: the amounts with their billing cycle, the date and the verdict, never a claim
+        about a notice. A unit with no reading is said to have no reading, never to have no change."""
         check = self.session.get(RentChangeCheck, lease.id)
         data = (check.data if check is not None else None) or {}
         if not data.get("date"):
             return {"lease_id": lease.provider_id, "rent_change": self._record(f"rentcheck:none:{lease.id}",
-                    f"No rent change is scheduled for unit {lease.unit_name}, and none was completed in the last four months.")}
+                    f"The desk has no rent change reading for unit {lease.unit_name}. That does not show whether a change is scheduled.")}
         on = rent_day(parse_day(data["date"]))
         rent, new = data.get("rent"), data.get("new")
-        if data.get("state") in ("clear", "review", "hold", "not_applied") and isinstance(new, int):
-            said = f"The FMS shows a rent change on unit {lease.unit_name} to {money(new)} on {on}" + (f", from {money(rent)} now." if isinstance(rent, int) else ".")
+        per = PER_WORDS.get(data.get("facility_cycle") or "")
+        each = f" {per}" if per else ", per a billing cycle the desk cannot read"
+        scheduled = data.get("scheduled")
+        if scheduled is None:       # a reading taken before the desk recorded which kind it was
+            scheduled = data.get("state") in ("clear", "review", "hold", "not_applied")
+        if scheduled:
+            said = (f"The FMS shows a rent change on unit {lease.unit_name} scheduled for {on}"
+                    + (f", to {money(new)}{each}" if isinstance(new, int) else "; the new amount could not be read")
+                    + (f", from {money(rent)}{each} now." if isinstance(rent, int) else "."))
         else:
-            said = f"The FMS reports a rent change on unit {lease.unit_name} completed on {on}" + (f"; the rent is now {money(rent)}." if isinstance(rent, int) else ".")
+            said = f"The FMS reports a rent change on unit {lease.unit_name} completed on {on}" + (f"; the rent is now {money(rent)}{each}." if isinstance(rent, int) else ".")
+        cycle = data.get("lease_cycle")
+        if cycle and cycle != data.get("facility_cycle"):
+            said += f" This lease is billed {PER_WORDS.get(cycle, 'on another cycle')}, so these amounts are not what each bill shows."
         said += f" The desk's rent check: {data.get('label', '')}. {data.get('why', '')} No record shows whether a rent notice was sent."
         return {"lease_id": lease.provider_id, "rent_change": self._record(f"rentcheck:{lease.id}", said.strip())}
 
@@ -815,7 +826,7 @@ class Investigation:
         if problem is not None:
             return self._end("needs_person", stop_reason, problem)
         kept = {"intent": packet["intent"], "summary": shorten(packet["summary"].strip(), MAX_SUMMARY), "records": list(dict.fromkeys(packet["records"])),
-                "needs_person": packet["needs_person"], "reason": packet["reason"].strip()}
+                "needs_person": packet["needs_person"] or packet["intent"] == "rent_notice_dispute", "reason": packet["reason"].strip()}
         reminder, answer = check_reminder(self.inbound, packet.get("reminder"))
         if reminder is not None:
             kept["reminder"] = reminder
