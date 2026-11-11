@@ -35,6 +35,12 @@ from . import rent_changes
 from .sequence import sequence
 from .wording import TROUBLES, plain, words
 
+
+def site_opening(text: str) -> str:
+    """The first sentence of an item's text, for a card that has to stay short."""
+    end = text.find(". ")
+    return text if end < 0 else text[: end + 1]
+
 HERE = Path(__file__).parent
 templates = Jinja2Templates(directory=HERE / "templates")
 templates.env.filters["readable"] = lambda text: plain(text, ids=False)      # times and state codes as words; the ids on an evidence page stay
@@ -42,6 +48,14 @@ templates.env.filters["upfirst"] = lambda text: text[:1].upper() + text[1:] if t
 
 # The four kinds of entry an account's record keeps apart. Every event kind lands in exactly one of them.
 FMS, OBSERVED, CONCLUDED, DECIDED = "fms", "observed", "concluded", "decided"
+# Today's item heads, as the question a manager would ask about each (the Overview's problem cards)
+QUESTIONS = {"Payment outcome unknown": "Did that card payment go through?", "Payment returned": "Did the money stay paid?",
+             "Payment refunded": "Did the money stay paid?", "Payment disputed": "Did the money stay paid?",
+             "Lien file out of date": "Is the lien file still right?", "Counsel review required": "Can this lien file go ahead?",
+             "Rent billed at another amount": "Did the new rent bill right?", "Rent change not applied": "Did the rent change take?",
+             "Access not restored": "Can a tenant who paid get in?", "Restriction not in place": "Is a past-due unit really locked?",
+             "Payment in progress": "Has the payment settled yet?", "Past due": "Who still owes, and how much?",
+             "Sale still listed, nothing owed": "Is a paid unit still up for auction?"}
 LANES = [(FMS, "The FMS said"), (OBSERVED, "Gatehouse observed"), (CONCLUDED, "Gatehouse concluded"), (DECIDED, "A person decided")]
 LANE_OF = {
     "case opened": FMS, "payment taken outside the desk": FMS, "payment declined": FMS,
@@ -550,8 +564,17 @@ def router(pages: Pages) -> APIRouter:
             if record_case is not None:
                 for e in pages.record(s, s.get(DelinquencyCase, record_case)):
                     lanes.setdefault(e.lane, []).append(e)
+            # the questions a manager asks, each answered by one open item on Today, first four distinct ones in Today's order
+            asked: dict[str, Item] = {}
+            for i in items:
+                q = QUESTIONS.get(i.head)
+                if q and q not in asked:
+                    asked[q] = i
             return templates.TemplateResponse(request, "front.html", {
-                "facility": home, "facilities": facilities, "items": items[:4], "open_count": len(items),
+                "questions": list(asked.items())[:4],
+                "rent_item": next((i for i in items if i.head == "Rent billed at another amount"), None),
+                "opening": site_opening,
+                "facility": home, "facilities": facilities, "items": items, "open_count": len(items),
                 "held": held, "held_answer": (lost.get(held.id) or {}).get("detail") if held else None, "held_unit": s.get(Lease, held.lease_id).unit_name if held else None,
                 "returned": returned, "returned_unit": s.get(Lease, returned.lease_id).unit_name if returned else None,
                 "changed": changed, "counsel": counsel, "counsel_state": counsel_state, "record_case": record_case,

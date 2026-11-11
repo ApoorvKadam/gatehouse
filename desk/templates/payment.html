@@ -4,7 +4,7 @@
 <div class="wrap">
 <p class="crumbs"><a href="/today?facility={{ facility.provider_id }}">Today at {{ facility.name }}</a> / <a href="/accounts/{{ case.id }}">Unit {{ lease.unit_name }}</a></p>
 <div class="head">
-  <h1>{{ money(cmd.amount) }} card payment, unit {{ lease.unit_name }}</h1>
+  <div class="head-title"><h1>{{ money(cmd.amount) }} card payment, unit {{ lease.unit_name }}</h1><p class="tagline">Ask once. Never charge twice.</p></div>
   <p>Attempt {{ cmd.id }} &middot; started {{ local(cmd.created_at) }}</p>
 </div>
 {% set held = cmd.state in ('NEEDS_STAFF', 'OUTCOME_UNKNOWN') %}
@@ -14,7 +14,7 @@
   {% else %}{{ cmd.state|readable|upfirst }}{% endif %}</span></div>
 {% if case.hold_reasons %}<p class="lede">{% for r in case.hold_reasons %}{{ sentence(r) }} {% endfor %}</p>{% endif %}
 
-<div class="grid2">
+<div class="grid2" data-stagger>
   <section class="panel">
     <h2><span class="lane-dot lane-decided"></span>What the tenant agreed to</h2>
     {% if proposal %}

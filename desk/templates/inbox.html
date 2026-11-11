@@ -13,7 +13,7 @@
 {% block main %}
 <div class="wrap">
   <div class="head">
-    <h1>Messages at {{ facility.name }}</h1>
+    <div class="head-title"><h1>Messages at {{ facility.name }}</h1><p class="tagline">Every text is matched to a tenant before anyone answers.</p></div>
     {% if not live %}<p>Our agent is switched off on this copy</p>{% endif %}
   </div>
   <p class="lede">What tenants texted this facility, each matched to a tenant through the FMS. Nobody who sent STOP is texted.</p>
