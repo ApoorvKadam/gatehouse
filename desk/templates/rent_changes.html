@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Rent changes, {{ facility.name }} | Gatehouse{% endblock %}
+{% block main %}
+<div class="wrap">
+  <div class="head">
+    <h1>Rent changes at {{ facility.name }}</h1>
+    {% if rows %}<p>{{ open }} of {{ rows|length }} {{ 'change needs' if open == 1 else 'changes need' }} a person</p>{% endif %}
+  </div>
+  <p class="lede">Your revenue tool or your staff decide each increase, and the FMS holds it. This is the check around it: whether the account can take it, whether the FMS applied it on the day, and whether the first full bill after it is the new rent. Gatehouse sets no price and changes no rent.</p>
+  {% if rows %}
+  <div class="worklist check rents">
+    <table>
+      <thead><tr><th>Account</th><th>Check</th><th>Steps</th><th class="num">Rent</th></tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr id="unit-{{ r.unit }}">
+          <td>
+            <div class="work-head">Unit {{ r.unit }}</div>
+            {% if r.tenant %}<span class="muted small">{{ r.tenant }}</span>{% endif %}
+          </td>
+          <td>
+            <span class="chip {{ chips.get(r.state, 'plain') }}">{{ r.label }}</span>
+            <p class="work-what">{{ r.why|readable }}</p>
+            {% for other in r.also %}<p class="work-proof">{{ other|readable }}</p>{% endfor %}
+          </td>
+          <td>
+            <ol class="rent-steps">
+            {% for name, state, words in r.steps %}
+              <li><span class="chip {{ step_chips.get(state, 'plain') }}">{{ name }}</span><span class="small">{{ words|readable }}</span></li>
+            {% endfor %}
+            </ol>
+          </td>
+          <td class="num amount">{% if r.new is not none and r.state not in ('verified', 'wrong_charge', 'cannot_tell') %}{{ money(r.rent) if r.rent is not none else '' }} to {{ money(r.new) }}{% if r.pct is not none %}<br><span class="muted small">{{ '+' if r.pct >= 0 else '' }}{{ r.pct }} percent</span>{% endif %}{% elif r.rent is not none %}{{ money(r.rent) }}{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="small muted">{{ notice_why }} An increase above {{ review_percent }} percent, or within {{ review_days }} days of the last one, is shown for review; these are lines an operator sets, not law.</p>
+  {% else %}
+  <p class="empty">No rent change is scheduled at this facility, and none was completed in the last four months.</p>
+  {% endif %}
+</div>
+{% endblock %}

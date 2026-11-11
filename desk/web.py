@@ -26,11 +26,12 @@ from .db import utcnow
 from .liens import on
 from .models import (
     AccessPolicy, AccessView, AgentRun, CaseEvent, DelinquencyCase, DeskBinding, Facility, IdentityCheck, Lease, LedgerSnapshot,
-    LienEvaluation, LienEvidence, PaymentCommand, PaymentProposal, ReminderCheck, WorkItem,
+    LienEvaluation, LienEvidence, PaymentCommand, PaymentProposal, ReminderCheck, WorkItem, RentChangeCheck,
 )
 from .payments import tenant_message
 from .messaging import in_quiet_hours
 from .reminder_check import hold_note, with_texts
+from . import rent_changes
 from .sequence import sequence
 from .wording import TROUBLES, plain, words
 
@@ -76,6 +77,8 @@ REVERSED = {
 }
 # the chip a reason takes on the Reminder check: red only for a tenant who must not be texted, amber for what needs a fix or a wait
 CHECK_CHIPS = {"consent": "act", "unpaused": "wait", "payment": "wait", "unread": "wait", "clear": "done"}
+RENT_CHIPS = {"hold": "act", "not_applied": "act", "wrong_charge": "act", "review": "wait", "cannot_tell": "plain", "clear": "done", "verified": "done"}
+STEP_CHIPS = {"done": "done", "wrong": "act", "unproven": "wait", "waiting": "plain", "unknown": "plain"}
 EVIDENCE_NAMES = {"notice": "Lien notice", "mail_deposit": "Certificate of mailing", "posting": "Notice posted",
                   "publication": "Newspaper publication", "legal_check": "Legal check", "email_delivery": "Email delivery"}
 
@@ -313,6 +316,23 @@ class Pages:
                 rows.append({**check.data, "lease": lease_provider_id, "customer": customer_id, "observed_at": check.observed_at})
         return sorted(with_texts(s, facility, rows, visitor=visitor), key=lambda row: (row["state"] != "hold", -row["owed"]))
 
+    def rent_checks(self, s: Session, facility: Facility) -> list[dict]:
+        """The worker's last reading of each rent change at a facility: unfinished work first, then what needs a look, then what is fine."""
+        found = s.execute(select(Lease.provider_id, RentChangeCheck).join(RentChangeCheck, RentChangeCheck.lease_id == Lease.id)
+                          .where(Lease.facility_id == facility.id).order_by(Lease.unit_name)).all()
+        rows = [{**c.data, "lease": lease_id, "observed_at": c.observed_at} for lease_id, c in found if c.data.get("state") in rent_changes.LABELS]
+        return sorted(rows, key=lambda r: (rent_changes.ORDER.index(r["state"]), r.get("date") or ""))
+
+    def rent_items(self, s: Session, facility: Facility) -> list[Item]:
+        out = []
+        for r in self.rent_checks(s, facility):
+            if r["state"] in rent_changes.TODAY:
+                rank, head, proof, who = rent_changes.TODAY[r["state"]]
+                since = datetime.fromisoformat(r["since"]) if r.get("since") else r["observed_at"]
+                out.append(Item(rank, head, r["unit"], 0, since, r["why"], proof, who, f"/rent-changes#unit-{r['unit']}",
+                                money(r["new"]) if isinstance(r.get("new"), int) else money(r["rent"]) if isinstance(r.get("rent"), int) else ""))
+        return out
+
     def today(self, s: Session, facility: Facility) -> list[Item]:
         items: list[Item] = []
         # a paid account can still have a lien file in motion, so every case is read; only lien work shows for those
@@ -379,6 +399,7 @@ class Pages:
         items.extend(self.access_items(s, facility))
         items.extend(self.sale_items(s, facility))
         items.extend(self.integration_items(s))
+        items.extend(self.rent_items(s, facility))
         for item in items:
             item.what, item.proof = plain(item.what), plain(item.proof)       # Today is read by a person: no provider ids, state codes or raw times
         return sorted(items, key=lambda i: (i.rank, i.since))
@@ -566,6 +587,22 @@ def router(pages: Pages) -> APIRouter:
             return templates.TemplateResponse(request, "reminder_check.html", {
                 "facilities": facilities, "facility": current, "rows": rows, "holds": sum(1 for row in rows if row["state"] == "hold"),
                 "quiet": in_quiet_hours(current, utcnow()), "chips": CHECK_CHIPS, "money": money, "nav": "reminder-check"})
+
+    @r.get("/rent-changes", response_class=HTMLResponse)
+    def rent_changes_page(request: Request, facility: str | None = None):
+        """Each rent change the operator scheduled or completed, and the work around it: can the account take it, was it applied, was it billed."""
+        with session() as s:
+            facilities = pages.facilities(s)
+            if not facilities:
+                raise HTTPException(503, "No facility has been read from the FMS yet")
+            current = next((f for f in facilities if f.provider_id == facility), None) if facility is not None else facilities[0]
+            if current is None:
+                raise HTTPException(404, "No such facility")
+            rows = pages.rent_checks(s, current)
+            return templates.TemplateResponse(request, "rent_changes.html", {
+                "facilities": facilities, "facility": current, "rows": rows, "money": money, "chips": RENT_CHIPS, "step_chips": STEP_CHIPS,
+                "open": sum(1 for r in rows if r["state"] in rent_changes.TODAY), "review_percent": rent_changes.REVIEW_PERCENT,
+                "review_days": rent_changes.REVIEW_DAYS, "notice_why": rent_changes.NOTICE_WHY, "nav": "rent-changes"})
 
     @r.get("/inbox", response_class=HTMLResponse)
     def inbox_page(request: Request, facility: str | None = None, text: int | None = None):

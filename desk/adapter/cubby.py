@@ -12,7 +12,7 @@ import httpx
 
 from .base import (
     AccessCheck, Anomaly, FMSError, InboundText, NotFound, PermissionDenied, ProviderAccessCode, ProviderCustomer, ProviderExemption,
-    ProviderLease, ProviderAuctionEntry, ProviderLedger, ProviderLock, ProviderPayment, ProviderTask, SmsOutcome, SmsPreference,
+    ProviderLease, ProviderAuctionEntry, ProviderLedger, ProviderLock, ProviderPayment, ProviderTask, RentFacts, SmsOutcome, SmsPreference,
     SubmitOutcome, TaskCreateOutcome,
 )
 
@@ -221,6 +221,46 @@ class CubbyAdapter:
 
     def leases(self, facility_provider_id: str) -> list[ProviderLease]:
         return [self._lease(raw) for raw in self._read("/v1/leases/search", {"facilityId": facility_provider_id}).get("leases", [])]
+
+    # ------------------------------------------------------------------ rent changes: reads only
+    def _cents(self, endpoint: str, field: str, value, bad: list[str]) -> int | None:
+        """An amount in whole cents, or None when the FMS sent none. A value of another shape is noted and named, never coerced."""
+        if value is None:
+            return None
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+        self._note(endpoint, field, "not whole cents", "text" if isinstance(value, str) else "decimal" if isinstance(value, float) else "other")
+        bad.append(field)
+        return None
+
+    def rent_facts(self, facility_provider_id: str, today: str) -> list[RentFacts]:
+        """Each lease's rent and scheduled change (Leases Search) beside its rent roll entry (the rent in the lease's own cycle, the net rate,
+        the last completed change). The rent roll carries no lease id, so it is joined on the unit; a lease with no entry has in_roll False."""
+        facility = next((f for f in self.facilities() if f.get("facilityId") == facility_provider_id), None)
+        if facility is None:
+            raise NotFound(facility_provider_id)
+        leases = self._read("/v1/leases/search", {"facilityId": facility_provider_id}).get("leases")
+        entries = self._read("/v1/reports/rent-roll", {"facilityIds": [facility_provider_id], "throughDate": today}).get("entries")
+        if not isinstance(leases, list) or not isinstance(entries, list):
+            raise FMSError("rent facts: the answer has no leases or no rent roll entries")
+        by_unit = {(e.get("unitId"), e.get("customerId")): e for e in entries if isinstance(e, dict)}
+        out = []
+        for raw in leases:
+            bad: list[str] = []
+            roll = by_unit.get((raw.get("unitId"), raw.get("customerId")))
+            out.append(RentFacts(
+                lease_provider_id=raw["leaseId"], customer_provider_id=raw.get("customerId") or "", unit_name=raw.get("unitName") or "",
+                facility_cycle=facility.get("billingCycle") if isinstance(facility.get("billingCycle"), str) else None,
+                lease_cycle=raw.get("billingCycle") if isinstance(raw.get("billingCycle"), str) else None,
+                rent=self._cents("leases search", "monthlyRentalAmount", raw.get("monthlyRentalAmount"), bad),
+                scheduled_date=raw.get("rentChangeScheduledDate") if isinstance(raw.get("rentChangeScheduledDate"), str) else None,
+                scheduled_amount=self._cents("leases search", "rentChangeNewRentAmount", raw.get("rentChangeNewRentAmount"), bad),
+                in_roll=roll is not None,
+                roll_rent=self._cents("rent roll", "monthlyRentalAmount", roll.get("monthlyRentalAmount"), bad) if roll else None,
+                roll_effective=self._cents("rent roll", "effectiveRate", roll.get("effectiveRate"), bad) if roll else None,
+                last_change=roll.get("lastRentChangeDate") if roll and isinstance(roll.get("lastRentChangeDate"), str) else None,
+                unreadable=tuple(bad)))
+        return out
 
     # ------------------------------------------------------------------ access: reads only, plus one kind of task
     def access_codes(self, facility_provider_id: str, customer_provider_id: str) -> list[ProviderAccessCode]:

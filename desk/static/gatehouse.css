@@ -207,6 +207,9 @@ td.num, th.num { text-align: right; }
 .work-proof { color: var(--ink-2); }
 .worklist th:nth-child(1) { width: 50%; } .worklist th:nth-child(2) { width: 30%; } .worklist th:nth-child(3) { width: 12%; } .worklist th:nth-child(4) { width: 8%; }
 .worklist.check th:nth-child(1) { width: 18%; } .worklist.check th:nth-child(2) { width: 62%; } .worklist.check th:nth-child(3) { width: 10%; } .worklist.check th:nth-child(4) { width: 10%; }
+.worklist.rents th:nth-child(1) { width: 14%; } .worklist.rents th:nth-child(2) { width: 38%; } .worklist.rents th:nth-child(3) { width: 34%; } .worklist.rents th:nth-child(4) { width: 14%; }
+.rent-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s2); }
+.rent-steps li { display: grid; grid-template-columns: 6.5rem 1fr; gap: var(--s2); align-items: baseline; }
 .work-proof b { display: block; color: var(--ink-3); font-size: var(--t-xs); font-weight: 600; margin-bottom: 2px; }
 .amount { font-weight: 600; }
 .empty { padding: var(--s6); color: var(--ink-2); }

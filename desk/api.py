@@ -36,7 +36,7 @@ from .messaging import inbox, match_pending, outbound_view, play_tenant, receive
 from .reminder_check import with_texts
 from .models import (
     AgentRun, CaseEvent, DelinquencyCase, DeskBinding, Facility, InboundMessage, Lease, LedgerSnapshot, LienEvaluation, PaymentCommand,
-    ReminderCheck,
+    ReminderCheck, RentChangeCheck,
 )
 from .payments import (
     IdentityClaim, PaymentRefused, PaymentService, check_identity, collected, confirm, propose, tenant_message,
@@ -282,6 +282,16 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
     def facility_queue(facility_id: str, session: Session = Depends(db), _: str = Depends(viewer)):
         check_facility(session, facility_id)
         return {"rows": [r.__dict__ for r in queue(session, facility_id)], "collected": collected(session, adapter.provider, facility_id)}
+
+    @app.get("/api/facilities/{facility_id}/rent-changes")
+    def facility_rent_changes(facility_id: str, session: Session = Depends(db), _: str = Depends(viewer)):
+        """Each rent change the operator scheduled or completed at a facility, as the worker last read it: whether the account can take it,
+        whether the FMS applied it, whether the first full bill after it is the new rent. Gatehouse changes no rent."""
+        check_facility(session, facility_id)
+        facility = session.scalar(select(Facility).where(Facility.provider_id == facility_id))
+        found = session.execute(select(Lease.provider_id, RentChangeCheck).join(RentChangeCheck, RentChangeCheck.lease_id == Lease.id)
+                                .where(Lease.facility_id == facility.id).order_by(Lease.unit_name)).all() if facility is not None else []
+        return {"facility": facility_id, "rent_changes": [{"lease": lease_id, **c.data, "read_at": c.observed_at} for lease_id, c in found]}
 
     @app.get("/api/facilities/{facility_id}/reminder-check")
     def facility_reminder_check(facility_id: str, session: Session = Depends(db), _: str = Depends(viewer)):

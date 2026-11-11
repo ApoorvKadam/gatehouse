@@ -179,6 +179,27 @@ class SmsOutcome:
     detail: str | None = None
 
 
+@dataclass(frozen=True)
+class RentFacts:
+    """What the FMS says about one lease's rent, read for the rent change check. Amounts are as the FMS sent them: `rent` and
+    `scheduled_amount` per one billing cycle of the facility (Leases Search), `roll_rent` and `roll_effective` per the lease's own cycle (the
+    rent roll, joined on the unit). A field the FMS sent in a shape the documentation does not describe is None and named in `unreadable`."""
+
+    lease_provider_id: str
+    customer_provider_id: str
+    unit_name: str
+    facility_cycle: str | None
+    lease_cycle: str | None
+    rent: int | None
+    scheduled_date: str | None
+    scheduled_amount: int | None
+    in_roll: bool = False
+    roll_rent: int | None = None
+    roll_effective: int | None = None
+    last_change: str | None = None
+    unreadable: tuple[str, ...] = ()
+
+
 class FMSAdapter(Protocol):
     provider: str
 
@@ -197,6 +218,7 @@ class FMSAdapter(Protocol):
     def restore_anomalies(self, notes: list[Anomaly]) -> None: ...
     def payment_methods(self, customer_provider_id: str) -> list[dict]: ...
     def leases(self, facility_provider_id: str) -> list[ProviderLease]: ...
+    def rent_facts(self, facility_provider_id: str, today: str) -> list[RentFacts]: ...
     def access_codes(self, facility_provider_id: str, customer_provider_id: str) -> list[ProviderAccessCode]: ...
     def check_code(self, facility_provider_id: str, code: str) -> AccessCheck: ...
     def locks_for_lease(self, lease_provider_id: str) -> list[ProviderLock]: ...
