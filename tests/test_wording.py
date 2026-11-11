@@ -46,3 +46,9 @@ def test_a_time_the_desk_keeps_in_utc_is_read_on_the_facility_clock():
     assert when(at) == "Nov 8, 2026, 6:18 PM" and when(at, "America/Chicago") == "Nov 8, 2026, 5:18 PM"
     assert when(datetime(2026, 11, 9, 5, 5), "America/New_York") == "Nov 9, 2026, 12:05 AM" and when(None) == "an unknown time"
     assert "UTC" not in when(at)
+
+
+def test_a_state_shown_first_in_a_line_keeps_its_capital_letters():
+    from desk.web import templates
+    up = templates.env.filters["upfirst"]
+    assert up(words("PENDING_AT_FMS")) == "Pending at the FMS" and up("") == ""
