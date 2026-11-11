@@ -4,7 +4,7 @@
 <div class="wrap">
 <p class="crumbs"><a href="/today?facility={{ facility.provider_id }}">Today at {{ facility.name }}</a> / Lien sales</p>
 <div class="head">
-  <h1>{{ kind_names[w.kind] }}: unit {{ o.get('unit', '') }}</h1>
+  <div class="head-title"><h1>{{ kind_names[w.kind] }}: unit {{ o.get('unit', '') }}</h1><p class="tagline">A paid unit has no business at auction.</p></div>
   <p>{{ facility.name }} &middot; opened {{ local(w.opened_at) }}{% if w.episode_key != '1' %} &middot; episode {{ w.episode_key }}{% endif %}</p>
 </div>
 <div class="state"><span class="chip {{ 'done' if w.state == 'closed' else ('act' if w.kind in ('sale_listed_nothing_owed', 'sale_settled_review') else 'wait') }}">{% include "icons/gavel.svg" %}{{ 'Closed: ' ~ w.verification if w.state == 'closed' else kind_names[w.kind] }}</span>
@@ -13,7 +13,7 @@
 {% if o.get('task_warning') %}<p class="note" style="font-size:var(--t-body);color:var(--ink)">{{ o.task_warning }}</p>{% endif %}
 {% if w.note %}<p class="note" style="font-size:var(--t-body);color:var(--ink)">{{ w.note|readable }}</p>{% endif %}
 
-<div class="grid2 align-start">
+<div class="grid2 align-start" data-stagger>
   <section class="panel">
     <h2><span class="lane-dot lane-fms"></span>The sale, as the FMS lists it</h2>
     <dl class="kv">
@@ -42,7 +42,7 @@
   </section>
 </div>
 
-<div class="grid2 align-start">
+<div class="grid2 align-start" data-stagger>
   <section class="panel">
     <h2><span class="lane-dot lane-concluded"></span>What closes it</h2>
     <dl class="kv">

@@ -4,7 +4,7 @@
 <div class="wrap">
 <p class="crumbs"><a href="/today?facility={{ facility.provider_id }}">Today at {{ facility.name }}</a> / Access</p>
 <div class="head">
-  <h1>{{ kind_names[w.kind] }}: {{ label or ('unit ' ~ unit) }}</h1>
+  <div class="head-title"><h1>{{ kind_names[w.kind] }}: {{ label or ('unit ' ~ unit) }}</h1><p class="tagline">Paid should mean the gate opens.</p></div>
   <p>{{ facility.name }} &middot; opened {{ local(w.opened_at) }}{% if w.episode_key != '1' %} &middot; episode {{ w.episode_key }}{% endif %}</p>
 </div>
 <div class="state"><span class="chip {{ 'done' if w.state == 'closed' else ('act' if w.kind == 'access_not_restored' else 'wait') }}">{% include "icons/door-open.svg" %}{{ 'Closed: ' ~ closed_by if w.state == 'closed' else kind_names[w.kind] }}</span>
@@ -12,7 +12,7 @@
 <p class="lede">{{ w.problem }}</p>
 {% if w.note %}<p class="note" style="font-size:var(--t-body);color:var(--ink)">{{ w.note }}</p>{% endif %}
 
-<div class="grid2 align-start">
+<div class="grid2 align-start" data-stagger>
   <section class="panel">
     <h2><span class="lane-dot lane-concluded"></span>What the recorded rule expects</h2>
     {% if policy %}
@@ -46,7 +46,7 @@
   {% if views %}
   <table>
     <thead><tr><th>Unit</th><th>Standing</th><th>Exemption</th><th>Operator lock</th><th>FMS says overlock needed</th><th>Gate code</th><th>Read</th></tr></thead>
-    <tbody>
+    <tbody data-stagger>
     {% for lease, v in views %}
       {% set d = v.data if v else {} %}
       <tr>

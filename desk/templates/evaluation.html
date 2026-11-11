@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Evaluation | Gatehouse{% endblock %}
 {% macro bar(groups, label) %}
-  <div class="segbar" role="group" aria-label="{{ label }}">
+  <div class="segbar" data-fill role="group" aria-label="{{ label }}">
     {% for name, marks in groups %}
     <div class="seggroup" style="flex: {{ marks|length }} 1 0">
       {% for m in marks %}<a class="seg{{ ' k-' ~ m.key if m.key else '' }}{{ '' if m.ok else ' fail' }}{{ ' count' if m.count else '' }}" href="{{ m.href }}" aria-label="{{ m.text }}" data-tip="{{ m.tip }}">{% if m.shown %}<span>{{ m.shown }}</span>{% endif %}</a>{% endfor %}
@@ -15,7 +15,7 @@
 {% block main %}
 <div class="wrap">
 <div class="head">
-  <h1>Evaluation</h1>
+  <div class="head-title"><h1>Evaluation</h1><p class="tagline">We break it on purpose, every build.</p></div>
   {% if report %}<p class="head-result"><span class="chip {{ 'done' if report.ok else 'act' }}">{% include "icons/circle-check.svg" %}{{ 'Passed' if report.ok else 'Failed' }}</span> Run when this build was made, {{ local(report.generated) }}</p>{% endif %}
 </div>
 {% if report %}
@@ -34,7 +34,7 @@
   </div>
   {% endif %}
   <div class="meter-row">
-    <div class="meter-name"><b>Scenarios</b><span>{{ passed }} of {{ total }} behave as they should</span></div>
+    <div class="meter-name"><b>Scenarios</b><span data-roll>{{ passed }} of {{ total }} behave as they should</span></div>
     <div>{{ bar(scenario_marks, passed ~ ' of ' ~ total ~ ' scenarios behave as they should') }}</div>
   </div>
   <div class="meter-row">

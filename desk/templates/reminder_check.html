@@ -3,7 +3,7 @@
 {% block main %}
 <div class="wrap">
   <div class="head">
-    <h1>Reminder check at {{ facility.name }}</h1>
+    <div class="head-title"><h1>Reminder check at {{ facility.name }}</h1><p class="tagline">Before the reminder goes out, ask who should not get it.</p></div>
     {% if rows %}<p>{{ holds }} of {{ rows|length }} past-due {{ 'account' if rows|length == 1 else 'accounts' }} should not get a text today</p>{% endif %}
   </div>
   <p class="lede">Your reminder tool decides who to text. This is the check in front of it: for every past-due account, whether a collections text may go, and the reason when one may not. Gatehouse sends nothing.</p>
@@ -12,7 +12,7 @@
   <div class="worklist check">
     <table>
       <thead><tr><th>Account</th><th>Check</th><th class="num">Days late</th><th class="num">Owes</th></tr></thead>
-      <tbody>
+      <tbody data-stagger>
       {% for r in rows %}
         <tr>
           <td>

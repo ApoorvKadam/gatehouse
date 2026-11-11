@@ -292,7 +292,7 @@ def test_the_overview_plays_the_whole_walkthrough_and_the_sound_is_the_visitors_
         page = visitor.get("/").text
         video = page.split('<video id="film"')[1].split(">")[0]
         assert "controls" in video and "autoplay" not in video and "muted" not in video and "loop" not in video
-        assert "film/gatehouse-walkthrough.mp4" in page and 'class="button primary film-play"' in page
+        assert "film/gatehouse-walkthrough.mp4" in page and "film-play" not in page     # the player's own controls start it, with its sound
         moved = visitor.get("/film", follow_redirects=False)                                 # no second page to find the film on
         assert 'href="/film"' not in page and moved.status_code == 301 and moved.headers["location"] == "/"
         assert "gatehouse-teaser" not in page and "gatehouse-film" not in page

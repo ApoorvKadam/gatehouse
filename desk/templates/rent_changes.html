@@ -3,7 +3,7 @@
 {% block main %}
 <div class="wrap">
   <div class="head">
-    <h1>Rent changes at {{ facility.name }}</h1>
+    <div class="head-title"><h1>Rent changes at {{ facility.name }}</h1><p class="tagline">An increase is finished when the bill says so.</p></div>
     {% if rows %}<p>{{ open }} of {{ rows|length }} {{ 'change needs' if open == 1 else 'changes need' }} a person</p>{% endif %}
   </div>
   <p class="lede">Your revenue tool or your staff decide each increase, and the FMS holds it. This is the check around it: whether the account can take it, whether the FMS applied it on the day, and whether the first full bill after it is the new rent. Gatehouse sets no price and changes no rent.</p>
@@ -11,7 +11,7 @@
   <div class="worklist check rents">
     <table>
       <thead><tr><th>Account</th><th>Check</th><th>Steps</th><th class="num">Rent</th></tr></thead>
-      <tbody>
+      <tbody data-stagger>
       {% for r in rows %}
         <tr id="unit-{{ r.unit }}">
           <td>
