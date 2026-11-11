@@ -40,7 +40,7 @@
 </main>
 <footer>
   <div class="wrap foot">
-    <div class="foot-brand">{% set guard_size = 72 %}{% include "guard.html" %}<b>Gatehouse</b><span>Unfinished work in self-storage, checked against the FMS.</span></div>
+    <div class="foot-brand">{% set guard_size = 72 %}{% set guard_pose = "" %}{% include "guard.html" %}<b>Gatehouse</b><span>Unfinished work in self-storage, checked against the FMS.</span></div>
     <nav class="foot-col" aria-label="Work"><h2>Work</h2><a href="/today">Today</a><a href="/inbox">Messages</a><a href="/reminder-check">Reminder check</a><a href="/rent-changes">Rent changes</a></nav>
     <nav class="foot-col" aria-label="Proof"><h2>Proof</h2><a href="/evaluation">Evaluation</a><a href="/operations">Operations</a></nav>
     <div class="foot-col"><h2>About</h2><a href="https://github.com/ApoorvKadam/gatehouse" rel="noopener">The code, on GitHub</a><span>FMS shapes follow Cubby's public Operator API. Not an official integration.</span></div>
@@ -59,13 +59,14 @@
   function show(layer, name, list) { var i = list.indexOf(name); layer.style.backgroundPosition = (i % 3) * 50 + "% " + Math.floor(i / 3) * 50 + "%"; }
   var REACT = ["blink", "heart", "sparkle", "surprised", "wink", "bashful", "sleepy", "dizzy", "delighted"];
   guards.forEach(function (g) {
-    var face = g.querySelector(".guard-face"), react = g.querySelector(".guard-react"), timer = 0;
-    show(face, "center", GRID);
+    var face = g.querySelector(".guard-face"), react = g.querySelector(".guard-react"), timer = 0, pose = g.getAttribute("data-pose");
+    show(face, GRID.indexOf(pose) >= 0 ? pose : "center", GRID);
+    if (REACT.indexOf(pose) >= 0) { show(react, pose, REACT); g.classList.add("held"); }
     function feel(name, ms) {
       show(react, name, REACT); g.classList.add("reacting");
-      clearTimeout(timer); timer = setTimeout(function () { g.classList.remove("reacting"); }, ms);
+      clearTimeout(timer); timer = setTimeout(function () { g.classList.remove("reacting"); if (REACT.indexOf(pose) >= 0) show(react, pose, REACT); }, ms);
     }
-    if (window.matchMedia && window.matchMedia("(hover: hover) and (pointer: fine)").matches) {
+    if (!pose && window.matchMedia && window.matchMedia("(hover: hover) and (pointer: fine)").matches) {
       window.addEventListener("pointermove", function (e) {
         var b = g.getBoundingClientRect(), dx = e.clientX - (b.left + b.width / 2), dy = e.clientY - (b.top + b.height / 2);
         if (Math.hypot(dx, dy) < b.width * 0.5) { show(face, "center", GRID); return; }
@@ -79,7 +80,7 @@
         { transform: "scale(1, 1)" }, { transform: "scale(1.1, .86)", offset: .18 }, { transform: "scale(.95, 1.08)", offset: .45 },
         { transform: "scale(1.03, .97)", offset: .72 }, { transform: "scale(1, 1)" }], { duration: 420 });
     });
-    if (!still) (function blink() { setTimeout(function () { if (!g.classList.contains("reacting")) feel("blink", 160); blink(); }, 3500 + Math.random() * 4000); })();
+    if (!still && !pose) (function blink() { setTimeout(function () { if (!g.classList.contains("reacting")) feel("blink", 160); blink(); }, 3500 + Math.random() * 4000); })();
   });
 })();
 </script>

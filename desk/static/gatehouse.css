@@ -946,3 +946,21 @@ footer .foot { display: grid; grid-template-columns: minmax(0, 2fr) repeat(3, mi
   tbody tr { transition: background-color 160ms linear, box-shadow 260ms var(--spring); }
   tbody tr:hover { background: color-mix(in srgb, var(--blue) 5%, var(--card)); box-shadow: inset 3px 0 0 var(--blue); }
 }
+
+/* the guard as a spot beside each Overview section, in a pose that fits it, with one line in its voice */
+.spot { display: flex; align-items: center; gap: 4px; margin: -16px 0 var(--s2) -22px; }
+.spot-say { position: relative; margin: 0; padding: 8px 14px; border-radius: 14px 14px 14px 4px; background: var(--card); color: var(--ink);
+  font-family: var(--display); font-style: italic; font-size: 1.0625rem; line-height: 1.3; box-shadow: 0 1px 2px rgba(27,25,23,.05), 0 6px 18px rgba(27,25,23,.06);
+  border: 1px solid color-mix(in srgb, var(--frame) 60%, transparent); }
+.feature p.spot-say { margin: 0; color: var(--ink); font-size: 1.0625rem; }
+.guard.held .guard-react { opacity: 1; }
+.guard.held .guard-face { opacity: 0; }
+@media (prefers-reduced-motion: no-preference) {
+  .spot .guard { animation: bob 3.6s ease-in-out infinite; }
+  .spot-say { transform-origin: 0 100%; }
+  .js [data-reveal] .spot-say { opacity: 0; transform: scale(.9); }
+  .js [data-reveal].in .spot-say { opacity: 1; transform: none; transition: opacity 200ms linear 350ms, transform 520ms var(--spring) 350ms; }
+}
+@keyframes bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+.hero-spot { margin-bottom: var(--s4); }
+.hero-spot .spot-say { font-size: 1.1875rem; max-width: 26em; }
