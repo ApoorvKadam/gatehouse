@@ -55,7 +55,7 @@ Sources:
 | Messages | Built | A tenant's text is matched to a tenant through the FMS, never by a number someone typed, and every STOP is honoured. "Explore with our agent" reads that tenant's records and writes case notes; a staff review of a listed sale is linked or asked for, and read back from the FMS; the tenant gets a short acknowledgement whose every sentence the desk wrote from a verified record |
 | Reminder check | Built | Every past-due account has a verdict from a complete reading of the FMS: clear to text, or held with the reason. No tenant who texted STOP, is marked opted out or undeliverable, or has no readable number is shown as clear. Nor is one with a payment being worked, a lien file or a sale, or an exemption on any unit |
 | Leads and move-ins | Planned | A missed call counts as recovered only when a specific lease is linked to it |
-| Rent changes | Planned | An approved increase is saved, noticed and charged in the FMS, with what happened after |
+| Rent changes | Built | Every rent change the FMS shows as scheduled, or completed in the last four months, has a row. Before the date: whether the account can take it. After it: whether the FMS applied it and whether the first full bill is the new rent. A notice is never shown as proven |
 
 The hosted preview is read-only and runs on synthetic data. Its home page shows each built part with a live excerpt, and Today lists the open work at a facility. Each item opens to the record behind it, kept in four lanes: what the FMS said, what Gatehouse observed, what Gatehouse concluded, and what a person decided. The lost payment also shows the simulator's own record of what happened, which a real FMS cannot show.
 
@@ -102,9 +102,17 @@ When someone explores a tenant's text, our agent also says whether the tenant's 
 
 The worker reads all of it from the FMS on each pass and keeps one verdict per account, so the page and the API never ask the FMS. Quiet hours are not in a verdict, because they depend on the moment a text goes out; the page says when it is quiet at the facility. Gatehouse sees only what the FMS and the desk record. A text the operator's tool sent that the FMS keeps no record of is not visible to it, because Cubby documents no way to look a sent text up.
 
+## Rent changes
+
+Gatehouse sets no price and changes no rent. The operator or its revenue tool decides each increase, and the FMS holds it. The Rent changes page and an API endpoint (`GET /api/facilities/{facility}/rent-changes`) check the work around each one.
+
+Before the change date, a lien file or a sale on the account needs a person. A balance, a payment arrangement, an increase above 20 percent, or a second increase within 180 days is shown for review. These are lines an operator sets, not law. After the date, applied means Leases Search shows the new rent. Billed means the first full billing period after the change is that rent. A period that straddles the date is skipped, and the amount paid is never the bill. Leases Search gives amounts per facility billing cycle and the rent roll gives them per lease cycle, so a lease billed every 28 days at a monthly facility is compared in its own cycle. A discount, a cycle Gatehouse cannot read, or no full period billed yet means "cannot tell", never "wrong". No read Cubby documents says a rent notice was sent, so a notice is never shown as proven.
+
+A change past its date at the old rent, a first bill at another amount, and an increase on an account with a lien file or sale become rows on Today. Each closes only on a fact the next pass reads.
+
 ## Evaluation
 
-Every image build runs `python -m desk.evaluate` against its own throwaway simulator and writes the report that the `/evaluation` page shows. It has seven parts: payments, access, lien sales, texts typed as a tenant, the reminder check, changes in how the FMS answers, and files a tenant sends. A part holds scenarios (what the FMS did, what Gatehouse did, who hears what), red lines and wrong builds.
+Every image build runs `python -m desk.evaluate` against its own throwaway simulator and writes the report that the `/evaluation` page shows. It has eight parts: payments, access, lien sales, texts typed as a tenant, the reminder check, changes in how the FMS answers, files a tenant sends, and rent changes. A part holds scenarios (what the FMS did, what Gatehouse did, who hears what), red lines and wrong builds.
 
 A red line is something that must never happen. Examples are a duplicate charge, a write to the FMS other than a task, a text sent after STOP, and one visitor's text reaching another. Each is counted from the simulator's record or the desk's rows, never from what the desk believes. It is shown with what it was counted over, for example 0 of 174 requests. A line above zero fails the build, and so does a line that nothing was checked against.
 
@@ -115,6 +123,8 @@ The reminder check part runs eleven scenarios: STOP, a payment arrangement the F
 The FMS changes part covers a vendor that changes its answers without notice. The simulator's `/sim/drift` control renames a status, sends an amount as dollars in text, or leaves out a payment's time, only on the wire. Gatehouse keeps an undocumented status as written and starts no new charge on that lease. It refuses an amount that is not whole cents and never lets an undated payment end a hold. Today shows one row for the connection until a person reviews it through `POST /api/integration/{id}/review`. The part has four scenarios and three red lines: an undocumented status kept as a documented one, an amount read although it is not whole cents, and a second card charge. Its two wrong builds map an undocumented status to a documented one and coerce an amount.
 
 The files part covers a receipt sent with a text. Cubby's text webhook carries no media, so a file reaches the facility's own inbox. Our agent reads it in a call of its own, apart from the text. What it reads is the tenant's claim, and code compares it with the payments the FMS reports. The preview offers four synthetic receipts and no upload. The part has four scenarios: a receipt that matches a payment, one the FMS does not show, one for another unit, and one with a note printed on it. Its two red lines are a payment attempt or open item changed by a file, and a reply carrying what only the file says. Its two wrong builds take a matching receipt as the payment and tell the tenant what the file says.
+
+The rent changes part runs six scenarios: a 28-day lease after an increase, a first bill at the old rent, a change that never took, a charge that straddles the change, a discounted lease, and an increase with nothing in the way. Its four red lines are a notice called sent, a right bill in another billing cycle called wrong, a bill judged on a straddling period, and a change called applied or billed without the fact that shows it. Its four wrong builds take the planned notice date as the notice sent, compare the monthly rent with a 28-day bill, bill from the straddling period, and count a passed date as applied.
 
 ### Our agent's reading of tenants' texts, measured
 
