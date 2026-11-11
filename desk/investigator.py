@@ -44,7 +44,8 @@ MAX_TURNS = 8
 NOT_ACCEPTED = ("The packet was not accepted. Every record_id you list must be one that an earlier lookup returned in this conversation or the one on "
                 "the tenant's message; a lookup that found nothing returned a record that says so. Every amount and date you write in the "
                 "summary and the reason must appear in a record you list, so do not add, subtract or estimate. You list at most eight records. "
-                "Write no record id in the summary or the reason: say in words what the record shows. Fix that and submit the packet again.")
+                "Write no record id in the summary or the reason: say in words what the record shows. Write about the tenant and the records, "
+                "never about yourself or what you could or could not see. Fix that and submit the packet again.")
 # A model call is cut off after CALL_TIMEOUT seconds and the desk tries it once more (the SDK's own retries are off for these calls, see
 # Investigation._ask), so a live run writes its heartbeat (AgentRun.beat_at) at least every two and a half minutes. A run silent for
 # STRANDED_AFTER was cut off, not slow.
@@ -510,6 +511,19 @@ def ungrounded(packet: dict, facts: dict[str, str], tenant_text: str = "") -> li
     return [written(c) for c in money] + [f"{m.title()} {d}" + (f", {y}" if y else "") for m, d, y in loose]
 
 
+# the notes are about the tenant and the records. "The file is not visible to me" or "the records I can read" tells staff nothing and
+# reads as a machine talking about itself; the tenant's own words, quoted, may say "my" and "I" and are left alone
+FIRST_PERSON = re.compile(r"(?<![\w-])(?:I|[Mm]e|[Mm]y|[Mm]yself)(?![\w-])")
+QUOTED = re.compile(r'"[^"]*"|\u201c[^\u201d]*\u201d')
+
+
+STYLE = "the summary or the reason speaks in the first person"
+
+
+def speaks_of_itself(text: str) -> bool:
+    return bool(FIRST_PERSON.search(QUOTED.sub(" ", text)))
+
+
 def packet_problem(packet, facts: dict[str, str], tenant_text: str = "") -> str | None:
     """Why a submitted packet cannot be accepted, or None. Every id it lists must be one of the records the model had been shown, and every amount
     and date in its summary and reason must be in one of the records it lists. The records are shown to staff word for word;
@@ -535,6 +549,9 @@ def packet_problem(packet, facts: dict[str, str], tenant_text: str = "") -> str 
     loose = ungrounded(packet, facts, tenant_text)
     if loose:
         return "the packet names an amount or date that no record it lists shows: " + ", ".join(loose[:5])
+    # style is checked last: a packet refused only for it has passed every check above
+    if speaks_of_itself(packet["summary"]) or speaks_of_itself(packet["reason"]):
+        return STYLE
     return None
 
 
@@ -687,7 +704,8 @@ class Investigation:
                 self.row.trace, self.row.facts = deepcopy(self.trace), dict(self.lookups.facts)
                 # a packet that fails the check is sent back once; the second is final, and so is one on the forced last turn
                 if problem is None or sent_back or forced:
-                    return self._accept(packet, response.stop_reason, problem)
+                    # a slip of style on the final packet is not worth losing the staff review or the reply over; it was sent back once
+                    return self._accept(packet, response.stop_reason, None if problem == STYLE else problem)
                 sent_back = True
                 results += [{"type": "tool_result", "tool_use_id": c.id, "is_error": True, "content": NOT_ACCEPTED} for c in submitted]
             self.row.trace, self.row.facts = deepcopy(self.trace), dict(self.lookups.facts)
