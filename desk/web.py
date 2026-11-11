@@ -37,6 +37,7 @@ from .wording import TROUBLES, plain, words
 HERE = Path(__file__).parent
 templates = Jinja2Templates(directory=HERE / "templates")
 templates.env.filters["readable"] = lambda text: plain(text, ids=False)      # times and state codes as words; the ids on an evidence page stay
+templates.env.filters["upfirst"] = lambda text: text[:1].upper() + text[1:] if text else text   # capitalize lowers the rest: "the FMS" became "the fms"
 
 # The four kinds of entry an account's record keeps apart. Every event kind lands in exactly one of them.
 FMS, OBSERVED, CONCLUDED, DECIDED = "fms", "observed", "concluded", "decided"
