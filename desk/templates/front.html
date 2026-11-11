@@ -258,6 +258,29 @@
 </section>
 {% endif %}
 
+{% if rent_rows %}
+<section class="feature">
+  <div class="wrap">
+    <div data-reveal>
+      <p class="kicker" style="--c:var(--teal)">{% include "icons/trending-up.svg" %}Rent changes</p>
+      <h2>A rent increase is done when the bill after it is the new rent.</h2>
+      <p>Your revenue tool or your staff decide each increase, and the FMS holds it. Gatehouse checks the work around it: whether the account can take it, whether the FMS applied it on the day, and whether the first full bill after it is the new rent, read in the lease's own billing cycle. It sets no price and changes no rent, and it never calls a notice sent, because no record the FMS keeps says so.</p>
+      <a class="open" href="/rent-changes">Open the rent changes {% include "icons/arrow-right.svg" %}</a>
+    </div>
+    <div class="frame" data-reveal>
+      <div class="frame-bar"><span><b>Rent changes</b> &middot; {{ facility.name }}</span></div>
+      <div class="frame-body">
+        <dl class="kv">
+          {% for r in rent_rows %}
+          <dt>Unit {{ r.unit }}</dt><dd><b>{{ r.label }}.</b> {{ r.why|readable }}</dd>
+          {% endfor %}
+        </dl>
+      </div>
+    </div>
+  </div>
+</section>
+{% endif %}
+
 <section class="feature tight">
   <div class="wrap">
     <div data-reveal>

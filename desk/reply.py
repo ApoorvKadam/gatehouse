@@ -17,16 +17,18 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .adapter import FMSError
+from .db import utcnow
 from .liens import dollars
 from .messaging import SMS_LIMIT, send_text
-from .models import AgentRun, InboundMessage, Lease, LedgerSnapshot, OutboundMessage, PaymentCommand, WorkItem
+from .models import AgentRun, InboundMessage, Lease, LedgerSnapshot, OutboundMessage, PaymentCommand, RentChangeCheck, WorkItem
 from .sales import LISTED_KINDS
 from .wording import REPLY_PART_LABELS, REPLY_PHRASES
 
 log = logging.getLogger("desk.reply")
 
 # the parts that rest on a record the agent must cite: the prefix of its id, and what the record is called in words
-NEEDS_RECORD = {"payment_applied": ("payment:", "payment"), "balance_as_of": ("lease:", "account"), "sale_status": ("workitem:", "sale item")}
+NEEDS_RECORD = {"payment_applied": ("payment:", "payment"), "balance_as_of": ("lease:", "account"), "sale_status": ("workitem:", "sale item"),
+                "rent_change": ("rentcheck:", "rent change")}
 # a part with no sentence of its own for the facts: the opener is always first and the closing line always last
 OPENER, CLOSING = "message_received", "acknowledgment"
 
@@ -115,6 +117,29 @@ def resolve(session: Session, inv, kind: str, record_id: str) -> tuple[Part | No
         except ValueError:
             return None, "the sale date could not be worked out"
         return Part(kind, REPLY_PHRASES[kind].format(unit=lease.unit_name, when=_day(on)), "the sale"), ""
+    if kind == "rent_change":
+        # said only to a tenant who asked about rent, and only for a change still to come that no person is weighing (clear, or shown for
+        # review); a held change, one past its date and a completed one are a person's to explain. The amount is per facility billing cycle,
+        # so a lease billed on another cycle, or one whose cycle cannot be read, gets no figure it is never billed.
+        intent = (run.packet or {}).get("intent")
+        if intent == "rent_notice_dispute":
+            # a tenant who says they were not told is not answered with the amount; a person reviews the notice first
+            return None, "the tenant disputes the notice, so a person answers"
+        if intent != "rent_question":
+            return None, "the tenant did not ask about rent"
+        lease = next((l for l in scope.leases if l.id == number), None)
+        data = ((session.get(RentChangeCheck, number) or RentChangeCheck()).data or {}) if lease is not None else {}
+        if lease is None or not data.get("date"):
+            return None, "the desk has no rent change reading for that unit"
+        if data.get("state") not in ("clear", "review") or not isinstance(data.get("new"), int):
+            return None, "that rent change is not one the desk tells a tenant about on its own"
+        if not data.get("lease_cycle") or data.get("lease_cycle") != data.get("facility_cycle"):
+            return None, "the lease is billed on another cycle than the amount the FMS keeps"
+        on = datetime.fromisoformat(data["date"])
+        if data.get("scheduled") is False or on.date() <= _at(utcnow(), facility_zone).date():
+            # a reading kept from before its date is not a change still to come; the next pass says what happened
+            return None, "that rent change is not still to come"
+        return Part(kind, REPLY_PHRASES[kind].format(unit=lease.unit_name, amount=dollars(data["new"]), when=_day(on)), "the rent change"), ""
     return None, "the desk cannot write that part"
 
 

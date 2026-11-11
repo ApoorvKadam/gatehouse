@@ -534,13 +534,14 @@ def test_replying_needs_the_operator_token_and_a_real_text(fms_url, sim, api):
     assert went_out(fms_url) == []
 
 
-def test_the_preview_opens_on_five_texts_and_what_the_desk_did_about_each(fms_url, sim):
+def test_the_preview_opens_on_six_texts_and_what_the_desk_did_about_each(fms_url, sim):
     settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=5.0,
                         reconcile_every_seconds=60, operator_token=TOKEN, public_view=True, demo_seed=True)
     with TestClient(create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 5.0), start_worker=False)) as visitor:
         messages = visitor.get(f"/api/facilities/{ORLANDO}/inbox").json()["messages"]
         by_name = {m["match"]["customer_name"] or "stranger": m for m in messages}
-        assert sorted(by_name) == ["Dana Whitfield", "Marcus Bell", "Omar Haddad", "Priya Raman", "stranger"]
+        assert sorted(by_name) == ["Ana Costa", "Dana Whitfield", "Marcus Bell", "Omar Haddad", "Priya Raman", "stranger"]
+        assert by_name["Ana Costa"]["match"]["leases"][0]["unit"] == "K-412" and by_name["Ana Costa"]["replies"] == []   # her rent question waits
         omar = by_name["Omar Haddad"]
         assert omar["match"]["leases"][0]["unit"] == "F-610" and omar["replies"] == [] and omar["stopped"] is False   # a visitor can play him
         dana = by_name["Dana Whitfield"]

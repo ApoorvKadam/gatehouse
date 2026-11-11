@@ -32,6 +32,9 @@ log = logging.getLogger("desk.rent_changes")
 
 # billing periods in a year, to put an amount in the lease's own cycle (Cubby: 27692 at a DAYS_28 facility is 30000 on a MONTHLY lease)
 PER_YEAR = {"WEEKLY": 52, "BI_WEEKLY": 26, "DAYS_28": 13, "MONTHLY": 12, "QUARTERLY": 4, "BI_ANNUAL": 2, "ANNUAL": 1}
+# how an amount kept per billing cycle reads in words ("$160.00 a month")
+PER_WORDS = {"WEEKLY": "a week", "BI_WEEKLY": "every two weeks", "DAYS_28": "every 28 days", "MONTHLY": "a month",
+             "QUARTERLY": "a quarter", "BI_ANNUAL": "every six months", "ANNUAL": "a year"}
 REVIEW_PERCENT = 20         # an increase above this is shown for review; operators set their own line
 REVIEW_DAYS = 180           # so is a second increase within this many days of the last
 SHOWN_FOR = 120             # a completed change stays on the page this many days after its date
@@ -244,6 +247,7 @@ def reconcile_rent_changes(session: Session, adapter: FMSAdapter, facility: Faci
         since = old.get("since") if old.get("state") == row["state"] and old.get("since") else utcnow().isoformat()
         check.observed_at = utcnow()
         check.data = {**row, "label": LABELS[row["state"]], "unit": f.unit_name, "rent": f.rent, "new": f.scheduled_amount,
+                      "facility_cycle": f.facility_cycle, "lease_cycle": f.lease_cycle, "scheduled": when is not None,
                       "date": (when or last).isoformat(), "since": since, "tenant": customer.first_name if customer else None}
         session.merge(check)
         kept.add(lease.id)

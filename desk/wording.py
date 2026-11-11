@@ -109,13 +109,14 @@ REPLY_PHRASES = {
     "payment_applied": "Your payment of {amount} has been applied to your account.",
     "balance_as_of": "Your account shows {balance} owed on unit {unit} as of {when}.",
     "sale_status": "Unit {unit} is listed for a lien sale on {when}.",
+    "rent_change": "The rent on unit {unit} is set to change to {amount} on {when}.",
     "staff_review": "A staff member has an open task to review this.",
     "acknowledgment": "Call the office if anything changes.",
 }
 # the kinds a model may propose, and what a screen calls each part
 REPLY_KINDS = tuple(REPLY_PHRASES)
 REPLY_PART_LABELS = {"message_received": "Message received", "payment_applied": "Payment applied", "balance_as_of": "Balance",
-                     "sale_status": "Sale status", "staff_review": "Staff review", "acknowledgment": "Closing line"}
+                     "sale_status": "Sale status", "rent_change": "Rent change", "staff_review": "Staff review", "acknowledgment": "Closing line"}
 # how the outcome of sending reads, and which chip colour it takes. "sent" is what the messaging system answered, never delivery.
 REPLY_OUTCOMES = {"sent": ("Reply accepted by the messaging system", "done"), "blocked": ("Reply blocked", "act"),
                   "rejected": ("Reply refused by the messaging system", "act"), "not_confirmed": ("Reply not confirmed", "wait"),
