@@ -104,7 +104,7 @@ def refresh_case(session: Session, adapter: FMSAdapter, case: DelinquencyCase) -
                 and (case.resolved_at is None or (c.reversed_at is not None and c.reversed_at >= case.resolved_at))]
     before = case.state
     if staff:
-        case.state, case.owner = "needs staff", "collections lead"
+        case.state, case.owner = "waiting for staff", "collections lead"
     elif holds:
         case.state, case.owner = "payment in flight", "front desk"
     elif snap.total_due == 0:

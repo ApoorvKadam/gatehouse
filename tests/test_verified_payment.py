@@ -168,7 +168,7 @@ def test_a_gateway_error_page_is_looked_up_and_then_held_for_staff(session, adap
     settle(session, adapter)
     command = session.get(PaymentCommand, command.id)
     assert command.state == "NEEDS_STAFF"
-    assert session.get(DelinquencyCase, case.id).state == "needs staff"
+    assert session.get(DelinquencyCase, case.id).state == "waiting for staff"
     with pytest.raises(PaymentRefused):
         PaymentService(session, adapter).take_payment(case.id, "pm_MarcVisa1881", Authorization.new(True, 18500, 18500))
     assert sim.payments(MARCUS) == []
@@ -320,7 +320,7 @@ def test_a_payment_the_ledger_never_shows_goes_to_staff(session, adapter, sim):
     session.commit()
     settle(session, adapter, times=1)
     assert command.state == "NEEDS_STAFF" and "ledger does not show" in command.provider_reason
-    assert session.get(DelinquencyCase, case.id).state == "needs staff"
+    assert session.get(DelinquencyCase, case.id).state == "waiting for staff"
 
 
 def test_a_long_pending_payment_goes_to_staff_and_still_settles_later(session, adapter, sim):

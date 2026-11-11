@@ -70,7 +70,7 @@ def test_the_page_writes_the_state_codes_in_what_gatehouse_did_as_words(fms_url,
     with TestClient(preview(fms_url)) as visitor:
         monkeypatch.setattr(web, "evaluation_report", lambda: report)
         page = visitor.get("/evaluation").text
-        assert "needs staff with the FMS payment suggested; staff confirmed it: confirmed; 1 charge" in page and "NEEDS_STAFF" not in page
+        assert "waiting for staff with the FMS payment suggested; staff confirmed it: confirmed; 1 charge" in page and "NEEDS_STAFF" not in page
         assert page.index("Payments") < page.index("Access")                         # the parts keep the order the report gave them
         assert "1 of 2 behave as they should" in page
         # a failing scenario, a red line above zero and a build that was missed

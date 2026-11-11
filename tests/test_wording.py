@@ -12,8 +12,8 @@ def test_a_provider_id_in_brackets_or_bare_is_taken_out():
 
 
 def test_a_record_id_is_taken_out_and_a_state_code_is_written_as_words():
-    assert plain("Payments workitem:4 and payment:12 say the attempt is NEEDS_STAFF.") == "Payments and say the attempt is needs staff."
-    assert words("NEEDS_STAFF") == "needs staff" and words("counsel_review_required") == "counsel review required" and words(None) == ""
+    assert plain("Payments workitem:4 and payment:12 say the attempt is NEEDS_STAFF.") == "Payments and say the attempt is waiting for staff."
+    assert words("NEEDS_STAFF") == "waiting for staff" and words("counsel_review_required") == "counsel review required" and words(None) == ""
 
 
 def test_a_time_a_feed_wrote_is_written_as_a_person_reads_it():
@@ -46,3 +46,9 @@ def test_a_time_the_desk_keeps_in_utc_is_read_on_the_facility_clock():
     assert when(at) == "Nov 8, 2026, 6:18 PM" and when(at, "America/Chicago") == "Nov 8, 2026, 5:18 PM"
     assert when(datetime(2026, 11, 9, 5, 5), "America/New_York") == "Nov 9, 2026, 12:05 AM" and when(None) == "an unknown time"
     assert "UTC" not in when(at)
+
+
+def test_a_state_shown_first_in_a_line_keeps_its_capital_letters():
+    from desk.web import templates
+    up = templates.env.filters["upfirst"]
+    assert up(words("PENDING_AT_FMS")) == "Pending at the FMS" and up("") == ""
