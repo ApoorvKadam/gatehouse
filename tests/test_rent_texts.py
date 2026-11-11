@@ -1,0 +1,58 @@
+"""A tenant texts about a rent increase. Our agent reads the desk's rent change record, and the reply is written by the desk from it; no
+sentence says a notice was or was not sent. The model is scripted; the desk, the simulator and the pages are the real ones."""
+from __future__ import annotations
+
+from sqlalchemy import select
+
+from desk.investigator import investigate
+from desk.models import Lease, RentChangeCheck
+
+from .test_conversation import tool
+from .test_investigator import Scripted, factory, packet, text_of  # noqa: F401
+
+
+def ana(s):
+    lease = s.scalar(select(Lease).where(Lease.unit_name == "K-412"))
+    return text_of(s, "Ana Costa"), lease
+
+
+def test_the_seeded_text_is_answered_from_the_rent_change_record(factory, adapter):  # noqa: F811
+    with factory() as s:
+        text, lease = ana(s)
+        assert s.get(RentChangeCheck, lease.id).data["state"] == "review"          # the world opens with the rent check already read
+        model = Scripted(
+            [tool("get_account", id_="r1")],
+            [tool("get_rent_change", {"lease_id": lease.provider_id}, id_="r2")],
+            [tool("draft_reply", {"components": [{"kind": "message_received", "record_id": ""},
+                                                 {"kind": "rent_change", "record_id": f"rentcheck:{lease.id}"},
+                                                 {"kind": "acknowledgment", "record_id": ""}]}, id_="r3")],
+            [tool("submit_case_packet", {**packet("rent_question", [f"rentcheck:{lease.id}"], True, "she says she was not told; a person answers",
+                                                  "Ana asks why her rent goes up to $160.00 and says nobody told her."),
+                                         "reminder": {"hold": False, "kind": "none", "text_id": "", "quote": ""}}, id_="r4")])
+        run, _ = investigate(s, model, text, "request-rent-1", adapter=adapter)
+        assert run.status == "done", run.error
+        looked = model.calls[2]["messages"][-1]["content"][0]["content"]
+        assert "to $160.00 on Dec" in looked or "to $160.00 on" in looked
+        assert "No record shows whether a rent notice was sent." in looked
+        reply = next(a for a in run.actions if a["kind"] == "reply")
+        assert reply["outcome"] == "sent" and "The rent on unit K-412 is set to change to $160.00 on " in reply["body"]
+        assert "notice" not in reply["body"].lower()
+
+
+def test_a_held_or_past_rent_change_is_left_to_a_person(factory, adapter):  # noqa: F811
+    from desk.reply import cited  # noqa: F401  (the part is refused by the desk, not by the model)
+    with factory() as s:
+        text, lease = ana(s)
+        check = s.get(RentChangeCheck, lease.id)
+        check.data = {**check.data, "state": "hold"}
+        s.commit()
+        model = Scripted(
+            [tool("get_rent_change", {"lease_id": lease.provider_id}, id_="h1")],
+            [tool("draft_reply", {"components": [{"kind": "message_received", "record_id": ""},
+                                                 {"kind": "rent_change", "record_id": f"rentcheck:{lease.id}"}]}, id_="h2")],
+            [tool("submit_case_packet", {**packet("rent_question", [f"rentcheck:{lease.id}"], True, "a person weighs the increase", "Ana asks about her rent."),
+                                         "reminder": {"hold": False, "kind": "none", "text_id": "", "quote": ""}}, id_="h3")])
+        run, _ = investigate(s, model, text, "request-rent-2", adapter=adapter)
+        reply = next(a for a in run.actions if a["kind"] == "reply")
+        assert "set to change" not in reply.get("body", "")
+        assert "not one the desk tells a tenant about" in str(reply.get("dropped"))

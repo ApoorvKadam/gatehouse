@@ -19,14 +19,15 @@ from sqlalchemy.orm import Session
 from .adapter import FMSError
 from .liens import dollars
 from .messaging import SMS_LIMIT, send_text
-from .models import AgentRun, InboundMessage, Lease, LedgerSnapshot, OutboundMessage, PaymentCommand, WorkItem
+from .models import AgentRun, InboundMessage, Lease, LedgerSnapshot, OutboundMessage, PaymentCommand, RentChangeCheck, WorkItem
 from .sales import LISTED_KINDS
 from .wording import REPLY_PART_LABELS, REPLY_PHRASES
 
 log = logging.getLogger("desk.reply")
 
 # the parts that rest on a record the agent must cite: the prefix of its id, and what the record is called in words
-NEEDS_RECORD = {"payment_applied": ("payment:", "payment"), "balance_as_of": ("lease:", "account"), "sale_status": ("workitem:", "sale item")}
+NEEDS_RECORD = {"payment_applied": ("payment:", "payment"), "balance_as_of": ("lease:", "account"), "sale_status": ("workitem:", "sale item"),
+                "rent_change": ("rentcheck:", "rent change")}
 # a part with no sentence of its own for the facts: the opener is always first and the closing line always last
 OPENER, CLOSING = "message_received", "acknowledgment"
 
@@ -115,6 +116,17 @@ def resolve(session: Session, inv, kind: str, record_id: str) -> tuple[Part | No
         except ValueError:
             return None, "the sale date could not be worked out"
         return Part(kind, REPLY_PHRASES[kind].format(unit=lease.unit_name, when=_day(on)), "the sale"), ""
+    if kind == "rent_change":
+        # only a change still to come, that nothing in the records stands in front of: a held one is a person's to weigh, one past its date
+        # was not applied, and a completed one is told by a person, who can say what the bill was
+        lease = next((l for l in scope.leases if l.id == number), None)
+        data = ((session.get(RentChangeCheck, number) or RentChangeCheck()).data or {}) if lease is not None else {}
+        if lease is None or not data.get("date"):
+            return None, "the desk has no rent change reading for that unit"
+        if data.get("state") not in ("clear", "review") or not isinstance(data.get("new"), int):
+            return None, "that rent change is not one the desk tells a tenant about on its own"
+        on = datetime.fromisoformat(data["date"])
+        return Part(kind, REPLY_PHRASES[kind].format(unit=lease.unit_name, amount=dollars(data["new"]), when=_day(on)), "the rent change"), ""
     return None, "the desk cannot write that part"
 
 
