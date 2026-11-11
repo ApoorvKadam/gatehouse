@@ -517,6 +517,9 @@ FIRST_PERSON = re.compile(r"(?<![\w-])(?:I|[Mm]e|[Mm]y|[Mm]yself)(?![\w-])")
 QUOTED = re.compile(r'"[^"]*"|\u201c[^\u201d]*\u201d')
 
 
+STYLE = "the summary or the reason speaks in the first person"
+
+
 def speaks_of_itself(text: str) -> bool:
     return bool(FIRST_PERSON.search(QUOTED.sub(" ", text)))
 
@@ -543,11 +546,12 @@ def packet_problem(packet, facts: dict[str, str], tenant_text: str = "") -> str 
         return "the packet lists records that no earlier lookup of this run returned: " + ", ".join(shown_id(i) for i in unknown[:5])
     if names_a_record(packet["summary"]) or names_a_record(packet["reason"]):
         return "the summary or the reason names a record id"
-    if speaks_of_itself(packet["summary"]) or speaks_of_itself(packet["reason"]):
-        return "the summary or the reason speaks in the first person"
     loose = ungrounded(packet, facts, tenant_text)
     if loose:
         return "the packet names an amount or date that no record it lists shows: " + ", ".join(loose[:5])
+    # style is checked last: a packet refused only for it has passed every check above
+    if speaks_of_itself(packet["summary"]) or speaks_of_itself(packet["reason"]):
+        return STYLE
     return None
 
 
@@ -700,7 +704,8 @@ class Investigation:
                 self.row.trace, self.row.facts = deepcopy(self.trace), dict(self.lookups.facts)
                 # a packet that fails the check is sent back once; the second is final, and so is one on the forced last turn
                 if problem is None or sent_back or forced:
-                    return self._accept(packet, response.stop_reason, problem)
+                    # a slip of style on the final packet is not worth losing the staff review or the reply over; it was sent back once
+                    return self._accept(packet, response.stop_reason, None if problem == STYLE else problem)
                 sent_back = True
                 results += [{"type": "tool_result", "tool_use_id": c.id, "is_error": True, "content": NOT_ACCEPTED} for c in submitted]
             self.row.trace, self.row.facts = deepcopy(self.trace), dict(self.lookups.facts)
