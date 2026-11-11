@@ -4,7 +4,7 @@
 <div class="wrap">
 <p class="crumbs"><a href="/today?facility={{ facility.provider_id }}">Today at {{ facility.name }}</a></p>
 <div class="head">
-  <h1>Unit {{ lease.unit_name }}</h1>
+  <div class="head-title"><h1>Unit {{ lease.unit_name }}</h1><p class="tagline">Four sources, kept apart.</p></div>
   <p>{{ facility.name }} &middot; <span class="mono">{{ lease.provider_id }}</span></p>
 </div>
 <dl class="facts">
@@ -17,7 +17,7 @@
 <table class="docket">
   <caption class="visually-hidden">Everything on this account, one moment per row, in the lane of whoever said it</caption>
   <thead><tr><th scope="col" class="when">Recorded</th>{% for key, label in lanes %}<th scope="col"><span class="lane-dot lane-{{ key }}"></span>{{ label }}</th>{% endfor %}</tr></thead>
-  <tbody>
+  <tbody data-stagger>
   {% for e in entries %}
   <tr>
     <td class="when">{{ local(e.at) }}</td>

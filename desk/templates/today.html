@@ -3,7 +3,7 @@
 {% block main %}
 <div class="wrap">
   <div class="head">
-    <h1>Today at {{ facility.name }}</h1>
+    <div class="head-title"><h1>Today at {{ facility.name }}</h1><p class="tagline">Said is not done.</p></div>
     <p>{{ items|length }} open {{ 'item' if items|length == 1 else 'items' }}, most consequential first</p>
   </div>
   <p class="lede">Every unfinished piece of work at this facility and the fact that will prove it done. Nothing leaves this list because someone said so.</p>
@@ -11,7 +11,7 @@
   <div class="worklist">
     <table>
       <thead><tr><th>What is wrong</th><th>Proved done when</th><th>Who acts</th><th class="num">Amount</th></tr></thead>
-      <tbody>
+      <tbody data-stagger>
       {% for i in items %}
         <tr>
           <td>
@@ -21,7 +21,7 @@
             <p class="work-what">{{ i.what }}</p>
           </td>
           <td><p class="work-proof">{{ i.proof }}</p></td>
-          <td class="small">{{ i.who }}</td>
+          <td class="work-who">{{ i.who }}</td>
           <td class="num amount">{{ i.amount }}</td>
         </tr>
       {% endfor %}

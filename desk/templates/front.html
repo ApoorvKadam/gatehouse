@@ -1,51 +1,137 @@
 {% extends "base.html" %}
+{% block bodyclass %}page-front{% endblock %}
 {% block title %}Gatehouse: unfinished work in self-storage, checked against the FMS{% endblock %}
 {% block main %}
-<section class="hero">
+<section class="lt-hero">
   <div class="wrap">
-    <div class="split-head hero-head">
-      <div>
-        <p class="kicker">For self-storage operators</p>
-        <h1>Nothing is done until the FMS shows it.</h1>
-      </div>
-      <div>
-        <p>Gatehouse watches an operator's facility management system and the systems around it. It opens an item for every unfinished piece of work, names the fact that will close it, and sends disagreements to a person with the evidence.</p>
+    <div class="lt-hero-grid">
+      <div class="lt-hero-text">
+        <div class="spot hero-spot">{% set guard_size = 156 %}{% set guard_pose = "" %}{% include "guard.html" %}<p class="spot-say">I keep watch at the gate. Nothing gets past me on someone's word.</p></div>
+        <h1>Nothing is done until <span>the FMS shows it.</span></h1>
+        <p>Gatehouse watches an operator's facility management system and the systems around it. It <b>opens an item for every unfinished piece of work</b>, names the fact that will close it, and <b>sends disagreements to a person</b> with the evidence.</p>
         <div class="actions">
           <a class="button primary" href="/today">Open today's work {% include "icons/arrow-right.svg" %}</a>
           <a class="button" href="#built">See what is built</a>
         </div>
       </div>
+      <figure class="film lt-film">
+        <video id="film" controls preload="metadata" playsinline poster="{{ url_for('static', path='film/gatehouse-walkthrough.jpg') }}" aria-label="Gatehouse in use: a walkthrough of every screen">
+          <source src="{{ url_for('static', path='film/gatehouse-walkthrough.mp4') }}" type="video/mp4">
+        </video>
+      </figure>
     </div>
-    <figure class="film">
-      <video id="film" controls preload="metadata" playsinline poster="{{ url_for('static', path='film/gatehouse-walkthrough.jpg') }}" aria-label="Gatehouse in use: a walkthrough of every screen">
-        <source src="{{ url_for('static', path='film/gatehouse-walkthrough.mp4') }}" type="video/mp4">
-      </video>
-      <button class="button primary film-play" type="button" aria-controls="film">{% include "icons/play.svg" %}Play with sound <span id="film-length"></span></button>
-    </figure>
+    {% if report %}
+    <dl class="lt-stats">
+      <div><dt>{{ report.rows|selectattr('passed')|list|length }} of {{ report.rows|length }}</dt><dd>Failure scenarios handled</dd></div>
+      <div><dt>{{ report.red_lines|rejectattr('checked', 'equalto', 0)|selectattr('count', 'equalto', 0)|list|length }} of {{ report.red_lines|length }}</dt><dd>Red lines held at zero</dd></div>
+      <div><dt>{{ report.controls|selectattr('caught')|list|length }} of {{ report.controls|length }}</dt><dd>Wrong builds caught</dd></div>
+    </dl>
+    {% endif %}
   </div>
 </section>
-<section class="feature band" id="built">
+{% if questions %}
+<section class="lt-problems">
   <div class="wrap">
-    <div data-reveal>
-      <p class="kicker" style="--c:var(--ink)">{% include "icons/list-checks.svg" %}Today</p>
-      <h2>One list of everything still open, worst first.</h2>
-      <p>Each item says what is wrong, what will prove it done and who acts. It leaves the list only when the system of record shows it, never because someone said so.</p>
-      <a class="open" href="/today">Open today's work {% include "icons/arrow-right.svg" %}</a>
+    <div class="bento" data-reveal>
+      {% if held %}
+      <a class="bx bx-pay" href="/payments/{{ held.id }}" style="--i:0">
+        <span class="bx-q">Did that card payment go through?</span>
+        <span class="bx-amt" data-roll>{{ money(held.amount) }}</span>
+        <span class="bx-sub">Unit {{ held_unit }}, agreed {{ "by phone" if (held.authorization or {}).get("channel") == "desk" else "in the tenant chat" }}</span>
+        <ol class="steps bx-stepper" data-reveal aria-label="What happened, in order">
+          <li class="done"><span class="dot">{% include "icons/user-check.svg" %}</span><b>Tenant agreed</b>identity checked</li>
+          <li class="done"><span class="dot">{% include "icons/send.svg" %}</span><b>Sent once</b>after the intent was saved</li>
+          <li class="lost"><span class="dot">{% include "icons/unplug.svg" %}</span><b>No usable answer</b>outcome unknown</li>
+          <li class="held"><span class="dot">{% include "icons/hand.svg" %}</span><b>Held for a person</b>not retried</li>
+        </ol>
+        <span class="bx-foot">Not charged again, and the tenant is not told it worked.</span>
+      </a>
+      {% endif %}
+      {% if report %}
+      {% set ok = report.rows|selectattr('passed')|list|length %}{% set all = report.rows|length %}
+      <a class="bx bx-eval bx-dark" href="/evaluation" style="--i:1">
+        <span class="bx-q">Does every build hold?</span>
+        <svg class="bx-ring" viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="50" class="track"/><circle cx="60" cy="60" r="50" class="arc" pathLength="100" style="--p:{{ (100 * ok / all)|round(1) if all else 0 }}"/></svg>
+        <span class="bx-big" data-roll>{{ ok }} of {{ all }}</span>
+        <span class="bx-sub">failure scenarios handled in this build. {{ report.red_lines|rejectattr('checked', 'equalto', 0)|selectattr('count', 'equalto', 0)|list|length }} of {{ report.red_lines|length }} red lines held at zero, {{ report.controls|selectattr('caught')|list|length }} of {{ report.controls|length }} wrong builds caught.</span>
+      </a>
+      {% endif %}
+      {% if returned %}
+      <a class="bx bx-ret" href="/payments/{{ returned.id }}" style="--i:2">
+        <span class="bx-q">Did the money stay paid?</span>
+        <span class="bx-row"><span class="bx-amt" data-roll>{{ money(returned.amount) }}</span><span class="cyc" style="--P:8s"><span class="bx-chip ok">Confirmed on the ledger</span><span class="bx-chip warn">{{ returned.provider_status|readable|upfirst }}</span></span></span>
+        <span class="bx-sub">Unit {{ returned_unit }}. Confirmed on the ledger, then reported back. The account is open again.</span>
+      </a>
+      {% endif %}
+      {% if changed %}
+      <a class="bx bx-lien" href="/accounts/{{ changed.case_id }}/lien" style="--i:3">
+        <span class="bx-q">Is the lien file still right?</span>
+        <span class="cyc three" style="--P:10.5s"><span class="bx-chip ok">Notice delivered</span><span class="bx-chip plain">A payment came in after it</span><span class="bx-chip warn">Back to review</span></span>
+        <span class="bx-sub">The account changed after the notice, so the Florida file is checked again.</span>
+      </a>
+      {% endif %}
+      {% if check_rows %}{% set r = check_rows[0] %}
+      <a class="bx bx-stop" href="/reminder-check" style="--i:4">
+        <span class="bx-q">Should the reminder go out?</span>
+        <span class="cyc" style="--P:9s"><span class="bx-bubble">STOP</span><span class="bx-chip act">Must not be texted</span></span>
+        <span class="bx-sub"><b>{{ r.label }}.</b> Unit {{ r.unit }}. The check sends this tenant back to your reminder tool with the reason.</span>
+      </a>
+      {% endif %}
+      {% if access and access_lease %}
+      <a class="bx bx-access" href="/access/{{ access.id }}" style="--i:5">
+        <span class="bx-q">Can a tenant who paid get in?</span>
+        <span class="cyc" style="--P:7.5s"><span class="bx-chip ok">Paid, nothing owed</span><span class="bx-chip act">Still locked in the FMS</span></span>
+        <span class="bx-sub">Unit {{ access_lease.unit_name }}. Paid, and the FMS still records the unit locked.</span>
+      </a>
+      {% endif %}
+      {% if sale %}{% set so = sale.observed %}
+      <a class="bx bx-sale bx-dark" href="/sales/{{ sale.id }}" style="--i:6">
+        <span class="bx-q">Is a paid unit still up for auction?</span>
+        <span class="bx-row"><span class="bx-amt">{{ 'Nothing owed' if not so.get('owed') else money(so.get('owed')) ~ ' owed' }}</span><span class="bx-unit">unit {{ so.get('unit') }}, per the FMS ledger</span></span>
+        <span class="bx-sub">Still listed. One task goes to the FMS: cancel the sale, or say why it stands.</span>
+      </a>
+      {% endif %}
+      {% if rent_item %}
+      <a class="bx bx-rent" href="{{ rent_item.link }}" style="--i:7">
+        <span class="bx-q">Did the new rent bill right?</span>
+        <span class="bx-row"><span class="bx-amt" data-roll>{{ rent_item.amount }}</span><span class="bx-unit">rent the FMS reports, unit {{ rent_item.unit }}</span></span>
+        <span class="bx-sub">{{ opening(rent_item.what) }}</span>
+      </a>
+      {% endif %}
     </div>
-  <div class="frame" aria-label="Today, live" data-reveal>
-    <div class="frame-bar"><span><b>Today</b> &middot; {{ facility.name }}</span><span>{{ open_count }} open</span></div>
-    <table>
-      <tbody>
-      {% for i in items %}
-        <tr>
-          <td>{% set ic = 'door-open' if i.link.startswith('/access/') else ('gavel' if i.link.startswith('/sales/') else ('scale' if 'Lien' in i.head else ('gavel' if 'Counsel' in i.head else ('rotate-ccw' if i.head in ('Payment returned', 'Payment refunded', 'Refund in progress', 'Payment disputed') else ('credit-card' if 'Payment' in i.head else 'clock-3'))))) %}<span class="chip {{ 'act' if i.rank < 2 else ('wait' if i.rank < 4 else 'plain') }}">{% include "icons/" ~ ic ~ ".svg" %}{{ i.head }}</span><div class="small muted" style="margin-top:6px"><a href="{{ i.link }}">{{ i.label or ('Unit ' ~ i.unit) }}</a> &middot; {{ i.who }}</div></td>
-          <td class="num amount">{{ i.amount }}</td>
-          <td class="num open-col"><a href="{{ i.link }}">Open</a></td>
-        </tr>
-      {% endfor %}
-      </tbody>
-    </table>
+    <div class="lt-center">
+      <h2>The questions an FMS cannot answer on its own, checked in one place.</h2>
+      <p>Every card above is a live record at {{ facility.name }}. Open one to see the evidence behind it, and the fact that will close it.</p>
+    </div>
   </div>
+</section>
+{% endif %}
+<section class="feature band today-band" id="built">
+  <div class="wrap">
+    <div class="split-head">
+      <div>
+        <div class="spot">{% set guard_size = 104 %}{% set guard_pose = "down-right" %}{% include "guard.html" %}<p class="spot-say">{{ open_count }} open right now. I watch every one.</p></div>
+        <p class="kicker" style="--c:var(--ink)">{% include "icons/list-checks.svg" %}Today</p>
+        <h2>One list of everything still open, worst first.</h2>
+      </div>
+      <div>
+        <p>Each item says what is wrong, what will prove it done and who acts. It leaves the list only when the system of record shows it, never because someone said so. {{ open_count }} are open at {{ facility.name }} right now.</p>
+        <a class="open" href="/today">Open today's work {% include "icons/arrow-right.svg" %}</a>
+      </div>
+    </div>
+  </div>
+  <div class="ticker" style="--n: {{ items|length }}" aria-label="Every open item on Today at {{ facility.name }}">
+    {% for copy in (0, 1) %}
+    <ul class="ticker-track"{% if copy %} aria-hidden="true"{% endif %}>
+      {% for i in items %}
+      <li><a href="{{ i.link }}"{% if copy %} tabindex="-1"{% endif %}>
+        <span class="chip {{ 'act' if i.rank < 2 else ('wait' if i.rank < 4 else 'plain') }}">{{ i.head }}</span>
+        <b>{{ i.label or ('Unit ' ~ i.unit) }}</b>{% if i.amount %}<span class="ticker-amt">{{ i.amount }}</span>{% endif %}
+        <span class="ticker-who">{{ i.who }}</span>
+      </a></li>
+      {% endfor %}
+    </ul>
+    {% endfor %}
   </div>
 </section>
 
@@ -55,6 +141,7 @@
   <div class="wrap">
     <div class="split-head" data-reveal>
       <div>
+        <div class="spot">{% set guard_size = 104 %}{% set guard_pose = "surprised" %}{% include "guard.html" %}<p class="spot-say">No answer came back, so nobody charges twice.</p></div>
         <p class="kicker" style="--c:var(--brick)">{% include "icons/credit-card.svg" %}Payments</p>
         <h2>A payment whose answer was lost is held, not retried.</h2>
       </div>
@@ -89,6 +176,7 @@
 <section class="feature band flip">
   <div class="wrap">
     <div data-reveal>
+      <div class="spot">{% set guard_size = 104 %}{% set guard_pose = "wink" %}{% include "guard.html" %}<p class="spot-say">Who said it? Each lane tells you.</p></div>
       <p class="kicker" style="--c:var(--navy)">{% include "icons/rows-3.svg" %}The record</p>
       <h2>Every fact keeps its source.</h2>
       <p>Each account's history is kept in four lanes: what the FMS said, what Gatehouse observed, what Gatehouse concluded, and what a person decided. Reading down a lane gives one source's account, so nobody has to guess who said a payment went through.</p>
@@ -113,6 +201,7 @@
 <section class="feature tight">
   <div class="wrap">
     <div data-reveal>
+      <div class="spot">{% set guard_size = 104 %}{% set guard_pose = "dizzy" %}{% include "guard.html" %}<p class="spot-say">Paid, then sent back by the bank.</p></div>
       <p class="kicker" style="--c:var(--amber)">{% include "icons/rotate-ccw.svg" %}Returns and disputes</p>
       <h2>A payment that comes back reopens the account.</h2>
       <p>A payment that posted can still be returned by the bank, refunded or disputed weeks later. Gatehouse keeps watching confirmed payments, and when the FMS reports one reversed, the account opens again and the work goes back on Today.</p>
@@ -134,9 +223,10 @@
 {% endif %}
 
 {% if access and access_view and access_policy %}
-<section class="feature flip">
+<section class="feature band flip">
   <div class="wrap">
     <div data-reveal>
+      <div class="spot">{% set guard_size = 104 %}{% set guard_pose = "left" %}{% include "guard.html" %}<p class="spot-say">Paid should mean the gate opens.</p></div>
       <p class="kicker" style="--c:var(--blue)">{% include "icons/door-open.svg" %}Access and overlocks</p>
       <h2>A tenant who paid gets their unit back, and a task marked done is not proof.</h2>
       <p>Gatehouse reads the gate code, the locks on each unit and any exemption from the FMS, and compares them with the facility's recorded lockout rule in both directions. A paying tenant still locked out, or an account past the rule whose code the FMS still allows, becomes an item and one FMS task for a person. The item closes only when the FMS shows the expected state. Gatehouse never changes access itself, and the FMS's records are not proof the gate opened or a lock came off.</p>
@@ -161,7 +251,7 @@
 {% endif %}
 
 {% if changed or counsel %}
-<section class="feature band wide">
+<section class="feature wide">
   <div class="wrap">
     <div class="split-head" data-reveal>
       {% if changed %}
@@ -212,9 +302,10 @@
 
 {% if sale %}
 {% set so = sale.observed %}
-<section class="feature flip">
+<section class="feature band">
   <div class="wrap">
     <div data-reveal>
+      <div class="spot">{% set guard_size = 104 %}{% set guard_pose = "surprised" %}{% include "guard.html" %}<p class="spot-say">Nothing owed and still listed? Not on my watch.</p></div>
       <p class="kicker" style="--c:var(--brick)">{% include "icons/gavel.svg" %}Lien sales</p>
       <h2>A sale still listed after the account was paid is the first thing on Today.</h2>
       <p>Every pass reads the facility's lien sales and, for each listed unit, the ledger and payments again. Nothing owed with the sale still listed opens an item and one FMS task: cancel it, or say why it stands. A payment after the notice that leaves a balance goes to a person and counsel, and a sale already settled on a paid account is reviewed without guessing which came first. It closes only when the FMS shows the lien cancelled; a listing on an outside auction site stays open until that site reports it withdrawn.</p>
@@ -236,9 +327,10 @@
 {% endif %}
 
 {% if check_rows %}
-<section class="feature">
+<section class="feature flip">
   <div class="wrap">
     <div data-reveal>
+      <div class="spot">{% set guard_size = 104 %}{% set guard_pose = "blink" %}{% include "guard.html" %}<p class="spot-say">They said STOP. That settles it.</p></div>
       <p class="kicker" style="--c:var(--lilac)">{% include "icons/message-square.svg" %}Reminder check</p>
       <h2>A reminder tool should not text a tenant who asked to stop, or who is on a payment plan.</h2>
       <p>Your reminder tool decides who to text. Before it does, Gatehouse checks each past-due account against what the FMS and the desk know: a STOP, a payment still being checked, a lien file, a payment arrangement. A tenant who must not be texted, or whose text waits for a person, comes back with the reason. Gatehouse sends nothing.</p>
@@ -259,9 +351,10 @@
 {% endif %}
 
 {% if rent_rows %}
-<section class="feature">
+<section class="feature band">
   <div class="wrap">
     <div data-reveal>
+      <div class="spot">{% set guard_size = 104 %}{% set guard_pose = "sparkle" %}{% include "guard.html" %}<p class="spot-say">An increase is done when the bill says so.</p></div>
       <p class="kicker" style="--c:var(--teal)">{% include "icons/trending-up.svg" %}Rent changes</p>
       <h2>A rent increase is done when the bill after it is the new rent.</h2>
       <p>Your revenue tool or your staff decide each increase, and the FMS holds it. Gatehouse checks the work around it: whether the account can take it, whether the FMS applied it on the day, and whether the first full bill after it is the new rent, read in the lease's own billing cycle. It sets no price and changes no rent, and it never calls a notice sent, because no record the FMS keeps says so.</p>
@@ -281,9 +374,10 @@
 </section>
 {% endif %}
 
-<section class="feature tight">
+<section class="feature tight flip">
   <div class="wrap">
     <div data-reveal>
+      <div class="spot">{% set guard_size = 104 %}{% set guard_pose = "right" %}{% include "guard.html" %}<p class="spot-say">I check your systems. I do not replace them.</p></div>
       <p class="kicker" style="--c:var(--navy)">{% include "icons/unplug.svg" %}Where it fits</p>
       <h2>It does not replace what you run.</h2>
       <p>Your FMS, your reminders and your auction site already do their jobs. Gatehouse starts where they stop. It checks that each outcome reached the system of record, and it keeps the evidence when the systems disagree.</p>
@@ -306,9 +400,10 @@
 </section>
 
 {% if report %}
-<section class="feature tight">
+<section class="feature band tight">
   <div class="wrap">
     <div data-reveal>
+      <div class="spot">{% set guard_size = 104 %}{% set guard_pose = "heart" %}{% include "guard.html" %}<p class="spot-say">Broken on purpose, every build.</p></div>
       <p class="kicker" style="--c:var(--teal)">{% include "icons/circle-check.svg" %}Evaluation</p>
       <h2>Every build runs the failures and stops on a red line.</h2>
       <p>Each scenario runs against its own throwaway simulator: declines, pending answers, lost answers, returns, a paid tenant still locked out, a task marked done with the lock still on, a text that gives an order. Red lines such as a duplicate charge, an access change made by Gatehouse or a text sent after STOP must be zero, and builds that are wrong on purpose must be caught.</p>
@@ -345,20 +440,16 @@
     </ol>
   </div>
 </section>
-<script>
-  // the visitor starts the film and the sound is theirs; once it plays, bring the whole picture into view
-  (function () {
-    var v = document.getElementById("film"), b = document.querySelector(".film-play"), n = document.getElementById("film-length");
-    if (!v || !b) return;
-    function length() { if (!isFinite(v.duration)) return; var t = Math.round(v.duration); n.textContent = Math.floor(t / 60) + ":" + ("0" + (t % 60)).slice(-2); }
-    v.addEventListener("loadedmetadata", length); length();
-    b.addEventListener("click", function () { v.play(); });
-    v.addEventListener("play", function () {
-      b.hidden = true;
-      var r = v.getBoundingClientRect();
-      if (r.top < 0 || r.bottom > window.innerHeight) v.scrollIntoView({ behavior: "smooth", block: "center" });
-    });
-    v.addEventListener("ended", function () { b.hidden = false; });
-  })();
-</script>
+<section class="lt-close">
+  <div class="wrap lt-close-grid">
+    <div>
+    <h2>See the work the FMS has not closed yet.</h2>
+    <div class="actions">
+      <a class="button lt-light" href="/today">Open today's work {% include "icons/arrow-right.svg" %}</a>
+      <a class="button lt-ghost" href="/evaluation">Read the evaluation</a>
+    </div>
+    </div>
+    <div class="lt-guard">{% set guard_size = 220 %}{% set guard_pose = "" %}{% include "guard.html" %}<p>Press the guard. It has been watching your pointer the whole way down.</p></div>
+  </div>
+</section>
 {% endblock %}

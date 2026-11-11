@@ -3,11 +3,11 @@
 {% block main %}
 <div class="wrap">
 <div class="head">
-  <h1>Operations</h1>
+  <div class="head-title"><h1>Operations</h1><p class="tagline">Who has to act, and how fresh the facts are.</p></div>
 </div>
 <p class="lede">What is open at every facility and who has to act, how fresh the stored FMS readings are, and what our agent did today.</p>
 
-<div class="panels">
+<div class="panels" data-stagger data-grow>
   <section class="panel">
     <h2>Open work by who acts</h2>
     {% for who, n in by_who %}
