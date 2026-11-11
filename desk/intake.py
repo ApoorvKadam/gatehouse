@@ -56,8 +56,9 @@ SYSTEM = """<role>You read one file that a tenant sent to a self-storage facilit
 </rules>"""
 ASK = "Report what this file shows."
 # the line the text's reading gets when a file came with the text: it never sees the file, and staff see the file's reading apart
-FILE_NOTE = ("<file_note>A file came with this text. The desk handles the file separately. Write your notes from the text and the records "
-             "only.</file_note>")
+FILE_NOTE = ("<file_note>A file came with this text. Staff see the file, and the desk's reading of it, beside your notes. Write your notes "
+             "from the text and the records only. You may say that the tenant sent a file, and nothing more about it: not what it shows or says, "
+             "not whether it was read, seen or described, and no word about yourself.</file_note>")
 
 
 @lru_cache(maxsize=None)
