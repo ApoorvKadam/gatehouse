@@ -12,8 +12,8 @@ def test_a_provider_id_in_brackets_or_bare_is_taken_out():
 
 
 def test_a_record_id_is_taken_out_and_a_state_code_is_written_as_words():
-    assert plain("Payments workitem:4 and payment:12 say the attempt is NEEDS_STAFF.") == "Payments and say the attempt is needs staff."
-    assert words("NEEDS_STAFF") == "needs staff" and words("counsel_review_required") == "counsel review required" and words(None) == ""
+    assert plain("Payments workitem:4 and payment:12 say the attempt is NEEDS_STAFF.") == "Payments and say the attempt is waiting for staff."
+    assert words("NEEDS_STAFF") == "waiting for staff" and words("counsel_review_required") == "counsel review required" and words(None) == ""
 
 
 def test_a_time_a_feed_wrote_is_written_as_a_person_reads_it():

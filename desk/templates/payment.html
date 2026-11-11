@@ -11,7 +11,7 @@
 <div class="state"><span class="chip {{ 'act' if held else ('wait' if cmd.state in ('RETURNED', 'REFUNDED', 'REFUND_PENDING', 'DISPUTED') else ('done' if cmd.state == 'CONFIRMED' else 'plain')) }}">{% if cmd.state == 'NEEDS_STAFF' and not cmd.provider_payment_id %}Outcome unknown: held for a person
   {% elif cmd.state == 'RETURNED' %}{% if cmd.confirmed_at %}Confirmed, then returned{% else %}Returned before Gatehouse confirmed it{% endif %}
   {% elif cmd.state == 'CONFIRMED' %}Confirmed by the FMS ledger
-  {% else %}{{ cmd.state|replace('_', ' ')|capitalize }}{% endif %}</span></div>
+  {% else %}{{ cmd.state|readable|capitalize }}{% endif %}</span></div>
 {% if case.hold_reasons %}<p class="lede">{% for r in case.hold_reasons %}{{ sentence(r) }} {% endfor %}</p>{% endif %}
 
 <div class="grid2">
