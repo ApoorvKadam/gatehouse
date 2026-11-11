@@ -114,7 +114,7 @@
           <section class="notes file-read" aria-label="The file they sent">
             <div class="notes-head"><h3>The file they sent</h3><span class="muted small">{{ run.file.label }}</span></div>
             {% for line in run.file.lines %}<p class="reading-reason">{{ line }}</p>{% endfor %}
-            <p class="small muted">Our agent read the file; the desk compared what it says with the FMS. A file confirms no payment and changes nothing the tenant is told.</p>
+            <p class="small muted">Our agent read the file in a step of its own, and the desk compared it with the FMS. The case notes come from the text and the records only. A file confirms no payment and changes nothing the tenant is told.</p>
           </section>
           {% endif %}
           {% if run and run.status != 'running' and run.notes.summary %}
