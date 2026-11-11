@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from .access import CLOSED_BY, GATE_RULES, KIND_NAMES, MISSING, NOT_RESTORED, PHYSICAL, policy_for, facility_today
 from . import integration, sales, spend
+from .intake import SAMPLES
 from .messaging import inbox as inbox_of
 from .db import utcnow
 from .liens import on
@@ -586,7 +587,7 @@ def router(pages: Pages) -> APIRouter:
             hold = hold_note(selected, pages.reminder_checks(s, current, visitor=visitor)) if selected and (selected.get("investigation") or {}).get("reminder") else None
             checked = pages.guard is not None and pages.guard.on
             check = {"sitekey": pages.guard.sitekey, "verified": pages.guard.valid(request.cookies.get(spend.COOKIE)) is not None} if pages.live and checked else None
-            page = templates.TemplateResponse(request, "inbox.html", {
+            page = templates.TemplateResponse(request, "inbox.html", {"samples": SAMPLES,
                 "facilities": facilities, "facility": current, "texts": texts, "selected": selected, "local": local, "sequence": sequence, "nav": "inbox",
                 "live": pages.live, "check": check, "hold": hold})
             if pages.live and not checked and spend.COOKIE not in request.cookies:

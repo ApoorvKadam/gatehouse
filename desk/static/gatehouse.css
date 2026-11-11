@@ -467,6 +467,10 @@ html { scrollbar-color: var(--frame) var(--paper); }
 .play textarea { resize: vertical; min-height: 4.5rem; line-height: 1.45; }
 .play select:focus-visible, .play textarea:focus-visible, .play-try button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 .play-try { margin: 0; font-size: var(--t-xs); color: var(--ink-3); }
+.play-file { display: grid; gap: var(--s1); font-size: var(--t-xs); color: var(--ink-3); }
+.sent-file { margin: var(--s3) 0 0; }
+.sent-file img { display: block; width: 160px; height: auto; border: 1px solid var(--frame); border-radius: 8px; background: var(--paper); }
+.sent-file figcaption { margin-top: var(--s1); font-size: var(--t-xs); color: var(--ink-3); }
 .play-try button { background: none; border: 0; padding: 0; font: inherit; color: var(--blue); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .play-foot { margin: 0; }
 .threads-head { padding: var(--s3) var(--s4); border-bottom: 1px solid var(--rule); font-size: var(--t-xs); font-weight: 600; color: var(--ink-3); }

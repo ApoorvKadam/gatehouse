@@ -97,6 +97,7 @@ class PlayIn(BaseModel):
     body: str = Field(max_length=2000, description="what the tenant types: 1 to 320 characters once control characters are removed")
     request_id: str = Field(min_length=8, max_length=64,
                             description="chosen by the screen for each press and kept for its retries; sending it twice is one text")
+    attachment: str | None = Field(default=None, max_length=32, description="one of the preview's sample files (desk/intake.py), or none")
 
 
 class VisitorIn(BaseModel):
@@ -434,7 +435,8 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
             if reason:
                 raise HTTPException(429, reason)
             try:
-                row = play_tenant(session, adapter, body.sender, body.body, visitor, body.request_id, set(binding.facility_ids) if binding else set())
+                row = play_tenant(session, adapter, body.sender, body.body, visitor, body.request_id, set(binding.facility_ids) if binding else set(),
+                                  body.attachment or None)
             except ValueError as exc:
                 raise HTTPException(422, str(exc)) from exc
         facility = session.get(Facility, row.facility_id) if row.facility_id is not None else None

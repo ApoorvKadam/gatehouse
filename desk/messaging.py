@@ -18,6 +18,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from .intake import SAMPLES
 from .adapter import FMSAdapter, FMSError, InboundText, NotFound, PermissionDenied, ProviderCustomer
 from .cases import current_case
 from .db import utcnow
@@ -134,7 +135,8 @@ PLAYERS = {"dana": "+14075550142", "priya": "+14075550119", "omar": "+1407555015
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 
-def play_tenant(session: Session, adapter: FMSAdapter, who: str, body: str, visitor: str, request_id: str, served: Collection[str]) -> InboundMessage:
+def play_tenant(session: Session, adapter: FMSAdapter, who: str, body: str, visitor: str, request_id: str, served: Collection[str],
+                attachment: str | None = None) -> InboundMessage:
     """Keep a text a visitor typed as one of the tenants they may play, the way a text from the webhook is kept, and match it to a tenant
     by its number. The visitor supplies only the words: the number, the facility and the receiving number come from the desk. The text
     belongs to the visitor, so it is seen, answered and stopped only inside their own space. A failed FMS read leaves it pending, as it
@@ -143,6 +145,8 @@ def play_tenant(session: Session, adapter: FMSAdapter, who: str, body: str, visi
     phone = PLAYERS.get(who)
     if phone is None:
         raise ValueError("Choose who is texting.")
+    if attachment is not None and attachment not in SAMPLES:
+        raise ValueError("Choose one of the sample files, or none.")
     text = _CONTROL.sub("", body).strip()
     if not text or len(text) > SMS_LIMIT:
         raise ValueError(f"A text is 1 to {SMS_LIMIT} characters; this one is {len(text)}.")
@@ -158,6 +162,9 @@ def play_tenant(session: Session, adapter: FMSAdapter, who: str, body: str, visi
     if row is None:
         # the same press arrived again: it is the text kept the first time, and it is not matched twice
         return session.scalars(select(InboundMessage).where(InboundMessage.provider_message_id == message_id)).one()
+    if attachment is not None:
+        row.attachment = attachment
+        session.commit()
     try:
         match_pending(session, adapter, facility)
     except FMSError:
@@ -433,7 +440,9 @@ def inbox(session: Session, facility: Facility, limit: int = 50, offset: int = 0
         # the run that wrote a reply keeps its sentences, so a later exploration cannot take them off the page
         written = {a["outbound_id"]: a for r in runs for a in r.actions or [] if a.get("kind") == "reply" and a.get("outbound_id")}
         out.append({"id": m.id, "from": m.phone, "body": m.body, "received_at": m.received_at,
-                    "investigation": ({"id": run.id, "status": run.status, **run.reading(), "cost_usd": round(run.cost_usd, 6),
+                    "attachment": ({"key": m.attachment, "label": SAMPLES[m.attachment], "src": f"/static/samples/{m.attachment}.png"}
+                                   if m.attachment in SAMPLES else None),
+                    "investigation": ({"id": run.id, "status": run.status, **run.reading(), "file": run.file, "cost_usd": round(run.cost_usd, 6),
                                        "started_at": run.started_at, "finished_at": run.finished_at}
                                       if run is not None else None),
                     "match": {"state": m.match_state, "note": m.match_note, "customer_id": m.customer_provider_id,

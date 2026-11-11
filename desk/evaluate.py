@@ -31,6 +31,7 @@ from .db import make_session_factory
 from .models import AccessPolicy, Facility, WorkItem
 from . import sales
 from .adapter.base import FMSError
+from .evaluate_files import MOVED, QUOTED, files_part
 from .evaluate_drift import AMOUNT_READ, CHARGED_AGAIN, UNLISTED_READ, drift_part
 from .evaluate_reminders import EARLY_PAYMENT, LIFTED, STOP_CLEAR, UNREAD_CLEAR, WRONG_FACT, reminders_part
 from .evaluate_texts import CLAIM, OWN, STOP, TWICE, texts_part
@@ -654,6 +655,9 @@ GUARDS = {
     UNLISTED_READ: "disagree",
     AMOUNT_READ: "money",
     CHARGED_AGAIN: "twice",
+    # files a tenant sends (desk/evaluate_files.py): a payment attempt or open item changed by a file, and a reply carrying what only the file says
+    MOVED: "late",
+    QUOTED: "disagree",
 }
 
 
@@ -693,6 +697,10 @@ def evaluate(url: str) -> Report:
     report.rows += [Row("FMS changes", *row) for row in drift_rows]
     report.red_lines += [red_line("FMS changes", *line) for line in drift_lines]
     report.controls += [Control(*control) for control in drift_controls]
+    file_rows, file_lines, file_controls = files_part(url)
+    report.rows += [Row("Files", *row) for row in file_rows]
+    report.red_lines += [red_line("Files", *line) for line in file_lines]
+    report.controls += [Control(*control) for control in file_controls]
     return report
 
 

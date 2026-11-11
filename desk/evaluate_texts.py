@@ -289,8 +289,8 @@ def ignores_a_visitors_stop(session, phone, visitor=None):
 def keeps_a_text_for_every_press(original):
     each = count(1)
 
-    def play(session, adapter, who, body, visitor, request_id, served):
-        return original(session, adapter, who, body, visitor, f"{request_id}-{next(each)}", served)
+    def play(session, adapter, who, body, visitor, request_id, served, attachment=None):
+        return original(session, adapter, who, body, visitor, f"{request_id}-{next(each)}", served, attachment)
     return play
 
 

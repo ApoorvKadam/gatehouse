@@ -20,6 +20,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from . import intake
 from .db import utcnow
 from .messaging import STOP_WORDS, mine, stop_text
 from .models import (
@@ -36,6 +37,7 @@ from .wording import REPLY_KINDS, clock, names_a_record, plain, when, words
 log = logging.getLogger("desk.investigator")
 
 MODEL, EFFORT, MAX_TOKENS = "claude-haiku-5-5", "medium", 4096
+FILE_MAX_TOKENS = 600          # the file's report is six short fields
 # seven turns of lookups at most; the eighth is forced to submit
 MAX_TURNS = 8
 # what the model is told when its packet is not accepted; it never repeats what the packet said
@@ -623,9 +625,15 @@ class Investigation:
     def run(self) -> None:
         facility = self.scope.facility
         system = SYSTEM.format(facility=facility.name, today=clock(utcnow(), facility.time_zone).strftime("%Y-%m-%d"), stop_words=", ".join(STOP_WORDS))
+        if self.inbound.attachment in intake.SAMPLES:
+            self._read_file()
         self.lookups.text_in(self.inbound)
         body = self.inbound.body.replace("<", "&lt;")                       # the tenant's words cannot close the block they sit in
-        messages: list = [{"role": "user", "content": f'<untrusted_input record_id="text:in:{self.inbound.id}">\n{body}\n</untrusted_input>'}]
+        content = f'<untrusted_input record_id="text:in:{self.inbound.id}">\n{body}\n</untrusted_input>'
+        if self.inbound.attachment in intake.SAMPLES:
+            # only a text that carries a file gets this line, so the reading of every other text is unchanged
+            content += f"\n{intake.FILE_NOTE}"
+        messages: list = [{"role": "user", "content": content}]
         sent_back = False
         for turn in range(MAX_TURNS):
             if not self._beat():
@@ -690,6 +698,42 @@ class Investigation:
                 messages.append({"role": "user", "content": "Call submit_case_packet with what you found."})
             self.session.commit()
         return self._end("needs_person", None, "no packet after the allowed turns")
+
+    def _read_file(self) -> None:
+        """Our agent reads the file in a call of its own, with nothing of the text, so a file cannot change how the text is read. What it
+        reports is kept as the tenant's claim; the desk compares it with the payments the FMS reports and writes every sentence staff see."""
+        key = self.inbound.attachment
+        if not self._beat():
+            return
+        kwargs = dict(model=MODEL, max_tokens=FILE_MAX_TOKENS, output_config={"effort": "low"}, timeout=CALL_TIMEOUT, **intake.request(key))
+        price_in, price_out = PRICES[MODEL]
+        size = len(json.dumps(kwargs["messages"]).encode()) + len(intake.SYSTEM.encode()) + 2048
+        worst = (size * price_in + FILE_MAX_TOKENS * price_out) / 1_000_000
+        entry = {"turn": 0, "stop_reason": None, "forced": True, "asked": ["report_file"], "calls": []}
+        self.trace.append(entry)
+        self.row.trace = deepcopy(self.trace)
+        self.session.commit()
+        try:
+            response = self._ask(kwargs, worst)
+        except Exception:
+            # the file is left to a person; the text is still read
+            log.warning("agent run %s: the file could not be read", self.row.id, exc_info=True)
+            response = None
+        found = None
+        if response is not None:
+            self._count(response, worst)
+            entry["stop_reason"] = response.stop_reason
+            use = next((b for b in response.content if b.type == "tool_use" and b.name == "report_file"), None)
+            found = intake.claims(dict(use.input or {})) if use is not None and response.stop_reason == "tool_use" else None
+        entry["calls"].append({"tool": "report_file", "input": {}, "records": [], "error": None if found else "the file was not read"})
+        self.row.trace = deepcopy(self.trace)
+        if found is not None:
+            self.row.file = {"sample": key, "label": intake.SAMPLES[key], "claims": found,
+                             **intake.compare(self.session, self.scope.leases, self.scope.facility.time_zone, found)}
+        else:
+            self.row.file = {"sample": key, "label": intake.SAMPLES[key], "claims": None, "verdict": "unread",
+                             "lines": ["Our agent could not read the file, so Gatehouse compares nothing. A person looks at it."]}
+        self.session.commit()
 
     def _worst_call(self, system: str, messages: list) -> float:
         """The most the next call can cost. A token is at least a byte, so the bytes of the request bound its input tokens, and the
@@ -956,7 +1000,7 @@ def _review(session: Session, adapter, inv: Investigation) -> None:
 
 
 # the words the page shows for each step of a run, taken from what the run really did
-STEP_WORDS = {"get_account": "Reading the tenant's account", "get_payments": "Checking payments",
+STEP_WORDS = {"report_file": "Reading the file they sent", "get_account": "Reading the tenant's account", "get_payments": "Checking payments",
               "get_sale_status": "Checking the sale and its outside listing", "get_lien_file": "Checking the lien file",
               "get_recent_texts": "Reading the recent messages", "request_staff_review": "Asking staff to review the sale", "read_task_back": "Reading the FMS task back",
               "draft_reply": "Choosing what to tell the tenant",
@@ -985,7 +1029,7 @@ def run_view(row: AgentRun, trace: bool = False) -> dict:
     only in the reading."""
     view = {"id": row.id, "inbound_id": row.inbound_id, "status": row.status, **row.reading(), "error": row.error,
             "model": row.model, "effort": row.effort, "turns": row.turns, "input_tokens": row.input_tokens, "output_tokens": row.output_tokens,
-            "cost_usd": round(row.cost_usd, 6), "started_at": row.started_at, "finished_at": row.finished_at}
+            "cost_usd": round(row.cost_usd, 6), "started_at": row.started_at, "finished_at": row.finished_at, "file": row.file}
     if trace:
         view["trace"] = row.trace
     return view
