@@ -468,6 +468,16 @@ class ReminderCheck(Base):
     data: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
+class RentChangeCheck(Base):
+    """The latest reading of one lease's rent change, as the worker took it: whether the account can take a scheduled increase, or whether a
+    completed one was applied and billed. Pages, Today and the API read this, never the FMS."""
+
+    __tablename__ = "rent_change_checks"
+    lease_id: Mapped[int] = mapped_column(ForeignKey("leases.id"), primary_key=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    data: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
 class FmsObservation(Base):
     """An answer from the FMS that its documentation does not describe, kept once per call, field, kind and value, with how often it came and when.
     The answer itself is never used as if it were documented; a person reviews the record, and it opens again if the same thing arrives after the

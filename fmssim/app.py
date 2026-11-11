@@ -33,6 +33,16 @@ def ok(data: dict | None = None) -> dict:
     return {"status": 200, "data": data} if data is not None else {"status": 200}
 
 
+# billing periods in a year, for turning an amount per facility cycle into the lease's own cycle
+PER_YEAR = {"WEEKLY": 52, "BI_WEEKLY": 26, "DAYS_28": 13, "MONTHLY": 12, "QUARTERLY": 4, "BI_ANNUAL": 2, "ANNUAL": 1}
+
+
+def in_lease_cycle(amount: int, facility_cycle: str, lease_cycle: str) -> int:
+    """Cubby: 27692 at a DAYS_28 facility on a MONTHLY lease is 27692 x 13 / 12 = 30000. Rounded half up, in whole cents."""
+    num, den = amount * PER_YEAR[facility_cycle], PER_YEAR[lease_cycle]
+    return (2 * num + den) // (2 * den)
+
+
 def iso(value: datetime | date | None) -> str | None:
     return value.isoformat() if value is not None else None
 
@@ -82,6 +92,8 @@ def create_app(database_url: str | None = None, lose_response_seconds: float = 8
             "paidThroughDate": iso(lease.paid_through_date), "prepaidBalance": lease.prepaid_balance,
             "totalDue": due, "delinquencyStartDate": iso(lease.delinquency_start_date),
             "overlockNeeded": lease.overlock_needed, "unitId": unit_id_of(lease),
+            # per one billing cycle of the facility, like monthlyRentalAmount
+            "rentChangeScheduledDate": iso(lease.rent_change_scheduled_date), "rentChangeNewRentAmount": lease.rent_change_new_rent_amount,
         }
 
     def payment_json(p: Payment) -> dict:
@@ -178,6 +190,32 @@ def create_app(database_url: str | None = None, lose_response_seconds: float = 8
                             "accruesThrough": iso(e.accrues_through), "waive": e.waive},
             } for e in entries],
         }]})
+
+    @app.post("/v1/reports/rent-roll")
+    def rent_roll(body: dict, key: ApiKey = Depends(caller), session: Session = Depends(db)):
+        """One entry per rented unit. Unlike Leases Search, monthlyRentalAmount here is already in the lease's own billing cycle, and
+        lastRentChangeDate (the last completed rent change) is only here, omitted when the rent has never changed."""
+        where = body.get("where") or {}
+        wanted = where.get("facilityIds")
+        if not isinstance(wanted, list) or not wanted or not where.get("throughDate"):
+            raise ApiError(400, "where.facilityIds and where.throughDate are required")
+        facilities = {f.facility_id: f for f in session.scalars(select(Facility).where(Facility.org_id == key.org_id, Facility.facility_id.in_(wanted)))}
+        entries = []
+        for lease in session.scalars(select(Lease).where(Lease.facility_id.in_(list(facilities))).order_by(Lease.unit_name)):
+            f, c = facilities[lease.facility_id], session.get(Customer, lease.customer_id)
+            entry = {"facilityId": f.facility_id, "facilityName": f.name, "status": "RENTED", "unitId": unit_id_of(lease), "unitName": lease.unit_name,
+                     "customerId": lease.customer_id,
+                     "totalDue": lease_total_due(session, lease.lease_id), "prepaid": lease.prepaid_balance,
+                     "monthlyRentalAmount": in_lease_cycle(lease.monthly_rental_amount, f.billing_cycle, lease.billing_cycle),
+                     "effectiveRate": in_lease_cycle(lease.monthly_rental_amount - lease.rent_discount, f.billing_cycle, lease.billing_cycle),
+                     "rentChangeScheduledDate": iso(lease.rent_change_scheduled_date), "rentChangeNewRentAmount": lease.rent_change_new_rent_amount,
+                     "billingCycle": lease.billing_cycle, "moveInDate": iso(lease.move_in_date), "paidThroughDate": iso(lease.paid_through_date)}
+            if lease.last_rent_change_date:
+                entry["lastRentChangeDate"] = iso(lease.last_rent_change_date)
+            if key.pii and c is not None:
+                entry["customerName"] = f"{c.first_name} {c.last_name}"        # a key without personal data sees ids only, as on every other call
+            entries.append(entry)
+        return ok({"entries": entries})
 
     @app.post("/v1/payments/search")
     def payments_search(body: dict, key: ApiKey = Depends(caller), session: Session = Depends(db)):
