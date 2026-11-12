@@ -391,7 +391,7 @@ def ensure_task(session: Session, adapter: FMSAdapter, facility: Facility, item:
             session.commit()   # the id, or the unknown outcome, is saved before anything else is read
         if item.task_state in ("sending", "outcome_unknown") and task:
             # a call that may have reached the FMS: only ever looked up, never repeated
-            _find_by_marker(adapter, item, task)
+            _find_by_marker(adapter, item, task, facility.provider_id)
         if item.task_state == "created" and item.task_id:
             rows = adapter.tasks_for("taskId", item.task_id)
             item.task_status = rows[0].status if rows else "not found"
@@ -409,10 +409,16 @@ def ensure_task(session: Session, adapter: FMSAdapter, facility: Facility, item:
         failures.append(f"task for item {item.id}: {exc}")
 
 
-def _find_by_marker(adapter: FMSAdapter, item: WorkItem, task: tuple) -> None:
+def _find_by_marker(adapter: FMSAdapter, item: WorkItem, task: tuple, facility_provider_id: str) -> None:
     _, _, unit_id, customer = task
-    rows = adapter.tasks_for("unitId", unit_id) if unit_id else adapter.tasks_for("customerId", customer)
+    # a task carries a unit, a customer, or neither (a facility task, such as calling back an unknown number)
+    rows = (adapter.tasks_for("unitId", unit_id) if unit_id else adapter.tasks_for("customerId", customer) if customer
+            else adapter.tasks_for("facilityId", facility_provider_id))
     match = next((t for t in rows if item.task_marker and item.task_marker in (t.description or "")), None)
+    if match is None and (unit_id or customer):
+        # the request may have gone out under another scope (an unknown caller who has since been matched to a customer): every task at
+        # the facility is searched before the outcome is called unknown
+        match = next((t for t in adapter.tasks_for("facilityId", facility_provider_id) if item.task_marker and item.task_marker in (t.description or "")), None)
     if match is not None:
         item.task_state, item.task_id, item.task_status = "created", match.task_id, match.status
         item.note = None

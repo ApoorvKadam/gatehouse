@@ -121,6 +121,17 @@ class ProviderExemption:
 
 
 @dataclass(frozen=True)
+class ProviderLead:
+    provider_id: str
+    customer_provider_id: str
+    facility_provider_id: str
+    status: str                 # NEW, ON_HOLD, IN_PROGRESS_HOT, IN_PROGRESS_COLD, RESERVATION, CONVERTED, UNQUALIFIED, DUPLICATE
+    updated_at: datetime | None
+    converted_at: datetime | None
+    unqualified_at: datetime | None
+
+
+@dataclass(frozen=True)
 class ProviderTask:
     task_id: str
     title: str
@@ -224,6 +235,7 @@ class FMSAdapter(Protocol):
     def locks_for_lease(self, lease_provider_id: str) -> list[ProviderLock]: ...
     def exemptions_for_customer(self, customer_provider_id: str) -> list[ProviderExemption]: ...
     def tasks_for(self, scope: str, value: str) -> list[ProviderTask]: ...
+    def leads_for_customer(self, customer_provider_id: str) -> list[ProviderLead]: ...
     def auction_entries(self, facility_provider_id: str) -> list[ProviderAuctionEntry]: ...
     def create_task(self, facility_provider_id: str, title: str, description: str, *, unit_id: str | None = None,
                     customer_provider_id: str | None = None) -> TaskCreateOutcome: ...

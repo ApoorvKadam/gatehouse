@@ -31,7 +31,7 @@ from .models import (
 from .payments import tenant_message
 from .messaging import in_quiet_hours
 from .reminder_check import hold_note, with_texts
-from . import rent_changes
+from . import missed_calls, rent_changes
 from .sequence import sequence
 from .wording import TROUBLES, plain, words
 
@@ -347,6 +347,16 @@ class Pages:
                                 money(r["new"]) if isinstance(r.get("new"), int) else money(r["rent"]) if isinstance(r.get("rent"), int) else ""))
         return out
 
+    def call_items(self, s: Session, facility: Facility) -> list[Item]:
+        out = []
+        for w in missed_calls.open_calls(s, facility):
+            o = w.observed or {}
+            if o.get("who") in missed_calls.NOT_ON_TODAY:
+                continue
+            out.append(Item(2, missed_calls.HEAD, "", 0, w.opened_at, w.problem + " " + missed_calls.task_words(w), w.closing_evidence, w.who_acts,
+                            f"/missed-calls?facility={facility.provider_id}#call-{w.id}", "", label=o.get("label") or "A caller"))
+        return out
+
     def today(self, s: Session, facility: Facility) -> list[Item]:
         items: list[Item] = []
         # a paid account can still have a lien file in motion, so every case is read; only lien work shows for those
@@ -414,6 +424,7 @@ class Pages:
         items.extend(self.sale_items(s, facility))
         items.extend(self.integration_items(s))
         items.extend(self.rent_items(s, facility))
+        items.extend(self.call_items(s, facility))
         for item in items:
             item.what, item.proof = plain(item.what), plain(item.proof)       # Today is read by a person: no provider ids, state codes or raw times
         return sorted(items, key=lambda i: (i.rank, i.since))
@@ -560,6 +571,12 @@ def router(pages: Pages) -> APIRouter:
                     continue            # the plain verified rows say less than the one billed on another cycle
                 by_state.setdefault(row["state"], row)
             rent_rows = [by_state[k] for k in ("wrong_charge", "not_applied", "verified") if k in by_state]
+            # one caller of each kind the desk tells apart, in the order a person would call them back
+            by_who = {}
+            for w in missed_calls.open_calls(s, home):
+                by_who.setdefault((w.observed or {}).get("who"), w)
+            call_rows = [{"label": (by_who[k].observed or {}).get("label"), "who": missed_calls.WHO_WORDS[k], "problem": by_who[k].problem}
+                         for k in ("lead", "tenant", "unknown", "shared") if k in by_who]
             lanes = {}
             if record_case is not None:
                 for e in pages.record(s, s.get(DelinquencyCase, record_case)):
@@ -572,7 +589,7 @@ def router(pages: Pages) -> APIRouter:
                 "returned": returned, "returned_unit": s.get(Lease, returned.lease_id).unit_name if returned else None,
                 "changed": changed, "counsel": counsel, "counsel_state": counsel_state, "record_case": record_case,
                 "record_unit": record_unit, "lanes": lanes, "lane_names": LANES, "access": access, "access_lease": access_lease,
-                "sale": sale, "sale_outside": sale_outside, "sale_words": sales.STATUS_WORDS, "on": on, "check_rows": check_rows, "rent_rows": rent_rows,
+                "sale": sale, "sale_outside": sale_outside, "sale_words": sales.STATUS_WORDS, "on": on, "check_rows": check_rows, "rent_rows": rent_rows, "call_rows": call_rows,
                 "access_view": access_view.data if access_view else None, "access_policy": access_policy, "gate_rules": GATE_RULES,
                 "report": evaluation_report(),
                 "truth": pages.trace.get(s.get(Lease, held.lease_id).provider_id) if held else None,
@@ -626,6 +643,24 @@ def router(pages: Pages) -> APIRouter:
                 "facilities": facilities, "facility": current, "rows": rows, "money": money, "chips": RENT_CHIPS, "step_chips": STEP_CHIPS,
                 "open": sum(1 for r in rows if r["state"] in rent_changes.TODAY), "review_percent": rent_changes.REVIEW_PERCENT,
                 "review_days": rent_changes.REVIEW_DAYS, "notice_why": rent_changes.NOTICE_WHY, "nav": "rent-changes"})
+
+    @r.get("/missed-calls", response_class=HTMLResponse)
+    def missed_calls_page(request: Request, facility: str | None = None):
+        """Every caller the facility missed, what the FMS says about them, and the callback a person is asked for."""
+        with session() as s:
+            facilities = pages.facilities(s)
+            if not facilities:
+                raise HTTPException(503, "No facility has been read from the FMS yet")
+            current = next((f for f in facilities if f.provider_id == facility), None) if facility is not None else facilities[0]
+            if current is None:
+                raise HTTPException(404, "No such facility")
+            rows = [{"id": w.id, "label": (w.observed or {}).get("label") or "A caller", "who": (w.observed or {}).get("who"),
+                     "calls": len((w.observed or {}).get("calls", [])), "since": local(w.opened_at), "problem": w.problem,
+                     "task": missed_calls.task_words(w), "proof": w.closing_evidence} for w in missed_calls.open_calls(s, current)]
+            won = missed_calls.closed_calls(s, current)
+            return templates.TemplateResponse(request, "missed_calls.html", {
+                "facilities": facilities, "facility": current, "rows": rows, "won": won, "chips": missed_calls.CHIPS,
+                "who_words": missed_calls.WHO_WORDS, "proof": missed_calls.PROOF, "local": local, "nav": "missed-calls"})
 
     @r.get("/inbox", response_class=HTMLResponse)
     def inbox_page(request: Request, facility: str | None = None, text: int | None = None):
@@ -782,7 +817,8 @@ def router(pages: Pages) -> APIRouter:
                 for i in pages.today(s, f):
                     part = ("Payments" if i.link.startswith("/payments/") else "Lien files" if i.link.endswith("/lien")
                             else "Access" if i.link.startswith("/access/") else "Lien sales" if i.link.startswith("/sales/")
-                            else "Rent changes" if i.link.startswith("/rent-changes") else "Collections")
+                            else "Rent changes" if i.link.startswith("/rent-changes") else "Missed calls" if i.link.startswith("/missed-calls")
+                            else "Collections")
                     groups.setdefault((part, i.head), []).append(i)
                     by_part[part] += 1
                     by_who[i.who] += 1

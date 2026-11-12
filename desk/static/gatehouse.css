@@ -346,14 +346,14 @@ dl.kv dd { margin: 0; }
 .steps.in::after, .no-motion .steps::after { transform: scaleX(1); }
 @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 currentColor; } 50% { box-shadow: 0 0 0 4px transparent; } }
 
-@media (max-width: 1360px) {
+@media (max-width: 1500px) {
   .top .wrap { gap: var(--s5); }
   .top nav { gap: var(--s5); }
   .top select { max-width: 17rem; }
 }
 
 /* below a wide laptop the brand and the facility list share the first row and the menu gets a row of its own */
-@media (max-width: 1279px) {
+@media (max-width: 1359px) {
   .top .wrap { flex-wrap: wrap; height: auto; row-gap: 0; padding-top: var(--s3); }
   .top nav { order: 3; flex: 1 0 100%; flex-wrap: wrap; column-gap: var(--s5); }
   .top nav a { padding: 12px 0 10px; }
@@ -955,6 +955,9 @@ footer .foot { display: grid; grid-template-columns: minmax(0, 2fr) repeat(3, mi
 .say-bill::before { content: ""; position: absolute; left: 0; right: 0; top: 7px; border-top: 1px dashed rgba(43,38,34,.3); }
 .say-tape, .feature p.say-tape { padding: 8px 22px; background: rgba(238,222,178,.92); font-family: var(--display); font-style: italic; font-size: 1rem; rotate: 2deg;
   clip-path: polygon(0 8%, 4% 0, 8% 10%, 3% 30%, 6% 55%, 2% 78%, 5% 100%, 95% 100%, 99% 85%, 96% 60%, 100% 38%, 97% 15%, 100% 0, 0 0); }
+.say-memo, .feature p.say-memo { padding: 24px 18px 12px; background: #fbe4e9; color: #3b2a2e; font-family: var(--display); font-size: 1rem; rotate: -1.5deg;
+  box-shadow: 0 1px 0 rgba(59,42,46,.08); border-top: 2px dashed rgba(176,86,109,.35); }
+.say-memo::before { content: "While you were out"; position: absolute; left: 18px; top: 7px; font: italic 600 0.6875rem/1 var(--display); color: #a24c63; }
 .say-greenbar, .feature p.say-greenbar { min-height: 44px; padding: 11px 30px; line-height: 22px; font-family: "Geist Mono", ui-monospace, monospace;
   background: radial-gradient(circle 3px at 11px 11px, var(--paper) 96%, #0000) 0 0 / 22px 22px repeat-y, radial-gradient(circle 3px at 11px 11px, var(--paper) 96%, #0000) 100% 0 / 22px 22px repeat-y,
   repeating-linear-gradient(#f7fbf6 0 22px, #dcefdc 22px 44px); }

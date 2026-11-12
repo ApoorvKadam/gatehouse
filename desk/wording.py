@@ -18,10 +18,13 @@ STATE_WORDS = {"NEEDS_STAFF": "waiting for staff", "CONFIRMED": "confirmed", "AW
                "DIRECT_DEBIT_RETURN": "returned by the bank", "REFUND_INITIATED": "refund started",
                # the statuses of a lien sale at the FMS and of a listing on an outside site
                "LISTED": "listed", "CANCELLED": "cancelled", "WITHDRAWN": "withdrawn", "SOLD": "sold", "NO_BIDS": "settled with no bids",
-               "PAYMENT_RECEIVED": "sold, and the bidder paid", "COMPLETE": "complete"}
+               "PAYMENT_RECEIVED": "sold, and the bidder paid", "COMPLETE": "complete",
+               # the statuses of a lead in the FMS
+               "ON_HOLD": "on hold", "IN_PROGRESS_HOT": "in progress, hot", "IN_PROGRESS_COLD": "in progress, cold", "RESERVATION": "reserved",
+               "CONVERTED": "converted", "UNQUALIFIED": "unqualified", "DUPLICATE": "duplicate"}
 
 # an id the FMS or the simulator made up: payment_ofK0Ux1ENYC, listing_x7Hq2..., lease_WhitB1042
-_PROVIDER_ID = r"(?:payment|auction|listing|task|lease|be|dex|cust|customer|fac|facility)_[A-Za-z0-9]{4,}"
+_PROVIDER_ID = r"(?:payment|auction|listing|task|lease|lead|call|be|dex|cust|customer|fac|facility)_[A-Za-z0-9]{4,}"
 _IN_BRACKETS = re.compile(rf"\s*\({_PROVIDER_ID}\)")
 _BARE_ID = re.compile(rf"\b{_PROVIDER_ID}\b")
 # a record id the desk gave a record: workitem:4, payment:12, text:in:3

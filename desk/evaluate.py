@@ -33,6 +33,8 @@ from . import sales
 from .adapter.base import FMSError
 from .evaluate_files import MOVED, QUOTED, files_part
 from .evaluate_rents import CYCLE_WRONG, NOTICE_SENT, STRADDLE, TASK_CLOSED, UNPROVEN, rents_part
+from . import evaluate_calls
+from .evaluate_calls import calls_part
 from .evaluate_drift import AMOUNT_READ, CHARGED_AGAIN, UNLISTED_READ, drift_part
 from .evaluate_reminders import EARLY_PAYMENT, LIFTED, STOP_CLEAR, UNREAD_CLEAR, WRONG_FACT, reminders_part
 from .evaluate_texts import CLAIM, OWN, STOP, TWICE, texts_part
@@ -666,6 +668,13 @@ GUARDS = {
     STRADDLE: "money",
     UNPROVEN: "late",
     TASK_CLOSED: "disagree",
+    # missed calls (desk/evaluate_calls.py): a caller matched on part of a number, a lead made from a caller ID, a second callback task,
+    # a call closed on a completed task, and a conversion the FMS did not report
+    evaluate_calls.MATCHED_WRONG: "disagree",
+    evaluate_calls.CREATED: "disagree",
+    evaluate_calls.SECOND_TASK: "twice",
+    evaluate_calls.TASK_CLOSED: "disagree",
+    evaluate_calls.CONVERTED: "disagree",
 }
 
 
@@ -713,6 +722,10 @@ def evaluate(url: str) -> Report:
     report.rows += [Row("Rent changes", *row) for row in rent_rows]
     report.red_lines += [red_line("Rent changes", *line) for line in rent_lines]
     report.controls += [Control(*control) for control in rent_controls]
+    call_rows, call_lines, call_controls = calls_part(url)
+    report.rows += [Row("Missed calls", *row) for row in call_rows]
+    report.red_lines += [red_line("Missed calls", *line) for line in call_lines]
+    report.controls += [Control(*control) for control in call_controls]
     return report
 
 
