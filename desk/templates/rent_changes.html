@@ -22,6 +22,7 @@
             <span class="chip {{ chips.get(r.state, 'plain') }}">{{ r.label }}</span>
             <p class="work-what">{{ r.why|readable }}</p>
             {% for other in r.also %}<p class="work-proof">{{ other|readable }}</p>{% endfor %}
+            {% if r.task %}<p class="work-proof">{{ r.task }}</p>{% endif %}
           </td>
           <td>
             <ol class="rent-steps">
