@@ -12,7 +12,7 @@ import httpx
 
 from .base import (
     AccessCheck, Anomaly, FMSError, InboundText, NotFound, PermissionDenied, ProviderAccessCode, ProviderCustomer, ProviderExemption,
-    ProviderLease, ProviderAuctionEntry, ProviderLedger, ProviderLock, ProviderPayment, ProviderTask, RentFacts, SmsOutcome, SmsPreference,
+    ProviderLead, ProviderLease, ProviderAuctionEntry, ProviderLedger, ProviderLock, ProviderPayment, ProviderTask, RentFacts, SmsOutcome, SmsPreference,
     SubmitOutcome, TaskCreateOutcome,
 )
 
@@ -302,6 +302,20 @@ class CubbyAdapter:
         return [ProviderTask(task_id=r.get("taskId") or r.get("id") or "", title=r.get("title") or "", description=r.get("description"),
                              status=r.get("status") or "", customer_provider_id=r.get("customerId"), unit_id=r.get("unitId"),
                              updated_at=_parse_time(r.get("updatedAt"))) for r in rows]
+
+    def leads_for_customer(self, customer_provider_id: str) -> list[ProviderLead]:
+        rows = self._read("/v1/leads/search", {"customerId": customer_provider_id}).get("leads")
+        if not isinstance(rows, list):
+            raise FMSError("/v1/leads/search: the answer has no leads list")
+        # a lead with no id or no status is not read around: the whole answer is an error, so no item opens or closes on half of it
+        if any(not isinstance(r, dict) or not r.get("leadId") or not r.get("status") for r in rows):
+            raise FMSError("/v1/leads/search: a lead without an id or a status")
+        try:
+            return [ProviderLead(provider_id=r["leadId"], customer_provider_id=r.get("customerId") or "", facility_provider_id=r.get("facilityId") or "",
+                                 status=r["status"], updated_at=_parse_time(r.get("updatedAt")), converted_at=_parse_time(r.get("convertedAt")),
+                                 unqualified_at=_parse_time(r.get("unqualifiedAt"))) for r in rows]
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise FMSError(f"/v1/leads/search: an unreadable time on a lead ({exc})") from exc
 
     def auction_entries(self, facility_provider_id: str) -> list[ProviderAuctionEntry]:
         auctions = self._read("/v1/auctions/search", {"facilityId": facility_provider_id}).get("auctions")

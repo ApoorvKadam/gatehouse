@@ -11,7 +11,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from . import access, auctions, messaging, seed
+from . import access, auctions, leads, messaging, seed
 from .store import (
     ApiKey, BookEntry, Customer, Facility, Lease, LeaseBehavior, Payment, PaymentMethod,
     apply_to_lease, lease_total_due, make_session_factory, new_id, reverse_on_lease, unit_id_of, utcnow,
@@ -153,7 +153,10 @@ def create_app(database_url: str | None = None, lose_response_seconds: float = 8
         if where.get("customerId"):
             q = q.where(Customer.customer_id == where["customerId"])
         if where.get("facilityId"):
-            q = q.where(Customer.customer_id.in_(select(Lease.customer_id).where(Lease.facility_id == where["facilityId"])))
+            # a customer is at a facility through a lease there or a lead there: someone who only asked about a unit is still a customer
+            from .store import Lead
+            q = q.where(Customer.customer_id.in_(select(Lease.customer_id).where(Lease.facility_id == where["facilityId"]))
+                        | Customer.customer_id.in_(select(Lead.customer_id).where(Lead.facility_id == where["facilityId"])))
         rows = session.scalars(q.order_by(Customer.customer_id)).all()
         if where.get("phone"):
             # Cubby's changelog says the customer phone filter remains a partial match, so a short number finds every
@@ -411,6 +414,7 @@ def create_app(database_url: str | None = None, lose_response_seconds: float = 8
     access.register(app, db, caller, own_lease, ok, iso, ApiError)
     auctions.register(app, db, caller, own_lease, ok, iso, ApiError)
     messaging.register(app, db, caller, ok, iso, ApiError, customer_json)
+    leads.register(app, db, caller, ok, iso, ApiError)
 
     with factory() as session:
         if session.scalars(select(Facility)).first() is None:

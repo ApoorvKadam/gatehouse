@@ -294,6 +294,45 @@ class ExternalListing(Base):
     observed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class Lead(Base):
+    """A lead as Cubby documents it (leads/create, leads/search). It turns CONVERTED only when a lease is created for it."""
+
+    __tablename__ = "leads"
+    lead_id: Mapped[str] = mapped_column(String, primary_key=True)
+    facility_id: Mapped[str] = mapped_column(String)
+    customer_id: Mapped[str] = mapped_column(String)
+    source: Mapped[str] = mapped_column(String)
+    origin: Mapped[str] = mapped_column(String, default="API")
+    status: Mapped[str] = mapped_column(String, default="NEW")
+    message: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    converted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    unqualified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class LeadApiCall(Base):
+    """Every leads/create request, kept by the simulator so a test can count them. Not something an FMS shows."""
+
+    __tablename__ = "lead_api_calls"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    facility_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    body: Mapped[dict] = mapped_column(JSON)
+    at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class MissedCall(Base):
+    """A missed call as the facility's phone system logs it. Not part of the FMS: Cubby documents no call events."""
+
+    __tablename__ = "missed_calls"
+    call_id: Mapped[str] = mapped_column(String, primary_key=True)
+    facility_id: Mapped[str] = mapped_column(String)
+    phone: Mapped[str] = mapped_column(String)                   # empty when the caller withheld their number
+    at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    seconds: Mapped[int] = mapped_column(Integer, default=0)     # how long it rang before it was missed
+    voicemail: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
 class TextMessage(Base):
     """One text on a facility's Cubby number, in or out, as the simulator's own record of what the carrier carried.
     Not something a real FMS shows: the desk never reads it, and the preview shows it only next to what Gatehouse
