@@ -62,7 +62,7 @@ def run_once(factory: sessionmaker[Session], adapter: FMSAdapter, run_id: str = 
                 failures += 1
                 log.exception("reminder check at %s failed", facility.provider_id)
             try:
-                failures += len(reconcile_rent_changes(session, adapter, facility).failures)
+                failures += len(reconcile_rent_changes(session, adapter, facility, run_id).failures)
             except Exception:
                 # like the reminder check, a page reads it; a bug in it must not stop the texts or the sales
                 session.rollback()

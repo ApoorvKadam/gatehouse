@@ -32,7 +32,7 @@ from .models import AccessPolicy, Facility, WorkItem
 from . import sales
 from .adapter.base import FMSError
 from .evaluate_files import MOVED, QUOTED, files_part
-from .evaluate_rents import CYCLE_WRONG, NOTICE_SENT, STRADDLE, UNPROVEN, rents_part
+from .evaluate_rents import CYCLE_WRONG, NOTICE_SENT, STRADDLE, TASK_CLOSED, UNPROVEN, rents_part
 from .evaluate_drift import AMOUNT_READ, CHARGED_AGAIN, UNLISTED_READ, drift_part
 from .evaluate_reminders import EARLY_PAYMENT, LIFTED, STOP_CLEAR, UNREAD_CLEAR, WRONG_FACT, reminders_part
 from .evaluate_texts import CLAIM, OWN, STOP, TWICE, texts_part
@@ -665,6 +665,7 @@ GUARDS = {
     CYCLE_WRONG: "disagree",
     STRADDLE: "money",
     UNPROVEN: "late",
+    TASK_CLOSED: "disagree",
 }
 
 
