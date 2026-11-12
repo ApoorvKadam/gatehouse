@@ -15,6 +15,7 @@ Operators already run an FMS, a payment processor, a gate system and reminder to
 - **Lien files and sales.** A file goes back to a person when the account changes. A paid unit still listed for auction gets one FMS task.
 - **Messages.** Every text is matched to a tenant. Our agent reads the case, and the desk writes the reply from verified records. STOP always wins.
 - **Reminder check and rent changes.** Who a reminder must not reach, and whether a rent increase was billed at the new rent.
+- **Missed calls.** Every caller nobody answered gets one callback task in the FMS. A lead counts as won only when the FMS shows it converted.
 - **Evaluation.** Every build runs the failures and stops on a red line.
 
 ## Screens

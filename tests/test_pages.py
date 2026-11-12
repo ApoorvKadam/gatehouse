@@ -331,7 +331,7 @@ def test_no_page_names_a_record_by_an_id(fms_url, sim):
         start = ["/", "/today", "/reminder-check", "/rent-changes", "/inbox", "/evaluation", "/operations"]
         facilities = re.findall(r'<option[^>]*value="([^"]+)"', client.get("/today").text)
         assert len(facilities) == 2
-        start += [f"/today?facility={f}" for f in facilities] + [f"/inbox?facility={f}" for f in facilities]
+        start += [f"/{page}?facility={f}" for f in facilities for page in ("today", "inbox", "missed-calls")]
         seen, todo, texts = set(), list(start), {}
         while todo:
             path = todo.pop()

@@ -375,7 +375,31 @@
 </section>
 {% endif %}
 
-<section class="feature tight flip">
+{% if call_rows %}
+<section class="feature flip">
+  <div class="wrap">
+    <div data-reveal>
+      <div class="spot">{% set guard_size = 104 %}{% set guard_pose = "right" %}{% include "guard.html" %}<p class="spot-say say-memo">Every missed call gets a call back.</p></div>
+      <p class="kicker" style="--c:var(--teal)">{% include "icons/phone.svg" %}Missed calls</p>
+      <h2>A missed call is done when the FMS shows what came of it.</h2>
+      <p>Your phone system logs the calls nobody answered. Gatehouse looks each caller up in the FMS by the whole number, asks staff to call back through one FMS task per caller, and counts a lead as won only when the FMS shows it converted. A number on two customers goes to a person. It creates no lead or customer from a caller ID, and it sends no text: a missed call is not consent.</p>
+      <a class="open" href="/missed-calls">Open the missed calls {% include "icons/arrow-right.svg" %}</a>
+    </div>
+    <div class="frame" data-reveal>
+      <div class="frame-bar"><span><b>Missed calls</b> &middot; {{ facility.name }}</span></div>
+      <div class="frame-body">
+        <dl class="kv">
+          {% for r in call_rows %}
+          <dt>{{ r.label }}</dt><dd><b>{{ r.who }}.</b> {{ r.problem|readable }}</dd>
+          {% endfor %}
+        </dl>
+      </div>
+    </div>
+  </div>
+</section>
+{% endif %}
+
+<section class="feature tight band">
   <div class="wrap">
     <div data-reveal>
       <div class="spot">{% set guard_size = 104 %}{% set guard_pose = "right" %}{% include "guard.html" %}<p class="spot-say say-tape">I check your systems. I do not replace them.</p></div>
@@ -394,6 +418,7 @@
           <dt>Files</dt><dd>A tenant's receipt taken as proof that a payment arrived</dd>
           <dt>FMS changes</dt><dd>An FMS answer that stops matching its documentation and gets guessed at</dd>
           <dt>Rent changes</dt><dd>An increase that lands on a lien file, or a first bill after it at another amount</dd>
+          <dt>Missed calls</dt><dd>A caller nobody called back, or a lead counted as won without the FMS saying so</dd>
         </dl>
       </div>
     </div>
