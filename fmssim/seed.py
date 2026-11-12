@@ -205,6 +205,55 @@ def seed_rent_changes(session: Session) -> None:
     session.flush()
 
 
+# people who called or asked about a unit and rent nothing yet (no lease); the Lees share one number
+LEAD_CUSTOMERS = [
+    ("cust_JonahRey01", NORTHSTAR, "Jonah", "Reyes", "+14075550191", "jonah.reyes@example.com"),
+    ("cust_KimSato001", NORTHSTAR, "Kim", "Sato", "+14075550192", "kim.sato@example.com"),
+    ("cust_AdaLee0001", NORTHSTAR, "Ada", "Lee", "+14075550193", "ada.lee@example.com"),
+    ("cust_BenLee0001", NORTHSTAR, "Ben", "Lee", "+14075550193", "ben.lee@example.com"),
+]
+
+
+def seed_leads(session: Session) -> None:
+    """Leads in the FMS, and the morning's missed calls in the phone system's own log, one for each case the desk must tell apart."""
+    from .store import Lead, MissedCall, utcnow
+    now = utcnow()
+    session.add_all(Customer(customer_id=c, org_id=o, first_name=fn, last_name=ln, phone=ph, email=em) for c, o, fn, ln, ph, em in LEAD_CUSTOMERS)
+    session.flush()
+    session.add_all([
+        Lead(lead_id="lead_JonahRey01", facility_id="fac_NSorlando01", customer_id="cust_JonahRey01", source="WEBSITE", origin="CONTACT_FORM",
+             status="IN_PROGRESS_HOT", message="Asked for a price on a 10x10.", created_at=now - timedelta(days=3), updated_at=now - timedelta(days=2)),
+        Lead(lead_id="lead_KimSato001", facility_id="fac_NSorlando01", customer_id="cust_KimSato001", source="CALL", origin="MANAGER",
+             status="IN_PROGRESS_COLD", message="Wants a 5x5 for a few months.", created_at=now - timedelta(days=9), updated_at=now - timedelta(days=9)),
+        # two people at one household number, each with an enquiry
+        Lead(lead_id="lead_AdaLee0001", facility_id="fac_NSorlando01", customer_id="cust_AdaLee0001", source="WALK_IN", origin="MANAGER",
+             status="NEW", message="Looking at climate-controlled units.", created_at=now - timedelta(days=5), updated_at=now - timedelta(days=5)),
+        Lead(lead_id="lead_BenLee0001", facility_id="fac_NSorlando01", customer_id="cust_BenLee0001", source="WEBSITE", origin="CONTACT_FORM",
+             status="ON_HOLD", message="Asked about vehicle parking.", created_at=now - timedelta(days=12), updated_at=now - timedelta(days=12)),
+    ])
+    o = "fac_NSorlando01"
+    session.add_all([
+        # a lead's customer, with a voicemail, and again forty minutes later: one caller, one item, one task
+        MissedCall(call_id="call_Jonah0001", facility_id=o, phone="+14075550191", at=now - timedelta(minutes=170), seconds=24,
+                   voicemail="Hi, it's Jonah Reyes, calling back about the ten by ten you quoted me. I'd like to move in this Saturday if it's still free."),
+        MissedCall(call_id="call_Jonah0002", facility_id=o, phone="+14075550191", at=now - timedelta(minutes=130), seconds=18),
+        # a current tenant: an existing customer, and what they want is not known
+        MissedCall(call_id="call_Dana00001", facility_id=o, phone="+14075550142", at=now - timedelta(minutes=150), seconds=31),
+        # a lead gone quiet calls back
+        MissedCall(call_id="call_KimSato01", facility_id=o, phone="+14075550192", at=now - timedelta(minutes=95), seconds=15),
+        # nobody the FMS knows, with a voicemail
+        MissedCall(call_id="call_Unknown01", facility_id=o, phone="+14075550199", at=now - timedelta(minutes=80), seconds=27,
+                   voicemail="Hi, my name's Rosa. I'm looking for a five by ten for about three months starting next week. Can someone call me back?"),
+        # one number on two customers: a person decides who called
+        MissedCall(call_id="call_Shared001", facility_id=o, phone="+14075550193", at=now - timedelta(minutes=60), seconds=12),
+        # caller ID withheld: there is no number to look up
+        MissedCall(call_id="call_Withheld1", facility_id=o, phone="", at=now - timedelta(minutes=45), seconds=9),
+        # seven digits that sit inside Dana's number: the FMS's partial match finds her, the whole numbers differ
+        MissedCall(call_id="call_Partial01", facility_id=o, phone="5550142", at=now - timedelta(minutes=25), seconds=11),
+    ])
+    session.flush()
+
+
 def reset(session: Session, id_seed: str | None = None) -> None:
     restart_ids(id_seed)
     for table in reversed(Base.metadata.sorted_tables):
@@ -229,6 +278,7 @@ def reset(session: Session, id_seed: str | None = None) -> None:
     session.flush()
     seed_rent_changes(session)
     seed_access(session)
+    seed_leads(session)
     session.commit()
 
 
