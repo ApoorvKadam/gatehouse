@@ -44,6 +44,7 @@ def site_opening(text: str) -> str:
 HERE = Path(__file__).parent
 templates = Jinja2Templates(directory=HERE / "templates")
 templates.env.filters["readable"] = plain      # no provider or record id, state codes and times as words
+templates.env.filters["words"] = words         # one FMS status code as words: IN_PROGRESS reads "in progress"
 templates.env.filters["upfirst"] = lambda text: text[:1].upper() + text[1:] if text else text   # capitalize lowers the rest: "the FMS" became "the fms"
 
 # The four kinds of entry an account's record keeps apart. Every event kind lands in exactly one of them.

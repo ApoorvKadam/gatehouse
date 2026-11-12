@@ -241,7 +241,7 @@
           {% set g = access_view.get('gate', {}) %}
           <dt>Gate code</dt><dd>{% if g.get('codes') == 1 %}The FMS answers &ldquo;{{ g.get('message') }}&rdquo;{% else %}Not read{% endif %}</dd>
           <dt>Operator lock</dt><dd>{% if access_view.get('operator_locks') %}{{ access_view.operator_locks|map(attribute='serial')|join(', ') }} still recorded on the unit{% else %}None recorded{% endif %}</dd>
-          <dt>FMS task</dt><dd>{% if access.task_state == 'created' %}{{ (access.task_status or 'OPEN')|lower|capitalize }}{% if access.task_status == 'COMPLETED' %}; the item stays open{% endif %}{% else %}{{ access.task_state|replace('_', ' ') }}{% endif %}</dd>
+          <dt>FMS task</dt><dd>{% if access.task_state == 'created' %}{{ (access.task_status or 'OPEN')|words|upfirst }}{% if access.task_status == 'COMPLETED' %}; the item stays open{% endif %}{% else %}{{ access.task_state|replace('_', ' ') }}{% endif %}</dd>
           <dt>Physical outcome</dt><dd>Not verified</dd>
         </dl>
       </div>
@@ -318,7 +318,7 @@
         <dl class="kv">
           <dt>FMS ledger</dt><dd>{{ money(so.get('owed', 0)) }} owed{% if so.get('payments') %}, after {{ money(so.payments[-1].amount) }} paid {{ on(so.payments[-1].get('on') or so.payments[-1].when[:10]) }}{% endif %}</dd>
           <dt>Sale</dt><dd>{{ sale_words.get(so.get('status'), so.get('status'))|capitalize }}, {{ so.get('sale_local') or so.get('auction_time') }} facility time</dd>
-          <dt>FMS task</dt><dd>{% if sale.task_state == 'created' %}{{ (sale.task_status or 'OPEN')|lower|capitalize }}; a completed task does not close it{% else %}{{ sale.task_state|replace('_', ' ') }}{% endif %}</dd>
+          <dt>FMS task</dt><dd>{% if sale.task_state == 'created' %}{{ (sale.task_status or 'OPEN')|words|upfirst }}; a completed task does not close it{% else %}{{ sale.task_state|replace('_', ' ') }}{% endif %}</dd>
           <dt>Outside site</dt><dd>{% if sale_outside %}{{ 'Listing still up' if sale_outside.state == 'open' else 'Withdrawal confirmed by its feed' }}{% else %}Status unknown{% endif %}</dd>
         </dl>
       </div>
