@@ -64,7 +64,7 @@ def test_the_progress_of_a_run_is_read_from_the_steps_it_really_took(fms_url, si
         assert client.get("/api/inbox/99999/progress").status_code == 404
 
 
-def test_a_sale_page_writes_its_times_as_a_person_reads_them_and_keeps_the_ids_it_compares(fms_url, sim):
+def test_a_sale_page_writes_its_times_as_a_person_reads_them(fms_url, sim):
     with TestClient(preview(fms_url, None)) as client:
         links = sorted(set(re.findall(r'href="(/sales/\d+)"', client.get("/today").text)))
         assert links

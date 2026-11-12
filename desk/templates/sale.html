@@ -17,7 +17,7 @@
   <section class="panel">
     <h2><span class="lane-dot lane-fms"></span>The sale, as the FMS lists it</h2>
     <dl class="kv">
-      <dt>Auction</dt><dd>{{ o.get('auction_id', 'not read') }}</dd>
+      <dt>Auction</dt><dd>{{ 'Auction record found for this lease' if o.get('auction_id') else 'Not read' }}</dd>
       <dt>Sale time</dt><dd>{{ o.get('sale_local') or (sale_local(o['auction_time']) if o.get('auction_time') else 'not known') }}, facility time ({{ facility.time_zone|replace('_', ' ') }})</dd>
       <dt>Time left</dt><dd>{% if o.get('sale_time_problem') %}Not worked out: {{ o.sale_time_problem }}{% elif hours is none %}Not known{% elif hours > 0 %}{{ hours|round|int }} hours{% else %}The scheduled time has passed{% endif %}</dd>
       <dt>Status</dt><dd>{{ status_words.get(o.get('status'), o.get('status', 'not read'))|capitalize }}</dd>
@@ -32,7 +32,7 @@
     <dl class="kv">
       <dt>Owed now</dt><dd>{{ money(o.owed) }}, per the FMS ledger</dd>
       <dt>Notice</dt><dd>{% if o.get('notice_on') %}{{ on(o.notice_on) }}, {{ o.get('notice_source') }}{% else %}No notice date known{% endif %}</dd>
-      <dt>Payments since</dt><dd>{% if not o.get('notice_on') %}Cannot be worked out: no notice date is known{% elif o.get('payments') %}{% for p in o.payments %}{{ money(p.amount) }} on {{ on(p.get('on') or p.when[:10]) }} ({{ p.id }}){% if not loop.last %}<br>{% endif %}{% endfor %}{% else %}None the FMS reports as succeeded{% endif %}</dd>
+      <dt>Payments since</dt><dd>{% if not o.get('notice_on') %}Cannot be worked out: no notice date is known{% elif o.get('payments') %}{% for p in o.payments %}{{ money(p.amount) }} on {{ on(p.get('on') or p.when[:10]) }}{% if not loop.last %}<br>{% endif %}{% endfor %}{% else %}None the FMS reports as succeeded{% endif %}</dd>
       {% if case_id %}<dt>Account</dt><dd><a href="/accounts/{{ case_id }}">The account's record</a>{% if 'lien file' in (o.get('notice_source') or '') %} &middot; <a href="/accounts/{{ case_id }}/lien">its lien file</a>{% endif %}</dd>{% endif %}
     </dl>
     <p class="note">Payments the FMS reports as pending, returned, refunded or disputed are not counted. A zero balance without a payment is not called a tenant payment.</p>
@@ -49,8 +49,8 @@
       <dt>Closes when</dt><dd>{{ w.closing_evidence|readable }}</dd>
       <dt>Who acts</dt><dd>{{ w.who_acts }}</dd>
       {% if w.kind == 'sale_listed_nothing_owed' or w.task_state != 'none' %}
-      <dt>FMS task</dt><dd>{% if w.task_state == 'created' %}{{ w.task_id }}, {{ (w.task_status or 'OPEN')|lower }}{% elif w.task_state == 'outcome_unknown' %}Outcome unknown: the request may have made a task; none with this item's marker is found yet{% elif w.task_state == 'sending' %}Being created{% elif w.task_state == 'rejected' %}Refused by the FMS{% else %}None{% endif %}</dd>
-      {% if w.task_marker %}<dt>Marker in the task</dt><dd>{{ w.task_marker }}</dd>{% endif %}
+      <dt>FMS task</dt><dd>{% if w.task_state == 'created' %}An FMS task, {{ (w.task_status or 'OPEN')|lower }}{% elif w.task_state == 'outcome_unknown' %}Outcome unknown: the request may have made a task; none with this item's marker is found yet{% elif w.task_state == 'sending' %}Being created{% elif w.task_state == 'rejected' %}Refused by the FMS{% else %}None{% endif %}</dd>
+      {% if w.task_marker %}<dt>Duplicate protection</dt><dd>Uncertain task requests are checked against the FMS, never blindly repeated.</dd>{% endif %}
       {% endif %}
     </dl>
     <p class="note">A task marked completed closes nothing. "{{ cancelled_by }}" means the FMS shows this auction and lease cancelled, and nothing more.</p>
@@ -62,7 +62,7 @@
     {% if listing %}
     <dl class="kv">
       <dt>Site</dt><dd>{{ listing.marketplace }}</dd>
-      <dt>Listing</dt><dd>{{ listing.listingId }}, {{ listing.status|lower }}</dd>
+      <dt>Listing</dt><dd>{{ listing.status|lower|upfirst }}</dd>
       <dt>Reported</dt><dd>{{ local(listed_at) if listed_at else listing.observedAt }}, by the site's own feed</dd>
     </dl>
     {% else %}
