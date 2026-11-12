@@ -349,5 +349,5 @@ def test_no_page_names_a_record_by_an_id(fms_url, sim):
                 found = pattern.search(text)
                 assert found is None, (path, text[max(0, found.start() - 60):found.end() + 30])
         everything = " ".join(texts.values())
-        for said in ("may be this attempt", "applied on the FMS ledger", "recorded in the FMS", "Listed in the FMS for this lease"):
+        for said in ("Staff confirmation required", "applied on the FMS ledger", "recorded in the FMS", "Auction record found for this lease", "Duplicate protection"):
             assert said in everything, said

@@ -265,7 +265,7 @@ def describe(e: CaseEvent, commands: dict[int, PaymentCommand], evidence: dict[i
         title = f"Sent a {money(d.get('amount'))} card payment"
         text = said.get(d.get("fms_said"), f"The FMS answered: {d.get('detail') or d.get('fms_said')}.")
     elif kind == "possible match for staff":
-        title, text = "Found a possible match", f"An FMS payment the FMS reports as {words(d.get('status'))} may be this attempt. Not matched automatically."
+        title, text = "Found a possible match", f"An FMS payment with the same lease and amount, {words(d.get('status'))}, recorded after this attempt. Staff confirmation required."
     elif kind == "state changed":
         title, text = f"Account {d.get('to')}", f"From {d.get('from')}. The FMS balance read {money(d.get('total_due'))}."
     elif kind == "payment confirmed":

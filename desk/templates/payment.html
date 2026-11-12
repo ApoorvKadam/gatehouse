@@ -75,7 +75,7 @@
     <h2>The simulator's own record, from {{ truth.recorded_at }}</h2>
     <dl class="kv">
       <dt>Payments on this lease</dt><dd>{{ truth.payments|length }}</dd>
-      {% for p in truth.payments %}<dt>Payment {{ loop.index }}</dt><dd>{{ money(p.amount) }}, {{ p.status|readable }}{% if p.applied %}, applied to the ledger{% endif %}{% if p.paymentId == cmd.provider_payment_id %} (this attempt){% elif p.paymentId == cmd.suggested_payment_id %} (possible match){% endif %}</dd>{% endfor %}
+      {% for p in truth.payments %}<dt>Payment {{ loop.index }} in this snapshot</dt><dd>{{ money(p.amount) }}, {{ p.status|readable }}{% if p.applied %}, applied to the ledger{% endif %}{% if p.paymentId == cmd.provider_payment_id %} (this attempt){% elif p.paymentId == cmd.suggested_payment_id %} (possible match){% endif %}</dd>{% endfor %}
       <dt>Balance at the simulator</dt><dd>{{ money(truth.totalDue) }}</dd>
     </dl>
     <p>A real FMS cannot show this: the simulator keeps its own record of what it did. It was saved when this preview started, before anyone opened a page.
