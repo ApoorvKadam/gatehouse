@@ -34,7 +34,7 @@
       <dt>Written down first</dt><dd>{{ local(cmd.created_at) }}, before the FMS was called</dd>
       <dt>Sent to the FMS</dt><dd>{{ local(cmd.submitted_at) or 'Not sent' }}</dd>
       <dt>Answer at the time</dt><dd>{% if not sent %}{{ 'Not recorded' if cmd.submitted_at else 'Not sent' }}{% elif sent.fms_said == 'lost' %}No usable answer: {{ sent.detail or 'the outcome was not confirmed' }}{% else %}{{ (sent.status or sent.fms_said)|readable|upfirst }}{% if sent.detail %} ({{ sent.detail }}){% endif %}{% endif %}</dd>
-      <dt>Status at the FMS now</dt><dd>{% if cmd.provider_payment_id %}{{ cmd.provider_payment_id }}, {{ (cmd.provider_status or '')|readable }}{% else %}No FMS payment identified as this attempt{% endif %}</dd>
+      <dt>Status at the FMS now</dt><dd>{% if cmd.provider_payment_id %}The FMS payment for this attempt, {{ (cmd.provider_status or '')|readable }}{% else %}No FMS payment identified as this attempt{% endif %}</dd>
       <dt>Checks since</dt><dd>{{ cmd.checks }}, last {{ local(cmd.last_checked_at) or 'not yet' }}</dd>
       <dt>Retried</dt><dd>No. A payment whose outcome is unknown is never sent again.</dd>
     </dl>
@@ -43,7 +43,7 @@
   <section class="panel">
     <h2><span class="lane-dot lane-fms"></span>What the FMS shows now</h2>
     <dl class="kv">
-      {% if cmd.suggested_payment_id %}<dt>Possible match</dt><dd>{{ cmd.suggested_payment_id }}: same lease and amount, created after this attempt. Not matched automatically.</dd>{% endif %}
+      {% if cmd.suggested_payment_id %}<dt>Possible match</dt><dd>An FMS payment on the same lease for the same amount, created after this attempt. Not matched automatically.</dd>{% endif %}
       {# these two are read just before sending; an attempt that was never sent has no such read #}
       <dt>Payments read before sending</dt><dd>{% if not cmd.submitted_at %}Not sent{% elif cmd.fms_payments_before %}{{ cmd.fms_payments_before|length }} on this lease{% else %}None on this lease{% endif %}</dd>
       <dt>Balance read before sending</dt><dd>{% if cmd.submitted_at %}{{ money(cmd.balance_before) }}{% else %}Not sent{% endif %}</dd>
@@ -75,7 +75,7 @@
     <h2>The simulator's own record, from {{ truth.recorded_at }}</h2>
     <dl class="kv">
       <dt>Payments on this lease</dt><dd>{{ truth.payments|length }}</dd>
-      {% for p in truth.payments %}<dt>{{ p.paymentId }}</dt><dd>{{ money(p.amount) }}, {{ p.status|readable }}{% if p.applied %}, applied to the ledger{% endif %}{% if p.paymentId == cmd.provider_payment_id %} (this attempt){% elif p.paymentId == cmd.suggested_payment_id %} (possible match){% endif %}</dd>{% endfor %}
+      {% for p in truth.payments %}<dt>Payment {{ loop.index }}</dt><dd>{{ money(p.amount) }}, {{ p.status|readable }}{% if p.applied %}, applied to the ledger{% endif %}{% if p.paymentId == cmd.provider_payment_id %} (this attempt){% elif p.paymentId == cmd.suggested_payment_id %} (possible match){% endif %}</dd>{% endfor %}
       <dt>Balance at the simulator</dt><dd>{{ money(truth.totalDue) }}</dd>
     </dl>
     <p>A real FMS cannot show this: the simulator keeps its own record of what it did. It was saved when this preview started, before anyone opened a page.

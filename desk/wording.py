@@ -62,13 +62,12 @@ def _when(found: re.Match, zone: str | None = None) -> str:
     return when(at, zone)
 
 
-def plain(text: str | None, ids: bool = True, zone: str | None = None) -> str | None:
+def plain(text: str | None, zone: str | None = None) -> str | None:
     """Text for a screen: provider ids and record ids taken out, payment state codes written as words, times written as a person
-    reads them. An evidence page keeps its ids (`ids=False`), because there a person compares them with the FMS character by character."""
+    reads them. Evidence pages too: a record is named by what a person reads (its time, amount and status), never by an id."""
     if text is None:
         return None
-    if ids:
-        text = _RECORD_ID.sub("", _BARE_ID.sub("", _IN_BRACKETS.sub("", text)))
+    text = _RECORD_ID.sub("", _BARE_ID.sub("", _IN_BRACKETS.sub("", text)))
     text = _STAMP.sub(lambda found: _when(found, zone), text)
     text = _CODE.sub(lambda m: STATE_WORDS[m.group(0)], text)
     text = re.sub(r"\s*\(\s*\)", "", text)                  # the brackets an id leaves behind

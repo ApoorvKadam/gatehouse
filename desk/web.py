@@ -43,7 +43,7 @@ def site_opening(text: str) -> str:
 
 HERE = Path(__file__).parent
 templates = Jinja2Templates(directory=HERE / "templates")
-templates.env.filters["readable"] = lambda text: plain(text, ids=False)      # times and state codes as words; the ids on an evidence page stay
+templates.env.filters["readable"] = plain      # no provider or record id, state codes and times as words
 templates.env.filters["upfirst"] = lambda text: text[:1].upper() + text[1:] if text else text   # capitalize lowers the rest: "the FMS" became "the fms"
 
 # The four kinds of entry an account's record keeps apart. Every event kind lands in exactly one of them.
@@ -265,15 +265,15 @@ def describe(e: CaseEvent, commands: dict[int, PaymentCommand], evidence: dict[i
         title = f"Sent a {money(d.get('amount'))} card payment"
         text = said.get(d.get("fms_said"), f"The FMS answered: {d.get('detail') or d.get('fms_said')}.")
     elif kind == "possible match for staff":
-        title, text = "Found a possible match", f"{d.get('payment')} ({words(d.get('status'))}) at the FMS may be this attempt. Not matched automatically."
+        title, text = "Found a possible match", f"An FMS payment the FMS reports as {words(d.get('status'))} may be this attempt. Not matched automatically."
     elif kind == "state changed":
         title, text = f"Account {d.get('to')}", f"From {d.get('from')}. The FMS balance read {money(d.get('total_due'))}."
     elif kind == "payment confirmed":
-        title, text = "Payment confirmed", f"{money(d.get('amount'))} as {d.get('payment')}, applied on the FMS ledger."
+        title, text = "Payment confirmed", f"{money(d.get('amount'))}, applied on the FMS ledger."
     elif kind == "payment status changed after success":
         title, text = "Payment came back", f"The FMS now reports {words(d.get('fms_status'))} for a payment Gatehouse had confirmed."
     elif kind == "payment taken outside the desk":
-        title, text = "Payment made outside Gatehouse", f"{money(d.get('amount'))}, recorded as {d.get('payment')}."
+        title, text = "Payment made outside Gatehouse", f"{money(d.get('amount'))}, recorded in the FMS."
     elif kind == "payment needs staff":
         title, text = "Held for a person", d.get("reason") or (cmd.provider_reason if cmd else "")
     elif kind == "lien file evaluated":
