@@ -16,10 +16,10 @@ import logging
 from dataclasses import dataclass, field
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .access import ensure_lease, facility_today
+from .access import ensure_lease, ensure_task, facility_today
 from .adapter import FMSAdapter, FMSError, RentFacts
 from .adapter.base import ProviderExemption
 from .cases import current_case
@@ -199,13 +199,92 @@ def overdue_schedule(f: RentFacts, when: date, entries: list[dict] | None, today
     return {"state": "not_applied", "why": why, "also": also, "pct": None, "steps": steps}
 
 
+# One FMS task for each rent row a person has to act on, carried by a work item (the same carrier access and sales use, so a task is asked
+# for once, and a lost answer is only ever looked up by its marker). The task asks; the rent check still closes the row on its own fact.
+TASK_KINDS = {"hold": "rent_hold", "not_applied": "rent_not_applied", "wrong_charge": "rent_wrong_charge"}
+TASK_TITLES = {"hold": "Review held rent change",
+               "not_applied": "Review unapplied rent change",
+               "wrong_charge": "Review rent charge discrepancy"}
+TASK_ASKS = {"hold": "Check the reason the desk holds this increase, written above, and record the decision.",
+             "not_applied": "Check the scheduled date and the current FMS rent, and whether the change was cancelled or postponed.",
+             "wrong_charge": "Check the billing cycle, proration, discounts, adjustments and what the ledger actually posted for that period."}
+
+
+def task_words(item: WorkItem) -> str:
+    """The FMS task of a rent work item, as one sentence on the rent page. The task asks; it never closes the row."""
+    if item.task_state == "created":
+        status = (item.task_status or "OPEN").replace("_", " ").lower()
+        if item.task_status == "COMPLETED":
+            return "The FMS task asking staff to review this was marked done. That does not close this row."
+        return f"An FMS task asks staff to review this. It is {status}."
+    return {"rejected": "The FMS refused the task asking staff to review this. Nothing was created.",
+            "outcome_unknown": "An FMS task was asked for and no answer came back. It is not asked for again.",
+            "sending": "An FMS task is being asked for now."}.get(item.task_state, "No FMS task has been asked for yet.")
+
+
+def _task(facility: Facility, f: RentFacts, row: dict) -> tuple:
+    per = PER_WORDS.get(f.facility_cycle or "", "per a billing cycle the desk cannot read")
+    money = lambda cents: f"{dollars(cents)} {per}" if cents is not None else "an amount the desk cannot read"
+    when = day(parse_day(row["date"]))
+    change = (f"Rent change scheduled for {when}, from {money(f.rent)} to {money(f.scheduled_amount)}." if row.get("scheduled")
+              else f"Rent change completed on {when}; the FMS rent is now {money(f.rent)}.")
+    lines = [f"{facility.name}, unit {f.unit_name}.", change,
+             f"What the desk found: {row.get('why') or row.get('label', '')}",
+             f"Read from the FMS on {utcnow():%b %d, %Y at %H:%M} UTC.",
+             TASK_ASKS[row["state"]],
+             f"This task asks for a review; completing it does not close the desk's row. The row closes on this fact: {TODAY[row['state']][2]}"]
+    return TASK_TITLES[row["state"]], "\n".join(lines), None, f.customer_provider_id
+
+
+def _rent_tasks(session: Session, adapter: FMSAdapter, facility: Facility, fresh: list[tuple[Lease, RentFacts, dict]], read: set[str],
+                result: "RentPass", run_id: str = "local") -> None:
+    """Open, keep or close the rent work items from this pass's fresh readings only. A lease the pass could not read keeps its item as it is,
+    and no task is ever asked for on a kept reading. An item closes when the fresh reading no longer shows its problem, never because its
+    task was completed."""
+    kinds = list(TASK_KINDS.values())
+    now = utcnow()
+    wanted, unsure = {}, set()
+    for lease, f, row in fresh:
+        if row["state"] == "cannot_tell":
+            unsure.add(lease.provider_id)       # a reading that cannot tell does not show the problem fixed
+        kind = TASK_KINDS.get(row["state"])
+        if kind:
+            wanted[lease.provider_id] = (kind, f"{row['date']}:{f.scheduled_amount if f.scheduled_amount is not None else f.rent}", lease, f, row)
+    for item in session.scalars(select(WorkItem).where(WorkItem.facility_id == facility.id, WorkItem.state == "open",
+                                                       WorkItem.kind.in_(kinds))).all():
+        if item.subject_id not in read or item.subject_id in unsure:
+            continue                                    # not read this pass, or read without an answer: neither kept nor closed on a guess
+        want = wanted.get(item.subject_id)
+        if want is None or want[0] != item.kind or (item.observed or {}).get("change") != want[1]:
+            item.state, item.closed_at, item.updated_at = "closed", now, now
+            item.verification = "closed when the rent check no longer showed it"
+    session.flush()
+    for subject, (kind, change, lease, f, row) in wanted.items():
+        item = session.scalar(select(WorkItem).where(WorkItem.facility_id == facility.id, WorkItem.state == "open", WorkItem.kind == kind,
+                                                     WorkItem.subject_type == "lease", WorkItem.subject_id == subject))
+        if item is None:
+            episodes = session.scalar(select(func.count()).select_from(WorkItem).where(
+                WorkItem.facility_id == facility.id, WorkItem.kind == kind, WorkItem.subject_type == "lease", WorkItem.subject_id == subject)) or 0
+            item = WorkItem(run_id=run_id, facility_id=facility.id, kind=kind, subject_type="lease", subject_id=subject,
+                            episode_key=f"{change}#{episodes + 1}", verification="FMS reported", who_acts=TODAY[row["state"]][3],
+                            evidence_source="leases/search, reports/rent-roll and ledgers/search, read fresh this pass",
+                            closing_evidence=TODAY[row["state"]][2], problem=row.get("why") or "", observed={"change": change},
+                            opened_at=now, updated_at=now)
+            session.add(item)
+            session.flush()
+        else:
+            item.updated_at, item.problem = now, row.get("why") or item.problem
+        session.commit()
+        ensure_task(session, adapter, facility, item, _task(facility, f, row), result.failures, keep_note=True)
+
+
 @dataclass
 class RentPass:
     read: int = 0
     failures: list[str] = field(default_factory=list)
 
 
-def reconcile_rent_changes(session: Session, adapter: FMSAdapter, facility: Facility) -> RentPass:
+def reconcile_rent_changes(session: Session, adapter: FMSAdapter, facility: Facility, run_id: str = "local") -> RentPass:
     """One reading of every lease with a scheduled change, or a change completed in the last SHOWN_FOR days, and a row each. A failed reading keeps
     the rows of the last good one and is named in `failures`; nothing is judged on half a picture."""
     result = RentPass()
@@ -217,6 +296,7 @@ def reconcile_rent_changes(session: Session, adapter: FMSAdapter, facility: Faci
         result.failures.append(f"rent facts: {exc}")
         return result
     kept: set[int] = set()
+    fresh: list[tuple[Lease, RentFacts, dict]] = []
     exemptions: dict[str, list[ProviderExemption]] = {}
     for f in facts:
         when, last = parse_day(f.scheduled_date), parse_day(f.last_change)
@@ -251,9 +331,14 @@ def reconcile_rent_changes(session: Session, adapter: FMSAdapter, facility: Faci
                       "date": (when or last).isoformat(), "since": since, "tenant": customer.first_name if customer else None}
         session.merge(check)
         kept.add(lease.id)
+        fresh.append((lease, f, check.data))
         result.read += 1
     for stale in session.scalars(select(RentChangeCheck).join(Lease, Lease.id == RentChangeCheck.lease_id).where(Lease.facility_id == facility.id)).all():
         if stale.lease_id not in kept:
             session.delete(stale)
     session.commit()
+    # read this pass: every lease the FMS listed except those whose reading failed; a lease no longer listed has nothing open to keep
+    failed = {msg.split(":", 1)[0] for msg in result.failures}
+    read = ({pl for pl in leases} | {f.lease_provider_id for f in facts}) - failed
+    _rent_tasks(session, adapter, facility, fresh, read, result, run_id)
     return result
