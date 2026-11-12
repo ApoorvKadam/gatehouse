@@ -44,7 +44,7 @@
     <dt>Should be restricted</dt><dd>{{ {True: 'Yes', False: 'No'}.get(d.get('should_restrict'), 'Unknown') }}</dd>
     <dt>Operator lock</dt><dd>{% if d.get('operator_locks') %}{% for k in d.operator_locks %}{{ k.serial }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}None recorded{% endif %}</dd>
     <dt>FMS says overlock needed</dt><dd>{{ {True: 'Yes', False: 'No'}.get(d.get('overlock_needed'), 'Not said') }}</dd>
-    <dt>Exemption</dt><dd>{% if d.get('exemption') %}{{ d.exemption.reason|replace('_', ' ')|lower }} until {{ d.exemption.end_date }}{% if d.exemption.pause_overlock %}, overlock paused{% endif %}{% else %}None{% endif %}</dd>
+    <dt>Exemption</dt><dd>{% if d.get('exemption') %}{{ d.exemption.reason|words }} until {{ d.exemption.end_date }}{% if d.exemption.pause_overlock %}, overlock paused{% endif %}{% else %}None{% endif %}</dd>
     {% set g = d.get('gate', {}) %}
     <dt>Gate code</dt><dd>{% if g.get('codes') == 1 %}On file (not shown); the FMS answers &ldquo;{{ g.get('message') }}&rdquo;{% elif g %}{{ g.get('codes') }} codes on file{% else %}Not read{% endif %}</dd>
     <dt>Read</dt><dd>{{ local(access.observed_at) }}, rule {{ d.get('policy') }}</dd>
