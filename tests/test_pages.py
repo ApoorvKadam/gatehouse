@@ -326,7 +326,7 @@ def test_no_page_names_a_record_by_an_id(fms_url, sim):
     provider id, a desk record id, the marker Gatehouse writes into an FMS task, or a state code."""
     from desk.wording import _BARE_ID, _RECORD_ID
     from .test_console import visible
-    marker, code = re.compile(r"\[gatehouse work item"), re.compile(r"\b[A-Z]{2,}_[A-Z_]{2,}\b|\b[a-z]{2,}_[a-z_]{2,}\b")
+    marker, code = re.compile(r"\[gatehouse work item"), re.compile(r"\b[A-Z]{2,}_[A-Z_]{2,}\b|(?<![/\w])[a-z]{2,}_[a-z_]{2,}\b(?!\.py)")     # a file path such as desk/evaluate_texts.py is not a code
     with TestClient(preview(fms_url)) as client:
         start = ["/", "/today", "/reminder-check", "/rent-changes", "/inbox", "/evaluation", "/operations"]
         facilities = re.findall(r'<option[^>]*value="([^"]+)"', client.get("/today").text)
