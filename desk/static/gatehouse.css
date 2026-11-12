@@ -948,10 +948,9 @@ footer .foot { display: grid; grid-template-columns: minmax(0, 2fr) repeat(3, mi
 }
 
 /* the guard as a spot beside each Overview section, in a pose that fits it, with one line in its voice */
-.spot { display: flex; align-items: center; gap: 4px; margin: -16px 0 var(--s2) -22px; }
+.spot { display: flex; align-items: center; gap: 4px; margin: -16px 0 var(--s2) -22px; filter: drop-shadow(0 5px 9px rgba(27,25,23,.13)); }
 /* each line is an object from its section's world: a gate pass, a label tape, a till slip, an index card, a bank stamp, a key card,
    a legal notice, an auction tag, a text on a phone, a bill stub, masking tape, a printout. One shadow grounds the guard and its object. */
-.spot { filter: drop-shadow(0 5px 9px rgba(27,25,23,.13)); }
 .spot-say, .feature p.spot-say { position: relative; margin: 0 0 8px 8px; max-width: 22em; font-size: 0.875rem; line-height: 1.45; color: #2b2622; }
 .say-pass { padding: 11px 22px 11px 34px; background: repeating-linear-gradient(#0000 0 4px, rgba(43,38,34,.3) 4px 7px) 22px 0 / 1px 100% no-repeat, #fff6df;
   font-family: var(--display); font-style: italic; font-size: 1rem; border-radius: 6px;
@@ -1001,3 +1000,7 @@ footer .foot { display: grid; grid-template-columns: minmax(0, 2fr) repeat(3, mi
 
 .gh-link { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; color: var(--ink); }
 .gh-link .icon { width: 18px; height: 18px; }
+
+.band .say-tag::before { background: var(--band); }
+.band .say-greenbar { background: radial-gradient(circle 3px at 11px 11px, var(--band) 96%, #0000) 0 0 / 22px 22px repeat-y,
+  radial-gradient(circle 3px at 11px 11px, var(--band) 96%, #0000) 100% 0 / 22px 22px repeat-y, repeating-linear-gradient(#f7fbf6 0 22px, #dcefdc 22px 44px); }
