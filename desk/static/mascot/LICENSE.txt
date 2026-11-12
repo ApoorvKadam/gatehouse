@@ -1,4 +1,4 @@
-The guard drawings (guard-directions.webp, guard-reactions.webp) are the "knight" character of page-mascot,
+The guard drawings (guard-directions.webp, guard-reactions.webp) are the "drone" character of page-mascot,
 https://github.com/nilbuild/page-mascot, used under its MIT licence below.
 
 MIT License

@@ -949,21 +949,55 @@ footer .foot { display: grid; grid-template-columns: minmax(0, 2fr) repeat(3, mi
 
 /* the guard as a spot beside each Overview section, in a pose that fits it, with one line in its voice */
 .spot { display: flex; align-items: center; gap: 4px; margin: -16px 0 var(--s2) -22px; }
-.spot-say { position: relative; margin: 0; padding: 8px 14px; border-radius: 14px 14px 14px 4px; background: var(--card); color: var(--ink);
-  font-family: var(--display); font-style: italic; font-size: 1.0625rem; line-height: 1.3; box-shadow: 0 1px 2px rgba(27,25,23,.05), 0 6px 18px rgba(27,25,23,.06);
-  border: 1px solid color-mix(in srgb, var(--frame) 60%, transparent); }
-.feature p.spot-say { margin: 0; color: var(--ink); font-size: 1.0625rem; }
+/* each line is an object from its section's world: a gate pass, a label tape, a till slip, an index card, a bank stamp, a key card,
+   a legal notice, an auction tag, a text on a phone, a bill stub, masking tape, a printout. One shadow grounds the guard and its object. */
+.spot { filter: drop-shadow(0 5px 9px rgba(27,25,23,.13)); }
+.spot-say, .feature p.spot-say { position: relative; margin: 0 0 8px 8px; max-width: 22em; font-size: 0.875rem; line-height: 1.45; color: #2b2622; }
+.say-pass { padding: 11px 22px 11px 34px; background: repeating-linear-gradient(#0000 0 4px, rgba(43,38,34,.3) 4px 7px) 22px 0 / 1px 100% no-repeat, #fff6df;
+  font-family: var(--display); font-style: italic; font-size: 1rem; border-radius: 6px;
+  -webkit-mask: radial-gradient(circle 8px at 0 50%, #0000 97%, #000) left / 51% 100% no-repeat, radial-gradient(circle 8px at 100% 50%, #0000 97%, #000) right / 51% 100% no-repeat;
+  mask: radial-gradient(circle 8px at 0 50%, #0000 97%, #000) left / 51% 100% no-repeat, radial-gradient(circle 8px at 100% 50%, #0000 97%, #000) right / 51% 100% no-repeat; }
+.feature p.say-pass, .hero-spot .say-pass { font-size: 1rem; }
+.say-label, .feature p.say-label { padding: 7px 14px 6px; background: linear-gradient(#2c4a6b, #1d3550); color: #f2f6fb; border-radius: 3px; font-weight: 600;
+  letter-spacing: .03em; text-shadow: 0 -1px 0 rgba(0,0,0,.45), 0 1px 0 rgba(255,255,255,.12); rotate: 1.2deg; }
+.say-slip, .feature p.say-slip { padding: 12px 16px 18px; background: #fffdf8; font-family: "Geist Mono", ui-monospace, monospace; letter-spacing: -0.01em; rotate: -1.6deg;
+  -webkit-mask: linear-gradient(#000 0 0) top / 100% calc(100% - 8px) no-repeat, conic-gradient(from 135deg at 50% 0, #000 90deg, #0000 0) bottom / 12px 8px repeat-x;
+  mask: linear-gradient(#000 0 0) top / 100% calc(100% - 8px) no-repeat, conic-gradient(from 135deg at 50% 0, #000 90deg, #0000 0) bottom / 12px 8px repeat-x; }
+.say-slip::before { content: ""; display: block; border-top: 1px dashed rgba(43,38,34,.25); margin: 0 0 8px; }
+.say-card, .feature p.say-card { min-height: 52px; padding: 8px 16px 14px 38px; line-height: 22px; background: linear-gradient(90deg, #0000 26px, rgba(214,72,60,.55) 26px 27px, #0000 27px),
+  repeating-linear-gradient(#0000 0 21px, #c9dcee 21px 22px), #fffef9; background-position: 0 0, 0 7px, 0 0; font-family: var(--display); font-style: italic; font-size: 1rem; rotate: .8deg; }
+.say-stamp, .feature p.say-stamp { padding: 6px 14px; color: var(--brick); border: 3px double var(--brick); border-radius: 5px; font-weight: 700; letter-spacing: .02em;
+  background: color-mix(in srgb, var(--brick) 6%, transparent); rotate: -5deg; opacity: .92; }
+.say-keycard, .feature p.say-keycard { padding: 22px 34px 10px 14px; border-radius: 10px; color: #1f2a37; font-weight: 600;
+  background: linear-gradient(#262a30 0 0) 0 8px / 100% 9px no-repeat, linear-gradient(135deg, #eef2f7, #cdd7e4);
+  -webkit-mask: radial-gradient(circle 5px at calc(100% - 16px) 50%, #0000 97%, #000); mask: radial-gradient(circle 5px at calc(100% - 16px) 50%, #0000 97%, #000); }
+.say-notice, .feature p.say-notice { padding: 12px 30px 12px 16px; background: linear-gradient(225deg, #0000 14px, #fbf6ea 0); font-family: var(--display); font-size: 1rem; }
+.say-notice::after { content: ""; position: absolute; top: 0; right: 0; width: 20px; height: 20px; background: linear-gradient(225deg, #0000 50%, #e6dcc4 0); border-radius: 0 0 0 3px; }
+.say-tag, .feature p.say-tag { padding: 9px 16px 9px 34px; background: #e6c789; color: #3a2a12; font-family: "Geist Mono", ui-monospace, monospace; rotate: -2.5deg;
+  clip-path: polygon(16px 0, 100% 0, 100% 100%, 16px 100%, 0 50%); }
+.say-tag::before { content: ""; position: absolute; left: 13px; top: 50%; width: 9px; height: 9px; margin-top: -4.5px; border-radius: 50%; background: var(--paper); box-shadow: inset 0 0 0 2px #c9a663; }
+.say-sms, .feature p.say-sms { padding: 10px 14px; border-radius: 16px; background: rgba(255,255,255,.82); backdrop-filter: blur(10px); color: #1d1d1f; font-size: 0.9375rem; }
+.say-sms small { display: block; font-size: 0.75rem; color: #6e6e73; margin-bottom: 2px; }
+.say-bill, .feature p.say-bill { padding: 16px 16px 12px; background: #fff; font-family: "Geist Mono", ui-monospace, monospace;
+  -webkit-mask: radial-gradient(circle 3px at 6px 0, #0000 97%, #000) top / 12px 100% repeat-x; mask: radial-gradient(circle 3px at 6px 0, #0000 97%, #000) top / 12px 100% repeat-x; }
+.say-bill::before { content: ""; position: absolute; left: 0; right: 0; top: 7px; border-top: 1px dashed rgba(43,38,34,.3); }
+.say-tape, .feature p.say-tape { padding: 8px 22px; background: rgba(238,222,178,.92); font-family: var(--display); font-style: italic; font-size: 1rem; rotate: 2deg;
+  clip-path: polygon(0 8%, 4% 0, 8% 10%, 3% 30%, 6% 55%, 2% 78%, 5% 100%, 95% 100%, 99% 85%, 96% 60%, 100% 38%, 97% 15%, 100% 0, 0 0); }
+.say-greenbar, .feature p.say-greenbar { min-height: 44px; padding: 11px 30px; line-height: 22px; font-family: "Geist Mono", ui-monospace, monospace;
+  background: radial-gradient(circle 3px at 11px 11px, var(--paper) 96%, #0000) 0 0 / 22px 22px repeat-y, radial-gradient(circle 3px at 11px 11px, var(--paper) 96%, #0000) 100% 0 / 22px 22px repeat-y,
+  repeating-linear-gradient(#f7fbf6 0 22px, #dcefdc 22px 44px); }
 .guard.held .guard-react { opacity: 1; }
 .guard.held .guard-face { opacity: 0; }
 @media (prefers-reduced-motion: no-preference) {
   .spot .guard { animation: bob 3.6s ease-in-out infinite; }
-  .spot-say { transform-origin: 0 100%; }
-  .js [data-reveal] .spot-say { opacity: 0; transform: scale(.9); }
-  .js [data-reveal].in .spot-say { opacity: 1; transform: none; transition: opacity 200ms linear 350ms, transform 520ms var(--spring) 350ms; }
+  .js [data-reveal] .spot-say { opacity: 0; translate: 0 -10px; }
+  .js [data-reveal].in .spot-say { opacity: 1; translate: 0 0; transition: opacity 220ms linear 320ms, translate 680ms var(--spring) 320ms; }
+  .js [data-reveal] .say-slip { opacity: 1; translate: 0 0; -webkit-clip-path: inset(0 0 100% 0); clip-path: inset(0 0 100% 0); }
+  .js [data-reveal].in .say-slip { clip-path: inset(0 0 -20px 0); transition: clip-path 1100ms steps(9, end) 350ms; }
 }
 @keyframes bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
 .hero-spot { margin-bottom: var(--s4); }
-.hero-spot .spot-say { font-size: 1.1875rem; max-width: 26em; }
+.hero-spot .spot-say { max-width: 24em; }
 
 .gh-link { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; color: var(--ink); }
 .gh-link .icon { width: 18px; height: 18px; }
