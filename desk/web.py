@@ -335,6 +335,13 @@ class Pages:
         found = s.execute(select(Lease.provider_id, RentChangeCheck).join(RentChangeCheck, RentChangeCheck.lease_id == Lease.id)
                           .where(Lease.facility_id == facility.id).order_by(Lease.unit_name)).all()
         rows = [{**c.data, "lease": lease_id, "observed_at": c.observed_at} for lease_id, c in found if c.data.get("state") in rent_changes.LABELS]
+        # the FMS task the desk asked for on a row a person must act on, in words; it asks, it does not close the row
+        asked = {w.subject_id: w for w in s.scalars(select(WorkItem).where(WorkItem.facility_id == facility.id, WorkItem.state == "open",
+                                                                          WorkItem.kind.in_(rent_changes.TASK_KINDS.values())))}
+        for r in rows:
+            w = asked.get(r["lease"])
+            if w is not None:
+                r["task"] = rent_changes.task_words(w)
         return sorted(rows, key=lambda r: (rent_changes.ORDER.index(r["state"]), r.get("date") or ""))
 
     def rent_items(self, s: Session, facility: Facility) -> list[Item]:

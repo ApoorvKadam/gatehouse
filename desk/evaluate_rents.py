@@ -7,7 +7,7 @@ import dataclasses
 from datetime import date, timedelta
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from . import rent_changes
 from .access import facility_today
@@ -15,7 +15,7 @@ from .adapter.cubby import CubbyAdapter
 from .cases import sync_facility
 from .db import make_session_factory
 from .evaluate_texts import broken
-from .models import Facility, Lease, RentChangeCheck
+from .models import Facility, Lease, RentChangeCheck, WorkItem
 
 KEY = "sim_org_northstar_full"
 ORLANDO = "fac_NSorlando01"
@@ -23,7 +23,8 @@ NOTICE_SENT = "a rent notice called sent"
 CYCLE_WRONG = "a right bill in another billing cycle called wrong"
 STRADDLE = "a bill judged on a straddling period"
 UNPROVEN = "a rent change called applied or billed without the fact that shows it"
-LINES = (NOTICE_SENT, CYCLE_WRONG, STRADDLE, UNPROVEN)
+TASK_CLOSED = "a rent row closed because its FMS task was marked done"
+LINES = (NOTICE_SENT, CYCLE_WRONG, STRADDLE, UNPROVEN, TASK_CLOSED)
 
 
 def one_pass(url: str) -> dict[str, dict]:
@@ -40,9 +41,25 @@ def one_pass(url: str) -> dict[str, dict]:
                json={"leaseId": park.lease_provider_id, "category": "RENT", "amount": 13200, "amountPaid": 13200,
                      "accruesOn": (changed - timedelta(days=10)).isoformat(), "accruesThrough": (changed + timedelta(days=19)).isoformat()})
     rent_changes.reconcile_rent_changes(session, adapter, facility)
+    before = {unit: c.data.get("state") for unit, c in session.execute(
+        select(Lease.unit_name, RentChangeCheck).join(RentChangeCheck, RentChangeCheck.lease_id == Lease.id)).all()}
+    # staff mark every rent task done in the FMS app without fixing anything, and the next pass reads the rent again
+    kinds = list(rent_changes.TASK_KINDS.values())
+    for item in session.scalars(select(WorkItem).where(WorkItem.kind.in_(kinds), WorkItem.task_id.is_not(None))).all():
+        httpx.post(f"{url}/sim/tasks/complete", headers={"Authorization": f"Bearer {KEY}"}, timeout=15,
+                   json={"taskId": item.task_id}).raise_for_status()
+    rent_changes.reconcile_rent_changes(session, adapter, facility)
     found = session.execute(select(Lease.unit_name, RentChangeCheck).join(RentChangeCheck, RentChangeCheck.lease_id == Lease.id)).all()
+    rows = {unit: c.data for unit, c in found}
+    lease_of = dict(session.execute(select(Lease.provider_id, Lease.unit_name)).all())
+    # nothing in the FMS changed but the tasks, so every row a person had to act on must still say so, and its item must still be open
+    closed = {lease_of.get(w.subject_id) for w in session.scalars(select(WorkItem).where(WorkItem.kind.in_(kinds), WorkItem.state == "closed")).all()
+              if (rows.get(lease_of.get(w.subject_id)) or {}).get("state") in rent_changes.TASK_KINDS}
+    closed |= {unit for unit, state in before.items() if state in rent_changes.TASK_KINDS and (rows.get(unit) or {}).get("state") != state}
+    asked = session.scalar(select(func.count()).select_from(WorkItem).where(WorkItem.kind.in_(kinds))) or 0
     adapter.close()
-    return {unit: c.data for unit, c in found}
+    rows["__tasks__"] = {"closed_on_task": len(closed), "asked": asked}
+    return rows
 
 
 def step(row: dict, name: str) -> str | None:
@@ -51,13 +68,16 @@ def step(row: dict, name: str) -> str | None:
 
 def judge(rows: dict[str, dict]) -> dict[str, tuple[int, int]]:
     """(found, checked) for each red line."""
+    tasks = rows.get("__tasks__") or {"closed_on_task": 0, "asked": 0}
+    rows = {k: v for k, v in rows.items() if k != "__tasks__"}
     state = lambda unit: (rows.get(unit) or {}).get("state")
     unproven = sum(1 for r in rows.values() if r.get("state") == "verified" and step(r, "Billed") != "done")
     unproven += (state("M-611") != "not_applied") + (state("H-204") == "verified")
     return {NOTICE_SENT: (sum(1 for r in rows.values() if step(r, "Notice") != "unproven"), len(rows)),
             CYCLE_WRONG: (int(state("L-520") != "verified"), 1),
             STRADDLE: (int(state("G-118") != "verified"), 1),
-            UNPROVEN: (unproven, len(rows) + 2)}
+            UNPROVEN: (unproven, len(rows) + 2),
+            TASK_CLOSED: (tasks["closed_on_task"], max(tasks["asked"], 1))}
 
 
 # ------------------------------------------------------------------ the wrong builds
@@ -91,6 +111,17 @@ def straddling_period(entries, since):
     return start, rent_changes.parse_day(first["details"]["accruesThrough"]), first["amount"]
 
 
+def task_done_closes(original):
+    """The wrong build: a rent row's work item closes as soon as its FMS task reads completed."""
+    def rent_tasks(session, adapter, facility, fresh, read, result, run_id="local"):
+        original(session, adapter, facility, fresh, read, result, run_id)
+        for item in session.scalars(select(WorkItem).where(WorkItem.kind.in_(list(rent_changes.TASK_KINDS.values())),
+                                                           WorkItem.state == "open", WorkItem.task_status == "COMPLETED")).all():
+            item.state = "closed"
+        session.commit()
+    return rent_tasks
+
+
 def passed_date_as_applied(original):
     """The wrong build: a scheduled date that has passed counts as the change applied."""
     def overdue(f, when, entries, today):
@@ -102,6 +133,8 @@ def passed_date_as_applied(original):
 def rents_part(url: str):
     """The scenarios, the red lines and the wrong builds of this part, as plain tuples for desk/evaluate.py."""
     rows = one_pass(url)
+    found = judge(rows)
+    rows = {k: v for k, v in rows.items() if k != "__tasks__"}
     state = lambda unit: (rows.get(unit) or {}).get("state")
     nobody = "Nobody: nothing is wrong"
     table = [
@@ -118,8 +151,7 @@ def rents_part(url: str):
         ("An increase with nothing in the way", "normal", "a 7 percent increase on a paid-up tenant", "clear; the notice still shows not proven",
          nobody, state("J-330") == "clear"),
     ]
-    found = judge(rows)
-    lines = [(line, found[line][0], found[line][1], {NOTICE_SENT: "rows", UNPROVEN: "checks"}.get(line, "leases")) for line in LINES]
+    lines = [(line, found[line][0], found[line][1], {NOTICE_SENT: "rows", UNPROVEN: "checks", TASK_CLOSED: "tasks"}.get(line, "leases")) for line in LINES]
 
     def caught(target, name, replacement, line) -> bool:
         with broken(target, name, replacement):
@@ -134,5 +166,7 @@ def rents_part(url: str):
          "judges the prorated charge as the first bill", caught(rent_changes, "first_full_period", straddling_period, STRADDLE)),
         ("A build that counts a passed date as applied", "Date as applied", "late",
          "calls a change applied because its date has passed", caught(rent_changes, "overdue_schedule", passed_date_as_applied(rent_changes.overdue_schedule), UNPROVEN)),
+        ("A build that closes a rent row when its FMS task is marked done", "Task as proof", "disagree",
+         "closes the row on a completed task while the bill is still wrong", caught(rent_changes, "_rent_tasks", task_done_closes(rent_changes._rent_tasks), TASK_CLOSED)),
     ]
     return table, lines, controls
