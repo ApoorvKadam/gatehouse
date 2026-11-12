@@ -353,7 +353,9 @@ class Pages:
             o = w.observed or {}
             if o.get("who") in missed_calls.NOT_ON_TODAY:
                 continue
-            out.append(Item(2, missed_calls.HEAD, "", 0, w.opened_at, w.problem + " " + missed_calls.task_words(w), w.closing_evidence, w.who_acts,
+            done = o.get("callback") == "spoke"
+            out.append(Item(2, missed_calls.HEAD_AFTER if done else missed_calls.HEAD, "", 0, w.opened_at,
+                            w.problem + " " + (missed_calls.AFTER if done else missed_calls.task_words(w)), w.closing_evidence, w.who_acts,
                             f"/calls-and-reminders?facility={facility.provider_id}#call-{w.id}", "", label=o.get("label") or "A caller"))
         return out
 
@@ -627,9 +629,12 @@ def router(pages: Pages) -> APIRouter:
             reminder_rows = pages.reminder_checks(s, current, visitor=spend.visitor_of(request) if pages.live else None)
             call_rows = [{"id": w.id, "label": (w.observed or {}).get("label") or "A caller", "who": (w.observed or {}).get("who"),
                           "calls": len((w.observed or {}).get("calls", [])), "since": local(w.opened_at), "problem": w.problem,
-                          "task": missed_calls.task_words(w), "proof": w.closing_evidence} for w in missed_calls.open_calls(s, current)]
+                          "task": missed_calls.AFTER if (w.observed or {}).get("callback") == "spoke" else missed_calls.task_words(w),
+                          "proof": w.closing_evidence, "records": missed_calls.callback_records(s, w), "waiting": (w.observed or {}).get("callback") != "spoke"}
+                         for w in missed_calls.open_calls(s, current)]
             return templates.TemplateResponse(request, "calls_and_reminders.html", {
-                "facilities": facilities, "facility": current, "call_rows": call_rows, "waiting": len(call_rows), "won": missed_calls.closed_calls(s, current),
+                "facilities": facilities, "facility": current, "call_rows": call_rows, "waiting": sum(1 for r in call_rows if r["waiting"] and r["who"] not in ("withheld", "short", "shared")),   # only callers who can be called
+                "won": missed_calls.closed_calls(s, current), "by_staff": missed_calls.closed_calls(s, current, by_staff=True), "outcomes": missed_calls.OUTCOMES,
                 "chips": missed_calls.CHIPS, "who_words": missed_calls.WHO_WORDS, "local": local,
                 "reminder_rows": reminder_rows, "holds": sum(1 for row in reminder_rows if row["state"] == "hold"),
                 "quiet": in_quiet_hours(current, utcnow()), "check_chips": CHECK_CHIPS, "money": money, "nav": "calls-and-reminders"})

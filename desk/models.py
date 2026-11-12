@@ -496,3 +496,17 @@ class FmsObservation(Base):
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     __table_args__ = (UniqueConstraint("provider", "endpoint", "field", "kind", "value"),)
+
+
+class CallbackRecord(Base):
+    """What staff say came of a call back on a missed-call item. A person's statement, kept apart from what the FMS reports, and
+    never changed once written (the table is append-only): who recorded it comes from the token used, the time from the server."""
+
+    __tablename__ = "callback_records"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    work_item_id: Mapped[int] = mapped_column(ForeignKey("work_items.id"))
+    episode_key: Mapped[str] = mapped_column(String)
+    outcome: Mapped[str] = mapped_column(String)            # spoke, no_answer, voicemail, wrong_number, cannot_return
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recorded_by: Mapped[str] = mapped_column(String)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

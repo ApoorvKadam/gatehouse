@@ -21,7 +21,7 @@ from .cases import current_case, sync_facility
 from .db import utcnow
 from .lien_files import evaluate_case, record_evidence
 from .messaging import match_pending, receive_text, send_text
-from .models import AccessPolicy, DelinquencyCase, DemoSeed, Facility, InboundMessage, Lease, LedgerSnapshot
+from .models import AccessPolicy, DelinquencyCase, DemoSeed, Facility, InboundMessage, Lease, LedgerSnapshot, WorkItem
 from .payments import IdentityClaim, PaymentService, check_identity, confirm, propose
 from .reminder_check import reconcile_reminder_checks
 from .rent_changes import reconcile_rent_changes
@@ -67,11 +67,22 @@ def build(factory: sessionmaker[Session], adapter: FMSAdapter, fms_base_url: str
             reconcile_reminder_checks(session, adapter, facility)
             reconcile_rent_changes(session, adapter, facility)
             reconcile_missed_calls(session, adapter, facility, run_id, feed_url)
+        callbacks(session)
         session.add(DemoSeed(id=1))
         session.commit()
     sim.close()
     log.info("synthetic world built")
     return True
+
+
+def callbacks(session: Session) -> None:
+    """Two call backs the synthetic front desk recorded, through the same function staff use: Dana was reached, and Rosa's number rang out."""
+    from .missed_calls import KIND, record_callback
+    calls = {w.subject_id: w for w in session.scalars(select(WorkItem).where(WorkItem.kind == KIND, WorkItem.state == "open"))}
+    if "+14075550142" in calls:
+        record_callback(session, calls["+14075550142"].id, "spoke", "Asked whether a larger unit is free next month; passed to the manager.", DESK)
+    if "+14075550199" in calls:
+        record_callback(session, calls["+14075550199"].id, "no_answer", None, DESK)
 
 
 def schedule_sale(sim: httpx.Client) -> None:

@@ -23,7 +23,10 @@ CREATED = "a lead or customer created from a caller ID"
 SECOND_TASK = "a second callback task for one caller"
 TASK_CLOSED = "a missed call closed because its callback task was marked done"
 CONVERTED = "a caller counted as converted without their lead converted in the FMS"
-LINES = (MATCHED_WRONG, CREATED, SECOND_TASK, TASK_CLOSED, CONVERTED)
+ATTEMPT_CLOSED = "a missed call closed by no answer or a voicemail, or a lead resolved by a call back"
+STAFF_AS_FMS = "a staff record shown as an FMS fact"
+LINES = (MATCHED_WRONG, CREATED, SECOND_TASK, TASK_CLOSED, CONVERTED, ATTEMPT_CLOSED, STAFF_AS_FMS)
+UNKNOWN = "+14075550199"
 PARTIAL, SHARED, JONAH, DANA = "+5550142", "+14075550193", "+14075550191", "+14075550142"
 
 
@@ -36,11 +39,23 @@ def one_pass(url: str) -> dict:
     facility = session.scalar(select(Facility).where(Facility.provider_id == ORLANDO))
     missed_calls.reconcile_missed_calls(session, adapter, facility, "eval", url)   # through the module, so a wrong build replaces it
     first = {w.subject_id: dict(w.observed or {}) for w in session.scalars(select(WorkItem).where(WorkItem.kind == KIND)).all()}
+    # the front desk calls back: Rosa's number rings out and then takes a voicemail, Jonah (an open lead) is reached, and so is Dana
+    items = {w.subject_id: w.id for w in session.scalars(select(WorkItem).where(WorkItem.kind == KIND)).all()}
+    for number, outcome, note in ((UNKNOWN, "no_answer", None), (UNKNOWN, "voicemail", None),
+                                  (JONAH, "spoke", "Wants the ten by ten from Saturday; booking it now."),
+                                  (DANA, "spoke", "Asked about a larger unit next month.")):
+        if number in items:            # a wrong build that keys items another way has no such item: nothing to record against
+            try:
+                missed_calls.record_callback(session, items[number], outcome, note, "evaluation front desk")
+            except missed_calls.CallbackRefused:
+                pass                       # a wrong build that closed the call already: the judge counts that, not this
+    after_staff = {w.subject_id: (w.state, w.verification) for w in session.scalars(select(WorkItem).where(WorkItem.kind == KIND)).all()}
     # staff mark every callback task done in the FMS app without calling anyone back, and the check reads again
     for w in session.scalars(select(WorkItem).where(WorkItem.kind == KIND, WorkItem.task_id.is_not(None))).all():
         sim.post("/sim/tasks/complete", json={"taskId": w.task_id}).raise_for_status()
     missed_calls.reconcile_missed_calls(session, adapter, facility, "eval", url)   # through the module, so a wrong build replaces it
-    closed_on_task = [w.subject_id for w in session.scalars(select(WorkItem).where(WorkItem.kind == KIND, WorkItem.state == "closed")).all()]
+    closed_on_task = [w.subject_id for w in session.scalars(select(WorkItem).where(WorkItem.kind == KIND, WorkItem.state == "closed")).all()
+                      if not (w.verification or "").startswith(missed_calls.STAFF) and w.subject_id not in [n for n, (st, _) in after_staff.items() if st == "closed"]]
     # Jonah rents the unit: a lease is created for his lead, and the check reads once more
     sim.post("/sim/leads/convert", json={"leadId": "lead_JonahRey01"}).raise_for_status()
     missed_calls.reconcile_missed_calls(session, adapter, facility, "eval", url)   # through the module, so a wrong build replaces it
@@ -50,7 +65,7 @@ def one_pass(url: str) -> dict:
     creates = sim.get("/sim/leads/creates").json()["data"]["count"]
     sim.close()
     adapter.close()
-    return {"first": first, "closed_on_task": closed_on_task, "creates": creates, "leads": leads,
+    return {"first": first, "after_staff": after_staff, "closed_on_task": closed_on_task, "creates": creates, "leads": leads,
             "items": [{"number": w.subject_id, "state": w.state, "verification": w.verification, "who": (w.observed or {}).get("who"),
                        "lead": (w.observed or {}).get("lead"), "customer": (w.observed or {}).get("customer"), "task": w.task_id,
                        "calls": len((w.observed or {}).get("calls", []))} for w in items],
@@ -69,7 +84,12 @@ def judge(r: dict) -> dict[str, tuple[int, int]]:
         per_caller[key] = per_caller.get(key, 0) + 1
     converted = [i for i in r["items"] if (i["verification"] or "").startswith("Converted")]
     unproven = sum(1 for i in converted if r["leads"].get(i["lead"]) != "CONVERTED")
-    return {MATCHED_WRONG: (wrong, 2),
+    staff = r["after_staff"]
+    attempt_closed = int(staff.get(UNKNOWN, ("open",))[0] == "closed") + int(staff.get(JONAH, ("open",))[0] == "closed")
+    staff_closed = [v for n, (st, v) in staff.items() if st == "closed"]
+    shown_as_fms = sum(1 for v in staff_closed if not (v or "").startswith(missed_calls.STAFF))
+    return {ATTEMPT_CLOSED: (attempt_closed, 3), STAFF_AS_FMS: (shown_as_fms, max(len(staff_closed), 1)),
+            MATCHED_WRONG: (wrong, 2),
             CREATED: (r["creates"], len(callers)),
             SECOND_TASK: (sum(n - 1 for n in per_caller.values() if n > 1), max(len(per_caller), 1)),
             TASK_CLOSED: (len(r["closed_on_task"]), max(sum(1 for i in r["items"] if i["task"]), 1)),
@@ -125,6 +145,30 @@ def lease_as_conversion(original):
     return reconcile
 
 
+def any_record_closes(original):
+    """The wrong build: whatever staff record, the missed call closes."""
+    def record(session, item_id, outcome, note, recorded_by):
+        rec, closed = original(session, item_id, outcome, note, recorded_by)
+        item = session.get(WorkItem, item_id)
+        if item.state == "open":
+            item.state, item.verification = "closed", f"{missed_calls.STAFF}: {outcome}"
+            session.commit()
+        return rec, True
+    return record
+
+
+def staff_as_fms(original):
+    """The wrong build: a staff record that closes a call is written as FMS reported."""
+    def record(session, item_id, outcome, note, recorded_by):
+        rec, closed = original(session, item_id, outcome, note, recorded_by)
+        if closed:
+            item = session.get(WorkItem, item_id)
+            item.verification = "FMS reported"
+            session.commit()
+        return rec, closed
+    return record
+
+
 # ------------------------------------------------------------------ the part
 def calls_part(url: str):
     """The scenarios, the red lines and the wrong builds of this part, as plain tuples for desk/evaluate.py."""
@@ -151,11 +195,18 @@ def calls_part(url: str):
          any(n.startswith("short:") and (first[n] or {}).get("who") == "short" and not (first[n] or {}).get("customer") for n in first)),
         ("The callback task is marked done", "disagree", "staff complete every callback task without calling", "every missed call stays open",
          "Front desk: still to call back", not r["closed_on_task"]),
+        ("Staff call back and nobody answers", "late", "staff record no answer, then a voicemail, on the unknown caller",
+         "two attempts counted; the call stays open", "Front desk: try again", r["after_staff"].get(UNKNOWN, ("",))[0] == "open"),
+        ("Staff reach a caller with an open lead", "disagree", "staff report speaking with Jonah, whose lead is open",
+         "the call back is done; the item stays until the lead ends in the FMS", "Whoever works the lead",
+         r["after_staff"].get(JONAH, ("",))[0] == "open"),
+        ("Staff reach a tenant", "normal", "staff report speaking with Dana", "closed on a staff record, shown as a person's statement", nobody,
+         (r["after_staff"].get(DANA, ("", ""))[1] or "").startswith(missed_calls.STAFF)),
         ("The lead converts", "normal", "a lease is created for Jonah's lead", "his missed call closes as converted, on the FMS's word", nobody,
          by[JONAH]["state"] == "closed" and (by[JONAH]["verification"] or "").startswith("Converted")),
     ]
-    lines = [(line, found[line][0], found[line][1], {MATCHED_WRONG: "callers", CREATED: "callers", SECOND_TASK: "callers",
-                                                    TASK_CLOSED: "tasks", CONVERTED: "conversions"}[line]) for line in LINES]
+    lines = [(line, found[line][0], found[line][1], {MATCHED_WRONG: "callers", CREATED: "callers", SECOND_TASK: "callers", TASK_CLOSED: "tasks",
+                                                    CONVERTED: "conversions", ATTEMPT_CLOSED: "staff records", STAFF_AS_FMS: "staff closures"}[line]) for line in LINES]
 
     def caught(target, name, replacement, line) -> bool:
         with broken(target, name, replacement):
@@ -174,6 +225,10 @@ def calls_part(url: str):
          "asks for a second callback for the caller who rang twice", caught(missed_calls, "caller_key", item_per_call, SECOND_TASK)),
         ("A build that closes a missed call when its task is marked done", "Callback done as proof", "disagree",
          "closes calls nobody returned", caught(missed_calls, "reconcile_missed_calls", task_done_closes(missed_calls.reconcile_missed_calls), TASK_CLOSED)),
+        ("A build that closes a missed call on any staff record", "Any record closes", "late",
+         "closes a call that rang out and a lead that is still open", caught(missed_calls, "record_callback", any_record_closes(missed_calls.record_callback), ATTEMPT_CLOSED)),
+        ("A build that writes a staff record as FMS reported", "Staff as FMS", "disagree",
+         "shows a person's statement as an FMS fact", caught(missed_calls, "record_callback", staff_as_fms(missed_calls.record_callback), STAFF_AS_FMS)),
         ("A build that counts any lease as a conversion", "Lease as conversion", "disagree",
          "counts a tenant's call as a converted lead", caught(missed_calls, "reconcile_missed_calls", lease_as_conversion(missed_calls.reconcile_missed_calls), CONVERTED)),
     ]
