@@ -48,14 +48,6 @@ templates.env.filters["upfirst"] = lambda text: text[:1].upper() + text[1:] if t
 
 # The four kinds of entry an account's record keeps apart. Every event kind lands in exactly one of them.
 FMS, OBSERVED, CONCLUDED, DECIDED = "fms", "observed", "concluded", "decided"
-# Today's item heads, as the question a manager would ask about each (the Overview's problem cards)
-QUESTIONS = {"Payment outcome unknown": "Did that card payment go through?", "Payment returned": "Did the money stay paid?",
-             "Payment refunded": "Did the money stay paid?", "Payment disputed": "Did the money stay paid?",
-             "Lien file out of date": "Is the lien file still right?", "Counsel review required": "Can this lien file go ahead?",
-             "Rent billed at another amount": "Did the new rent bill right?", "Rent change not applied": "Did the rent change take?",
-             "Access not restored": "Can a tenant who paid get in?", "Restriction not in place": "Is a past-due unit really locked?",
-             "Payment in progress": "Has the payment settled yet?", "Past due": "Who still owes, and how much?",
-             "Sale still listed, nothing owed": "Is a paid unit still up for auction?"}
 LANES = [(FMS, "The FMS said"), (OBSERVED, "Gatehouse observed"), (CONCLUDED, "Gatehouse concluded"), (DECIDED, "A person decided")]
 LANE_OF = {
     "case opened": FMS, "payment taken outside the desk": FMS, "payment declined": FMS,
@@ -571,14 +563,7 @@ def router(pages: Pages) -> APIRouter:
             if record_case is not None:
                 for e in pages.record(s, s.get(DelinquencyCase, record_case)):
                     lanes.setdefault(e.lane, []).append(e)
-            # the questions a manager asks, each answered by one open item on Today, first four distinct ones in Today's order
-            asked: dict[str, Item] = {}
-            for i in items:
-                q = QUESTIONS.get(i.head)
-                if q and q not in asked:
-                    asked[q] = i
             return templates.TemplateResponse(request, "front.html", {
-                "questions": list(asked.items())[:4],
                 "rent_item": next((i for i in items if i.head == "Rent billed at another amount"), None),
                 "opening": site_opening,
                 "facility": home, "facilities": facilities, "items": items, "open_count": len(items),
