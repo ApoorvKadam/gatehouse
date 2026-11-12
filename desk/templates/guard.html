@@ -1,4 +1,4 @@
-<button class="guard{{ ' posed' if guard_pose is defined and guard_pose else '' }}" type="button" style="--size: {{ guard_size }}px"{% if guard_pose is defined and guard_pose %} data-pose="{{ guard_pose }}"{% endif %} aria-label="The Gatehouse fox. Press it to say hello.">
+<button class="guard{{ ' posed' if guard_pose is defined and guard_pose else '' }}" type="button" style="--size: {{ guard_size }}px"{% if guard_pose is defined and guard_pose %} data-pose="{{ guard_pose }}"{% endif %} aria-label="The Gatehouse keeper. Press it to say hello.">
   <span class="guard-body" aria-hidden="true">
     <span class="guard-face" style="background-image: url('{{ url_for('static', path='mascot/guard-directions.webp') }}')"></span>
     <span class="guard-react" style="background-image: url('{{ url_for('static', path='mascot/guard-reactions.webp') }}')"></span>
