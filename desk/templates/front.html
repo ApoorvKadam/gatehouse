@@ -256,6 +256,7 @@
     <div class="split-head" data-reveal>
       {% if changed %}
       <div>
+        <div class="spot">{% set guard_size = 104 %}{% set guard_pose = "up-right" %}{% include "guard.html" %}<p class="spot-say">A file that changed goes back to a person.</p></div>
         <p class="kicker" style="--c:var(--teal)">{% include "icons/scale.svg" %}Lien files</p>
         <h2>A lien file goes back to review when the account has changed.</h2>
       </div>

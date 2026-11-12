@@ -40,7 +40,7 @@
   --navy: #22345a;       /* what the FMS said */
   --lilac: #6f63b8;      /* what Gatehouse observed */
   --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px; --s8: 72px;
-  --t-xs: 0.8125rem; --t-sm: 0.9375rem; --t-body: 1.0625rem; --t-lg: 1.1875rem; --t-h3: 1.3125rem; --t-h2: 1.75rem; --t-h1: 2.75rem;
+  --t-xs: 0.78125rem; --t-sm: 0.875rem; --t-body: 1rem; --t-lg: 1.125rem; --t-h3: 1.25rem; --t-h2: 1.625rem; --t-h1: 2.75rem;
   --wrap: 1760px;
   --display: "Source Serif 4", Georgia, serif;
   --bar: #fafaf8;
@@ -169,7 +169,7 @@ footer .wrap { padding-top: var(--s5); padding-bottom: var(--s6); display: flex;
 .crumbs { font-size: var(--t-sm); color: var(--ink-3); margin-bottom: var(--s3); }
 .crumbs a { color: var(--ink-2); }
 .head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--s5); padding-bottom: var(--s4); border-bottom: 1px solid var(--rule); }
-.head h1 { font-family: var(--display); font-size: clamp(2rem, 2.6vw, 2.625rem); font-weight: 500; letter-spacing: -0.02em; line-height: 1.15; }
+.head h1 { font-family: var(--display); font-size: clamp(1.875rem, 2.3vw, 2.375rem); font-weight: 500; letter-spacing: -0.02em; line-height: 1.15; }
 .head p { color: var(--ink-3); font-size: var(--t-sm); }
 .lede { color: var(--ink-2); margin: var(--s4) 0 var(--s5); font-size: var(--t-lg); line-height: 1.6; }
 
@@ -707,7 +707,7 @@ body {
 .button.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
 .page-front .button.primary { padding: 12px 24px; }
 .button.primary:hover { background: color-mix(in srgb, var(--blue) 86%, #000); }
-.page-front .feature p { color: var(--ink-3); font-size: 1.125rem; line-height: 1.45; letter-spacing: -0.01em; }
+.page-front .feature p { color: var(--ink-3); font-size: 1.0625rem; line-height: 1.45; letter-spacing: -0.01em; }
 .page-front .feature .open { color: var(--blue); font-weight: 500; }
 .page-front .feature { padding: clamp(56px, 7vw, 104px) 0; }
 .page-front .feature.band { background: var(--band); }
@@ -716,7 +716,7 @@ body {
 .lt-hero-grid { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 7fr); gap: clamp(32px, 4vw, 72px); align-items: center; }
 .lt-hero h1 { font-family: var(--display); font-weight: 500; font-size: clamp(2.75rem, 5.2vw, 5.25rem); line-height: 1.04; letter-spacing: -0.025em; color: var(--ink); }
 .lt-hero h1 span { color: var(--blue); }
-.lt-hero-text p { margin-top: var(--s5); font-size: clamp(1.0625rem, 1.3vw, 1.25rem); line-height: 1.35; letter-spacing: -0.02em; color: var(--ink-3); max-width: 36em; }
+.lt-hero-text p { margin-top: var(--s5); font-size: clamp(1rem, 1.2vw, 1.125rem); line-height: 1.35; letter-spacing: -0.02em; color: var(--ink-3); max-width: 36em; }
 .lt-hero-text p b { color: var(--ink); font-weight: 600; }
 .lt-hero .actions { margin-top: var(--s6); }
 .lt-film video { border-radius: 12px; border: 1px solid var(--frame); }
@@ -964,3 +964,6 @@ footer .foot { display: grid; grid-template-columns: minmax(0, 2fr) repeat(3, mi
 @keyframes bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
 .hero-spot { margin-bottom: var(--s4); }
 .hero-spot .spot-say { font-size: 1.1875rem; max-width: 26em; }
+
+.gh-link { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; color: var(--ink); }
+.gh-link .icon { width: 18px; height: 18px; }
