@@ -980,3 +980,11 @@ footer .foot { display: grid; grid-template-columns: minmax(0, 2fr) repeat(3, mi
 .band .say-tag::before { background: var(--band); }
 .band .say-greenbar { background: radial-gradient(circle 3px at 11px 11px, var(--band) 96%, #0000) 0 0 / 22px 22px repeat-y,
   radial-gradient(circle 3px at 11px 11px, var(--band) 96%, #0000) 100% 0 / 22px 22px repeat-y, repeating-linear-gradient(#f7fbf6 0 22px, #dcefdc 22px 44px); }
+
+/* Calls and reminders: two lists for one front-desk job, each with its own heading and count */
+.contact-part { margin-top: var(--s7); scroll-margin-top: 96px; }
+.part-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s4); padding-top: var(--s5); border-top: 1px solid var(--rule); }
+.part-head h2 { display: flex; align-items: center; gap: 10px; margin: 0; }
+.part-head h2 svg { width: 22px; height: 22px; color: var(--ink-2); }
+.part-head p { margin: 0; color: var(--ink-2); font-size: var(--t-sm); }
+.part-lede { margin: var(--s3) 0 var(--s4); color: var(--ink-2); }
