@@ -32,8 +32,8 @@
   <section class="panel">
     <h2><span class="lane-dot lane-observed"></span>The FMS task for a person</h2>
     <dl class="kv">
-      <dt>Task</dt><dd>{% if w.task_state == 'created' %}{{ w.task_id }}, {{ (w.task_status or 'OPEN')|lower }}{% elif w.task_state == 'outcome_unknown' %}Outcome unknown: the request may have made a task; none with this item's marker is found yet{% elif w.task_state == 'sending' %}Being created{% elif w.task_state == 'rejected' %}Refused by the FMS{% else %}None: a person reviews this in Gatehouse{% endif %}</dd>
-      {% if w.task_marker %}<dt>Marker in the task</dt><dd>{{ w.task_marker }}</dd>{% endif %}
+      <dt>Task</dt><dd>{% if w.task_state == 'created' %}An FMS task, {{ (w.task_status or 'OPEN')|lower }}{% elif w.task_state == 'outcome_unknown' %}Outcome unknown: the request may have made a task; none with this item's marker is found yet{% elif w.task_state == 'sending' %}Being created{% elif w.task_state == 'rejected' %}Refused by the FMS{% else %}None: a person reviews this in Gatehouse{% endif %}</dd>
+      {% if w.task_marker %}<dt>Duplicate protection</dt><dd>Uncertain task requests are checked against the FMS, never blindly repeated.</dd>{% endif %}
       <dt>Closes when</dt><dd>{{ w.closing_evidence }}</dd>
       <dt>Who acts</dt><dd>{{ w.who_acts }}</dd>
     </dl>

@@ -319,3 +319,35 @@ def test_operations_shows_what_the_agent_did_and_not_what_it_cost(fms_url, sim):
         text = visitor.get("/operations").text
         assert "Our agent today" in text and "Explorations" in text
         assert "Spent" not in text and "$0." not in text
+
+
+def test_no_page_names_a_record_by_an_id(fms_url, sim):
+    """Every page the preview links to, both facilities and every message thread: a record is named by what a person reads, never by a
+    provider id, a desk record id, the marker Gatehouse writes into an FMS task, or a state code."""
+    from desk.wording import _BARE_ID, _RECORD_ID
+    from .test_console import visible
+    marker, code = re.compile(r"\[gatehouse work item"), re.compile(r"\b[A-Z]{2,}_[A-Z_]{2,}\b")
+    with TestClient(preview(fms_url)) as client:
+        start = ["/", "/today", "/reminder-check", "/rent-changes", "/inbox", "/evaluation", "/operations"]
+        facilities = re.findall(r'<option[^>]*value="([^"]+)"', client.get("/today").text)
+        assert len(facilities) == 2
+        start += [f"/today?facility={f}" for f in facilities] + [f"/inbox?facility={f}" for f in facilities]
+        seen, todo, texts = set(), list(start), {}
+        while todo:
+            path = todo.pop()
+            if path in seen:
+                continue
+            seen.add(path)
+            page = client.get(path)
+            assert page.status_code == 200, path
+            texts[path] = visible(page.text)
+            for link in re.findall(r'href="(/(?:accounts|payments|access|sales|inbox)[^"#]*)"', page.text):
+                todo.append(link.replace("&amp;", "&"))
+        assert len(seen) >= 30 and sum("text=" in p for p in seen) >= 5, sorted(seen)
+        for path, text in texts.items():
+            for pattern in (_BARE_ID, _RECORD_ID, marker, code):
+                found = pattern.search(text)
+                assert found is None, (path, text[max(0, found.start() - 60):found.end() + 30])
+        everything = " ".join(texts.values())
+        for said in ("Staff confirmation required", "applied on the FMS ledger", "recorded in the FMS", "Auction record found for this lease", "Duplicate protection"):
+            assert said in everything, said

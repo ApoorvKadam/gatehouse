@@ -130,7 +130,7 @@ def _when(f: SaleFacts) -> str:
 
 
 def _paid(f: SaleFacts) -> str:
-    return "; ".join(f"{dollars(p['amount'])} on {on(p['on'])} ({p['id']})" for p in f.payments)
+    return "; ".join(f"{dollars(p['amount'])} on {on(p['on'])}" for p in f.payments)
 
 
 def observed_of(f: SaleFacts) -> dict:
@@ -425,7 +425,7 @@ def _outside(session: Session, facility: Facility, run_id: str, entry: ProviderA
         WorkItem.run_id == run_id, WorkItem.facility_id == facility.id, WorkItem.kind.in_(SALE_KINDS), WorkItem.subject_id == subject))
     if not touched:
         return
-    problem = (f"{listing.get('marketplace')} still shows listing {listing.get('listingId')} for this sale (its feed, at "
+    problem = (f"{listing.get('marketplace')} still shows its listing for this sale (its feed, at "
                f"{listing.get('observedAt')}). {OUTSIDE_NOTE}")
     if item is None:
         _open(session, facility, run_id, OUTSIDE, subject, problem, {"listing": listing, "auction_id": entry.auction_id,
