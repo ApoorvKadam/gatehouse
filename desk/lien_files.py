@@ -34,7 +34,7 @@ def _append_only_sql(table: str) -> list[str]:
     existing row (INSERT OR REPLACE deletes without firing delete triggers)."""
     clash = {"lien_evidence": "id = NEW.id OR (NEW.supersedes_id IS NOT NULL AND supersedes_id = NEW.supersedes_id)",
              "rule_source_rows": "id = NEW.id OR (file_sha256 = NEW.file_sha256 AND jurisdiction = NEW.jurisdiction)",
-             "lien_evaluations": "id = NEW.id"}[table]
+             "lien_evaluations": "id = NEW.id", "callback_records": "id = NEW.id"}[table]
     out = [f"CREATE TRIGGER IF NOT EXISTS {table}_no_{op.lower()} BEFORE {op} ON {table} "
            f"BEGIN SELECT RAISE(ABORT, '{table} is append-only'); END" for op in ("UPDATE", "DELETE")]
     out.append(f"CREATE TRIGGER IF NOT EXISTS {table}_no_replace BEFORE INSERT ON {table} "
@@ -42,7 +42,9 @@ def _append_only_sql(table: str) -> list[str]:
     return out
 
 
-for _table in ("lien_evidence", "rule_source_rows", "lien_evaluations"):
+from . import models as _models  # noqa: E402,F401  (registers callback_records on the shared metadata)
+
+for _table in ("lien_evidence", "rule_source_rows", "lien_evaluations", "callback_records"):
     for _sql in _append_only_sql(_table):
         event.listen(LienEvidence.metadata.tables[_table], "after_create", DDL(_sql).execute_if(dialect="sqlite"))
 
@@ -51,7 +53,7 @@ def ensure_append_only(engine) -> None:
     if engine.dialect.name != "sqlite":
         return
     with engine.begin() as conn:
-        for table in ("lien_evidence", "rule_source_rows", "lien_evaluations"):
+        for table in ("lien_evidence", "rule_source_rows", "lien_evaluations", "callback_records"):
             for sql in _append_only_sql(table):
                 conn.exec_driver_sql(sql)
 

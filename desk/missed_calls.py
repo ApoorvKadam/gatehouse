@@ -18,7 +18,7 @@ import re
 from datetime import datetime, timezone
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from .access import ensure_task
@@ -26,7 +26,7 @@ from .adapter import FMSAdapter, FMSError
 from .adapter.base import ProviderLead
 from .db import utcnow
 from .messaging import e164
-from .models import Facility, WorkItem
+from .models import CallbackRecord, Facility, WorkItem
 from .wording import when as said_when
 
 KIND = "missed_call"
@@ -51,6 +51,8 @@ ENDED = {"CONVERTED": "Converted: the FMS shows a lease created for this lead",
          "UNQUALIFIED": "Closed in the FMS as unqualified",
          "DUPLICATE": "Closed in the FMS as a duplicate lead"}
 TASK_TITLE = "Return a missed call"
+HEAD_AFTER = "Called back, lead outcome pending"
+AFTER = "Staff reported speaking with the caller. What is left is the lead's outcome in the FMS."
 
 
 def read_calls(feed_url: str | None, facility_provider_id: str) -> list[dict] | None:
@@ -234,7 +236,14 @@ def reconcile_missed_calls(session: Session, adapter: FMSAdapter, facility: Faci
             session.commit()
             result.closed += 1
             continue
+        if item is not None:
+            session.refresh(item)                   # a staff record made since this pass began is kept, not written over
+            if item.state != "open":
+                continue
         observed = dict(item.observed or {}) if item else {}
+        if item is not None and new and observed.get("callback"):
+            observed.pop("callback")                # a later call is a new call to return: the earlier call back does not cover it
+            item.who_acts = WHO
         observed.update(calls=[c["callId"] for c in mine], who=who.kind, label=label(who, number),
                         lead=getattr(who.lead, "provider_id", None), customer=who.customer)
         if who.lead is not None and who.lead.status in OPEN_LEAD:
@@ -283,8 +292,73 @@ def task_words(item: WorkItem) -> str:
     return ""
 
 
-def closed_calls(session: Session, facility: Facility) -> list[dict]:
-    """Callers whose item closed on an FMS lead outcome, newest first: a conversion here is one the FMS reported, never one inferred."""
+def closed_calls(session: Session, facility: Facility, by_staff: bool = False) -> list[dict]:
+    """Callers whose item closed, newest first: on an FMS lead outcome (a conversion here is one the FMS reported, never one inferred), or,
+    with by_staff, on a staff record, which is kept apart because it is a person's statement."""
     rows = session.scalars(select(WorkItem).where(WorkItem.facility_id == facility.id, WorkItem.kind == KIND, WorkItem.state == "closed")
                            .order_by(WorkItem.closed_at.desc())).all()
-    return [{"label": (w.observed or {}).get("label") or "A caller", "verification": w.verification, "closed_at": w.closed_at} for w in rows]
+    return [{"label": (w.observed or {}).get("label") or "A caller", "verification": w.verification, "closed_at": w.closed_at,
+             "records": callback_records(session, w)} for w in rows if (w.verification or "").startswith(STAFF) == by_staff]
+
+
+# ---- what staff say came of a call back -----------------------------------------------------------------------------------
+OUTCOMES = {"spoke": "Staff reported speaking with the caller", "no_answer": "No answer", "voicemail": "Left a voicemail",
+            "wrong_number": "Wrong number", "cannot_return": "The call cannot be returned"}
+STAFF = "Closed on a staff record"          # never an FMS fact: what closed it was a person's statement
+STAFF_TOKEN_WHO = "front desk staff"        # who a record made with the staff token is from; a request never names itself
+
+
+class CallbackRefused(ValueError):
+    pass
+
+
+def record_callback(session: Session, item_id: int, outcome: str, note: str | None, recorded_by: str,
+                    calls_seen: int | None = None) -> tuple[CallbackRecord, bool]:
+    """Keep what staff say came of a call back, and close the item only where that statement is enough. Speaking with the caller closes a
+    tenant's, a customer's or an unknown caller's item; a caller with an open lead stays until the FMS shows the lead ended, and the row
+    then belongs to whoever works the lead. No answer and a voicemail never close: they are attempts. A wrong number closes. A call
+    with no usable number closes only as one that cannot be returned. The item is read as it is now, so a later call on it is never
+    closed by an earlier statement."""
+    item = session.get(WorkItem, item_id)
+    if item is None or item.kind != KIND:
+        raise CallbackRefused("no such missed call")
+    session.refresh(item)                       # the item as it is now, not as a page or an earlier read had it
+    if item.state != "open":
+        raise CallbackRefused("this missed call is already closed")
+    if outcome not in OUTCOMES:
+        raise CallbackRefused(f"outcome must be one of {', '.join(OUTCOMES)}")
+    who = (item.observed or {}).get("who")
+    if calls_seen is not None and calls_seen != len((item.observed or {}).get("calls", [])):
+        raise CallbackRefused("the caller has rung again since this was opened; look at the call again")
+    if who == "shared" and outcome != "wrong_number":
+        raise CallbackRefused("first decide which customer called")
+    note = (note or "").strip() or None
+    if outcome == "spoke" and (note is None or len(note) < 10):
+        raise CallbackRefused("say in a sentence what came of the call")
+    if outcome == "cannot_return" and who not in ("withheld", "short"):
+        raise CallbackRefused("only a call with no usable number cannot be returned")
+    if outcome in ("spoke", "no_answer", "voicemail", "wrong_number") and who in ("withheld", "short"):
+        raise CallbackRefused("there is no number to call back")
+    record = CallbackRecord(work_item_id=item.id, episode_key=item.episode_key, outcome=outcome, note=note, recorded_by=recorded_by)
+    session.add(record)
+    now = utcnow()
+    closes = (outcome == "spoke" and who in ("tenant", "customer", "unknown")) or outcome == "wrong_number" or outcome == "cannot_return"
+    if closes:
+        # only an item still open closes: a worker pass that closed it meanwhile keeps its own reason
+        done = session.execute(update(WorkItem).where(WorkItem.id == item.id, WorkItem.state == "open")
+                               .values(state="closed", closed_at=now, updated_at=now, verification=f"{STAFF}: {OUTCOMES[outcome].lower()}"))
+        if done.rowcount != 1:
+            session.rollback()
+            raise CallbackRefused("this missed call closed while the record was being made")
+    elif outcome == "spoke" and who == "lead":
+        # a caller with an open lead was reached: the call back is done, and what is left is the lead's outcome in the FMS
+        item.observed = {**(item.observed or {}), "callback": "spoke"}
+        item.who_acts, item.updated_at = "Whoever works the lead", now
+    else:
+        item.updated_at = now
+    session.commit()
+    return record, closes
+
+
+def callback_records(session: Session, item: WorkItem) -> list:
+    return session.scalars(select(CallbackRecord).where(CallbackRecord.work_item_id == item.id).order_by(CallbackRecord.id)).all()

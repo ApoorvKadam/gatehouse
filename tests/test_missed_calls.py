@@ -23,7 +23,7 @@ def orlando(s):
 
 def test_each_caller_is_told_apart_and_matched_only_on_the_whole_number(factory, fms_url):  # noqa: F811
     with factory() as s:
-        items = calls(s)
+        items = {**calls(s, "closed"), **calls(s)}           # Dana's call is closed by the preview's seeded staff record
         who = {n: (w.observed or {}).get("who") for n, w in items.items()}
         assert who["+14075550191"] == "lead"            # Jonah, an open lead
         assert who["+14075550192"] == "lead"            # Kim, a lead gone quiet

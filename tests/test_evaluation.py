@@ -34,11 +34,11 @@ def test_the_evaluation_runs_clean_and_its_wrong_builds_are_caught(tmp_path):
     files = {l["line"]: l for l in report["red_lines"] if l["module"] == "Files"}
     assert len(files) == 2 and all(l["count"] == 0 and l["checked"] >= 4 for l in files.values())
     assert {"Receipt as payment", "Quotes the file"} <= {c["short"] for c in report["controls"] if c["caught"]}
-    # missed calls: five red lines counted over real callers, tasks and conversions, and all five wrong builds caught
+    # missed calls: seven red lines counted over real callers, tasks, conversions and staff records, and all seven wrong builds caught
     from desk import evaluate_calls
     calls = {l["line"]: l for l in report["red_lines"] if l["module"] == "Missed calls"}
     assert set(calls) == set(evaluate_calls.LINES) and all(l["count"] == 0 and l["checked"] >= 1 for l in calls.values())
-    assert {"First result", "Lead from caller ID", "Item per call", "Callback done as proof", "Lease as conversion"} <= {c["short"] for c in report["controls"] if c["caught"]}
+    assert {"First result", "Lead from caller ID", "Item per call", "Callback done as proof", "Lease as conversion", "Any record closes", "Staff as FMS"} <= {c["short"] for c in report["controls"] if c["caught"]}
     # every scenario, red line and wrong build names its kind of trouble, from the fixed list the page colours, and every wrong build has
     # the short name its mark shows
     assert all(r["trouble"] in TROUBLES for r in report["rows"]) and all(l["trouble"] in TROUBLES for l in report["red_lines"])

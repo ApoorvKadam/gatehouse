@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from . import missed_calls
 from .adapter import FMSAdapter, FMSError, InboundText
 from .adapter.cubby import CubbyAdapter
 from .cases import queue, sync_facility
@@ -110,6 +111,12 @@ class StaffResolutionIn(BaseModel):
     fms_payment_id: str | None = Field(default=None, description="required when charged: the FMS payment that is this attempt")
     ledger_checked: bool = Field(default=False, description="when charged: the person checked the FMS ledger shows this payment applied")
     note: str = Field(min_length=10, description="what was checked, where, and by whom")
+
+
+class CallbackIn(BaseModel):
+    outcome: str = Field(description="spoke, no_answer, voicemail, wrong_number or cannot_return")
+    note: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] | None = Field(default=None, description="what came of the call; required when staff spoke with the caller")
+    calls_seen: int = Field(ge=1, description="how many calls the item showed when staff looked; a record on an item that has rung again since is refused")
 
 
 class ReviewIn(BaseModel):
@@ -637,6 +644,20 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         except PaymentRefused as exc:
             raise HTTPException(409, str(exc)) from exc
         return command_json(command)
+
+    @app.post("/api/missed-calls/{item_id}/callback")
+    def callback(item_id: int, body: CallbackIn, session: Session = Depends(db), _: str = Depends(operator),
+                 x_staff_token: str | None = Header(default=None)):
+        """Staff record what came of a call back. Who recorded it comes from the staff token, the time from the server; no FMS write."""
+        if settings.staff_token is None or settings.operator_token is None:
+            raise HTTPException(503, "staff records are not configured")
+        if x_staff_token is None or not hmac.compare_digest(x_staff_token, settings.staff_token):
+            raise HTTPException(403, "staff token required")
+        try:
+            record, closed = missed_calls.record_callback(session, item_id, body.outcome, body.note, missed_calls.STAFF_TOKEN_WHO, body.calls_seen)
+        except missed_calls.CallbackRefused as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return {"id": record.id, "outcome": record.outcome, "recorded_at": record.recorded_at.isoformat(), "closed": closed}
 
     @app.get("/api/integration")
     def integration_open(session: Session = Depends(db), _: str = Depends(viewer)):
