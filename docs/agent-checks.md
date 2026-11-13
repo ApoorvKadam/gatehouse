@@ -46,6 +46,13 @@ It answers with:
 
 Your agent never receives the FMS state, the expected answer, the checks or our credentials. It reads the FMS with its own read-only access. Our side accepts only a plain public `https` address, follows no redirects, makes one call per run, waits at most 20 seconds and reads at most 20,000 bytes.
 
+## Setting up
+
+- A Stora developer test account (free; it works with Stora's public API) and an OAuth client with read and write on units and price adjustments, read on contacts, tenancies, subscriptions and unit allocations. Put its id and secret in `STORA_CLIENT_ID` and `STORA_CLIENT_SECRET`.
+- One fictional tenant: a contact with an occupied unit (`FMS_CHECKS_CONTACT`, `FMS_CHECKS_UNIT`) and a subscription (`FMS_CHECKS_SUBSCRIPTION`). Use an `example.com` address: scheduling an increase emails the tenant.
+- For the notice check, the operator's default notice must be longer than the time to the subscription's next renewal. Our test account uses 45 days for a subscription that renews in 30.
+- No other unit on the account may be locked when the access check starts, because unlocking a contact lifts every lock it holds.
+
 ## Running
 
 ```bash
@@ -54,4 +61,4 @@ python -m fms_checks access   # the access check against the test account
 python -m fms_checks notice   # the notice check; sends one notice to the fictional tenant
 ```
 
-With `FMS_CHECKS_AGENT_URL` and `FMS_CHECKS_AGENT_TOKEN` set, `access` checks that agent instead of the two built-in samples.
+With `FMS_CHECKS_AGENT_URL` and `FMS_CHECKS_AGENT_TOKEN` set, `access` checks that agent instead of the two built-in samples. No outside developer has run an agent through it yet.

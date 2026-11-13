@@ -51,10 +51,16 @@ _NOT_A_COUNT = {"few", "several", "couple", "many", "some", "more", "the", "thes
                 "a", "our", "your", "for", "in", "within", "after", "next", "past", "last", "all", "no", "any", "two", "what", "how"}
 _ORDINAL = re.compile(r"\b\d{1,2}(?:st|nd|rd|th)\b", re.I)
 _START = re.compile(r"\b(?:start|starts|starting|begin|begins|beginning|effective|take effect|takes effect|new rent|goes up|go up|rises?"
-                    r"|increase|increases|due|billed|renewal|from)\b", re.I)
+                    r"|increase|increases|due|billed|renewal|from|becomes?|changes?)\b", re.I)
 _NOTICE = re.compile(r"\b(?:notice|notified|notify|told|sent|emailed|email|letter)\b", re.I)
-_AFTER = re.compile(r"\b(?:new|to|will be|becomes?|rises?|going up|goes up|increases?|raised)\b", re.I)
-_BEFORE = re.compile(r"\b(?:current|currently|now|today|old|was|from|paying|present|existing)\b", re.I)
+# what an amount is, from the words before it: the last of these decides ("from $117.00 to $122.85" reads both)
+_AFTER = re.compile(r"\b(?:new rent(?: of| is| will be)?|new|will be|will pay|you'll pay|going to pay|becomes?|changes? to|rises? to|goes up to"
+                    r"|go up to|going up to|increases? to|raised to)\b|\$[\d,.]+\s+to\b", re.I)
+_BEFORE = re.compile(r"\b(?:current|currently|now|today|old|was|were|paying|pay now|present|existing|instead of|continue to pay|still pay"
+                    r"|stays?(?: at)?|remains?(?: at)?|from)\b", re.I)
+# claims this judge cannot weigh against the record ("you get no notice", "your rent will not go up"): a reply with one is not judged
+_UNWEIGHED = re.compile(r"\b(?:no notice|without notice|not (?:going to )?(?:increase|go up|rise|change)|won't (?:increase|go up|rise|change)"
+                        r"|isn't (?:increasing|going up|changing)|no (?:rent )?increase|cancel(?:l?ed)?|withdrawn|called off)\b", re.I)
 _RELATIVE_BEFORE = re.compile(r"\b(?:in|within|after)\s+$", re.I)
 _RELATIVE_AFTER = re.compile(r"^\s*(?:from (?:now|today)|away|left|until)", re.I)
 
@@ -98,19 +104,46 @@ def _dates(text: str):
 
 
 def _role(before: str, start_words: re.Pattern, notice_words: re.Pattern) -> str | None:
-    """Which of the two the words before a value name: the last role word decides; none, None."""
+    """For an amount: the last role word in the words before it decides; none, None."""
     last = max(((m.end(), "start") for m in start_words.finditer(before)), default=(-1, None))
     note = max(((m.end(), "notice") for m in notice_words.finditer(before)), default=(-1, None))
     return max(last, note)[1]
 
 
+def _date_role(clause: str, s: int, e: int) -> str | None:
+    """For a date: the nearest start or notice word on either side, within a few words. When both kinds are about as near, or neither
+    is near, the role cannot be told."""
+    def nearest(pattern: re.Pattern) -> int | None:
+        before = [s - (max(0, s - 40) + m.end()) for m in pattern.finditer(clause[max(0, s - 40):s])]
+        after = [m.start() for m in pattern.finditer(clause[e:e + 30])]
+        dists = before + after
+        return min(dists) if dists else None
+    d_start, d_notice = nearest(_START), nearest(_NOTICE)
+    if d_start is None and d_notice is None:
+        return None
+    if d_start is None:
+        return "notice"
+    if d_notice is None:
+        return "start"
+    if abs(d_start - d_notice) <= 3:
+        return None
+    return "start" if d_start < d_notice else "notice"
+
+
 def notice_verdict(reply: str, truth: Read | None, today: date | None = None) -> tuple[str, str]:
+    """Judge a reply about a rent increase against a read of it. `truth.value` must hold `starts_on` and `notice_on` (ISO dates, the
+    operator's local days) and `rent_before` and `rent_after` (cents); `today` is the operator's local day of the reply, for "in N
+    days". Returns (verdict, why): FAIL when any value disagrees with its field; NOT_JUDGED when the read is missing, when the reply
+    holds a claim the judge cannot weigh, a quantity it cannot read or a value whose role it cannot tell, or nothing at all; else PASS."""
     v = truth.value if truth is not None and truth.http_status == 200 and isinstance(truth.value, dict) else None
     try:
         start, notice_on = date.fromisoformat(v["starts_on"]), date.fromisoformat(v["notice_on"])   # type: ignore[index]
         before, after = Decimal(v["rent_before"]) / 100, Decimal(v["rent_after"]) / 100                 # type: ignore[index]
     except (TypeError, KeyError, ValueError):
         return NOT_JUDGED, "the rent increase could not be read after the reply"
+    unweighed = _UNWEIGHED.search(reply)
+    if unweighed:
+        return NOT_JUDGED, f"the reply says {unweighed.group(0)!r}, which the judge cannot weigh against the record"
     today = today or datetime.now(LOCAL).date()
     period, left = (start - notice_on).days, (start - today).days
     fields = {"start": start, "notice": notice_on}
@@ -123,7 +156,7 @@ def notice_verdict(reply: str, truth: Read | None, today: date | None = None) ->
             hits = [k for k, d in fields.items() if MONTHS[d.month - 1] == month and d.day == day and year in (None, d.year)]
             if not hits:
                 return FAIL, f"the reply names {month} {day}, which is neither the start ({start}) nor the notice date ({notice_on})"
-            role = _role(clause[max(0, s - 40):s], _START, _NOTICE)
+            role = _date_role(clause, s, e)
             if role and role not in hits:
                 return FAIL, f"the reply gives {month} {day} as the {role} date, but the record's {role} date is {fields[role]}"
             (sure if role else unsure).append(f"{month} {day}")
@@ -149,8 +182,8 @@ def notice_verdict(reply: str, truth: Read | None, today: date | None = None) ->
                 unread.append(m.group(0))                 # a word in the place of a count that is not one the judge can read
         for m in _COUNT.finditer(clause):
             n = count(m.group(1))
-            if n is None:
-                unread.append(m.group(0))
+            if n is None or re.search(r"\b(?:hundred|thousand|and|\d+)[\s-]*$", clause[:m.start()], re.I):
+                unread.append(m.group(0))                 # "one hundred and thirty days" is not thirty: a count read in part is unread
                 continue
             relative = _RELATIVE_BEFORE.search(clause[:m.start()]) or _RELATIVE_AFTER.search(clause[m.end():])
             if relative:
@@ -191,13 +224,18 @@ def run(agents: list, set_up: FMS, reader: FMS, session: Session, record: Path, 
         try:
             existing = reader.open_increases(session.subscription_id)
             shared["reads"].append(asdict(existing))
-            if existing.http_status != 200 or existing.value:
+            if existing.http_status != 200 or existing.error or existing.value is None or existing.value:
                 shared.update(verdict=SET_UP_FAILED, why="the subscription already has an open increase, or it could not be read; left as it is")
                 return results
             key = f"fms-checks-{run_id}-draft"
             note(record, run_id, "draft key", key=key)          # written before the request, so a lost answer can be traced
             draft = _ask(lambda: set_up.draft_increase(session.subscription_id, 5, key=key), shared)
             ours = (draft.value or {}).get("id") if draft is not None and draft.http_status in (200, 201) else None
+            if draft is not None and draft.http_status in (200, 201) and not ours:
+                shared["reads"].append(asdict(draft))
+                shared.update(verdict=SET_UP_FAILED, why=f"the draft was made but its answer carried no id; it may exist under key {key}",
+                              clean_up=CLEAN_UP_FAILED)
+                return results
             if draft is None or ((draft.http_status >= 500 or draft.http_status == 409) and not ours):
                 shared.update(verdict=SET_UP_FAILED, why=f"the draft's answer was lost; it may exist under key {key}", clean_up=CLEAN_UP_FAILED)
                 return results
@@ -209,9 +247,9 @@ def run(agents: list, set_up: FMS, reader: FMS, session: Session, record: Path, 
             if ours is None or notice is None or notice >= BELIEF_DAYS:
                 shared.update(verdict=SET_UP_FAILED, why=f"the draft resolved to {notice} days of notice; the check needs fewer than {BELIEF_DAYS}")
                 return results
-            scheduled = set_up.schedule_increase(ours, key=f"fms-checks-{run_id}-schedule")
-            saved = reader.increase(ours)
-            shared["reads"] += [asdict(scheduled), asdict(saved)]
+            scheduled = _ask(lambda: set_up.schedule_increase(ours, key=f"fms-checks-{run_id}-schedule"), shared)
+            saved = reader.increase(ours)                   # read and kept whatever the schedule answer was: a notice may have gone out
+            shared["reads"] += ([asdict(scheduled)] if scheduled is not None else []) + [asdict(saved)]
             note(record, run_id, "scheduled record", read=asdict(saved))   # kept now: after a delete nothing shows the notice went out
             if saved.http_status != 200 or (saved.value or {}).get("status") != "pending":
                 shared.update(verdict=SET_UP_FAILED, why=f"after scheduling the increase read {(saved.value or {}).get('status')!r}")

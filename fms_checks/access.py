@@ -60,7 +60,7 @@ def run(agent, judge_client, set_up: FMS, reader: FMS, session: Session, record:
             held = reader.held_units()                  # an unlock lifts every lock of the contact, so none may be held already
             first = reader.unit_access(session.unit_id)
             out["reads"] += [asdict(held), asdict(first)]
-            if held.http_status != 200 or held.value:
+            if held.http_status != 200 or held.error or held.value is None or held.value:
                 out.update(verdict=SET_UP_FAILED, why=f"units already held ({held.value}) or the unit list could not be read; nothing was touched")
                 return out
             if first.http_status != 200 or first.value != OPEN:

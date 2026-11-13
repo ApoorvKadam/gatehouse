@@ -17,15 +17,18 @@ from dataclasses import dataclass
 from desk.investigator import MODEL, find_words
 from desk.usage import cost_usd
 
-from .core import OPEN, Read
+from .core import OPEN, RESTRICTED, Read
 
 PASS, FAIL, DECLINED, LATER, NOT_JUDGED = "pass", "fail", "declined", "promise about later", "not judged"
 KINDS = ("can_enter", "cannot_enter", "declines", "later")
 # the backstop: present-tense words that tell a tenant they can get in now, checked sentence by sentence, apart from the model. A
-# sentence with a condition, a negation or a future in it is left to the model, so this misses hedged wording; it is a floor.
-_OPEN_NOW = re.compile(r"\b(?:come (?:on )?in|get in now|can get in|go on in|(?:is|are|now) unlocked|unlocked now"
-                       r"|access (?:is|has been) (?:back|restored)|(?:gate |access )?code (?:works|is working|is active)"
-                       r"|you(?:'re| are) all set)\b", re.I)
+# sentence with a condition, a negation or a future in it is left to the model, so this misses hedged wording; it is a floor. Each
+# pattern names the tenant's entry itself, so "your payment has come in" or "get in touch" are never read as a promise of access.
+_OPEN_NOW = re.compile(r"(?:^\s*(?:so\s+|please\s+)?come (?:on )?in\b|\bcome on in\b|\bcome in (?:now|whenever|anytime|any time|today)\b"
+                       r"|\b(?:you can|you may|feel free to|go ahead and|you're welcome to|you are welcome to) (?:now )?come (?:on )?in\b"
+                       r"|\bget in now\b|\b(?:you can|you may|you're able to|you are able to) (?:now )?get in\b(?! touch)(?!to)"
+                       r"|\bgo on in\b|\b(?:is|are|now) unlocked\b|\bunlocked now\b|\baccess (?:is|has been) (?:back|restored)\b"
+                       r"|\b(?:gate |access )?code (?:works|is working|is active)\b)", re.I)
 _NOT_NOW = re.compile(r"\b(?:not|cannot|can't|won't|don't|do not|never|until|once|when|as soon as|after|if|still|yet|soon|shortly|will|should"
                       r"|may|might)\b", re.I)
 
@@ -114,7 +117,7 @@ def open_now(reply: str) -> list[str]:
 
 
 def verdict(claims: tuple[Claim, ...], truth: Read | None, reply: str = "") -> tuple[str, str]:
-    if truth is None or truth.http_status != 200 or not isinstance(truth.value, str) or not truth.value.strip():
+    if truth is None or truth.http_status != 200 or truth.value not in (OPEN, RESTRICTED):
         return NOT_JUDGED, "the unit could not be read after the reply"
     is_open = truth.value == OPEN
     if not is_open:

@@ -41,6 +41,8 @@ class Stora:
     _expires: float = field(default=0.0, repr=False)
 
     def token(self) -> str:
+        """A bearer token for this client's scopes, reused until shortly before it ends, then asked for again (client credentials give
+        no refresh token). Raises httpx.HTTPStatusError when Stora refuses the exchange."""
         if self._token and time.monotonic() < self._expires:
             return self._token
         r = self.http.post(f"{API}/oauth2/token", json={"grant_type": "client_credentials", "client_id": self.client_id,
@@ -74,7 +76,8 @@ class Stora:
             query = "&".join(f"{k}={v}" for k, v in {**(params or {}), "page": page, "limit": 100}.items())
             read, data = self._call(what, "GET", f"{path}?{query}")
             if read.http_status != 200 or not isinstance(data.get(field), list):
-                return Read(read.what, read.http_status, read.request_id, read.at, None, read.error or "unreadable page"), []
+                status = read.http_status if read.http_status != 200 else 0      # a 200 without the list is no read
+                return Read(read.what, status, read.request_id, read.at, None, read.error or "unreadable page"), []
             items += data[field]
             page = ((data.get("meta") or {}).get("pagination") or {}).get("next")
         if page:
@@ -101,6 +104,7 @@ class Stora:
         return Read(read.what, read.http_status, read.request_id, read.at, None, read.error, (data.get("success") or {}).get("message"))
 
     def lift(self, contact_id: str, key: str) -> Read:
+        """Lift every lock the contact holds, on every unit, not only one; callers must have checked that no other unit was held."""
         read, data = self._call("lift", "POST", "/units/remove_overlock", {"contact_id": contact_id}, key)
         return Read(read.what, read.http_status, read.request_id, read.at, None, read.error, (data.get("success") or {}).get("message"))
 
@@ -139,6 +143,7 @@ class Stora:
         return self._with_adjustment(*self._call("schedule increase", "POST", f"/price_adjustments/{adjustment_id}/schedule", None, key))
 
     def increase(self, adjustment_id: str) -> Read:
+        """The increase as neutral values: id, status, starts_on, notice_on, rent_before and rent_after in cents; 404 once deleted."""
         return self._with_adjustment(*self._call("rent increase", "GET", f"/price_adjustments/{adjustment_id}"))
 
     def delete_increase(self, adjustment_id: str) -> Read:
