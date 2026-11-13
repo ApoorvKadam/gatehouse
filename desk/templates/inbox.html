@@ -126,7 +126,7 @@
             </div>
             <p class="reading-summary">{{ run.notes.summary }}</p>
             {% if run.notes.reason %}<p class="reading-reason"><b>Why:</b> {{ run.notes.reason }}</p>{% endif %}
-            {% if hold %}<p class="reading-reason"><b>Reminder:</b> {{ hold.line }}{% if hold.stands %} <a href="/reminder-check?facility={{ facility.provider_id }}">Open the Reminder check</a>{% endif %}</p>{% endif %}
+            {% if hold %}<p class="reading-reason"><b>Reminder:</b> {{ hold.line }}{% if hold.stands %} <a href="/calls-and-reminders?facility={{ facility.provider_id }}#reminders">Open the Reminder check</a>{% endif %}</p>{% endif %}
             <p class="small muted">Written by our agent from the desk's records. The desk checks what it can.</p>
             <details class="records">
               <summary>{{ run.records|length }} {{ 'record' if run.records|length == 1 else 'records' }} these notes rest on</summary>

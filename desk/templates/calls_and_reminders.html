@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Calls and reminders, {{ facility.name }} | Gatehouse{% endblock %}
+{% block main %}
+<div class="wrap">
+  <div class="head">
+    <div class="head-title"><h1>Calls and reminders at {{ facility.name }}</h1><p class="tagline">Who the front desk must call, and who it must not text.</p></div>
+  </div>
+  <p class="lede">Return missed calls, record what happened, and check which reminders must be held. Gatehouse makes no call and sends no text.</p>
+
+  <section class="contact-part" id="calls">
+    <div class="part-head"><h2>{% include "icons/phone.svg" %}Missed calls</h2>{% if call_rows %}<p>{{ waiting }} {{ 'caller waits' if waiting == 1 else 'callers wait' }} for a call back</p>{% endif %}</div>
+    <p class="part-lede">Your phone system logs the calls nobody answered. Gatehouse looks each caller up in the FMS, asks staff to call back through one FMS task per caller, and counts a lead as won only when the FMS shows it converted. It creates no lead or customer from a caller ID: a missed call is neither confirmed details nor consent.</p>
+  {% if call_rows %}
+    <div class="worklist check calls">
+      <table>
+        <thead><tr><th>Caller</th><th>What the FMS says, and the call back</th></tr></thead>
+        <tbody data-stagger>
+        {% for r in call_rows %}
+          <tr id="call-{{ r.id }}">
+            <td>
+              <div class="work-head">{{ r.label }}</div>
+              <span class="muted small">{{ r.calls }} {{ 'call' if r.calls == 1 else 'calls' }}, since {{ r.since }}</span>
+            </td>
+            <td>
+              <span class="chip {{ chips.get(r.who, 'plain') }}">{% include "icons/phone.svg" %}{{ who_words.get(r.who, 'Caller') }}</span>
+              <p class="work-what">{{ r.problem|readable }}</p>
+              {% if r.task %}<p class="work-proof">{{ r.task }}</p>{% endif %}
+              <p class="work-proof muted">Done when: {{ r.proof }}</p>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="small muted">The calls come from the phone system's own log, not the FMS; in this preview both are simulated.</p>
+    {% else %}
+    <p class="empty">No missed call is waiting at this facility.</p>
+    {% endif %}
+  </section>
+
+  <section class="contact-part" id="reminders">
+    <div class="part-head"><h2>{% include "icons/message-square.svg" %}Reminder check</h2>{% if reminder_rows %}<p>{{ holds }} of {{ reminder_rows|length }} past-due {{ 'account' if reminder_rows|length == 1 else 'accounts' }} should not get a text today</p>{% endif %}</div>
+    <p class="part-lede">Your reminder tool decides who to text. This is the check in front of it: for every past-due account, whether a collections text may go, and the reason when one may not.</p>
+  {% if quiet %}<p class="lede">It is quiet hours at this facility, 9 PM to 8 AM, so no text should go out now whatever the rows say.</p>{% endif %}
+    {% if reminder_rows %}
+    <div class="worklist check">
+      <table>
+        <thead><tr><th>Account</th><th>Check</th><th class="num">Days late</th><th class="num">Owes</th></tr></thead>
+        <tbody data-stagger>
+        {% for r in reminder_rows %}
+          <tr>
+            <td>
+              <div class="work-head">Unit {{ r.unit }}</div>
+              {% if r.tenant %}<span class="muted small">{{ r.tenant }}</span>{% endif %}
+            </td>
+            <td>
+              <span class="chip {{ check_chips.get(r.code, 'plain') }}">{{ r.label }}</span>
+              <p class="work-what">{{ r.why|readable }}</p>
+              {% for other in r.also %}<p class="work-proof">{{ other|readable }}</p>{% endfor %}
+            </td>
+            <td class="num">{{ r.overdue_days if r.overdue_days is not none else 'unknown' }}</td>
+            <td class="num amount">{{ money(r.owed) }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty">No account at this facility is past due.</p>
+    {% endif %}
+  </section>
+  {% if won %}
+  <section class="panel" style="margin-top:var(--s5)">
+    <h2><span class="lane-dot lane-fms"></span>Closed on what the FMS reported</h2>
+    <ul class="decisions">{% for w in won %}<li><b>{{ w.label }}</b><span>{{ w.verification }}, {{ local(w.closed_at) }}</span></li>{% endfor %}</ul>
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

@@ -84,9 +84,13 @@ The case notes are written by a language model from the records the desk holds. 
 
 On the preview a visitor can also play the tenant: pick Dana, Priya, Omar or an unknown sender and type a text. The desk keeps it the way it keeps a text from the webhook, and matches it to a tenant by the number it comes from, never by what it says. The visitor supplies only the words. The text is shown only to the visitor who typed it. A STOP they type stops sends in their own space and nowhere else, and an exploration of their text never asks the FMS for a new task.
 
-## Reminder check
+## Calls and reminders
 
-Gatehouse does not send reminders and does not decide when one is due; the operator's reminder tool does both. The Reminder check page and an API endpoint (`GET /api/facilities/{facility}/reminder-check`) answer the question in front of it: for every past-due account, may a collections text go to this tenant today, and if not, why not.
+One page holds the front desk's two lists about contact: the callers to call back, and the past-due tenants a collections text must not reach. Each list keeps its own count. The old addresses `/reminder-check` and `/missed-calls` redirect to their list on it.
+
+### Reminder check
+
+Gatehouse does not send reminders and does not decide when one is due; the operator's reminder tool does both. The reminder check list on the Calls and reminders page, and an API endpoint (`GET /api/facilities/{facility}/reminder-check`) answer the question in front of it: for every past-due account, may a collections text go to this tenant today, and if not, why not.
 
 A text must not go to a tenant who texted STOP, whom the FMS marks opted out or undeliverable, or whose number it cannot read. The check holds a text for a person in four other cases: a payment is still being checked at the desk or is pending at the FMS, the unit has a lien file or a sale, the tenant has a payment arrangement or another exemption on any unit, or the reading itself failed. An arrangement is read against the flag Cubby documents for pausing its own collections texts. An arrangement that does not pause them is shown as a catch, because the FMS will keep texting a tenant who is on a payment plan. Every reason that applies is kept, and the first is the headline. A failed reading holds the account, so an old "clear" never stands.
 

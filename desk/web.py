@@ -354,7 +354,7 @@ class Pages:
             if o.get("who") in missed_calls.NOT_ON_TODAY:
                 continue
             out.append(Item(2, missed_calls.HEAD, "", 0, w.opened_at, w.problem + " " + missed_calls.task_words(w), w.closing_evidence, w.who_acts,
-                            f"/missed-calls?facility={facility.provider_id}#call-{w.id}", "", label=o.get("label") or "A caller"))
+                            f"/calls-and-reminders?facility={facility.provider_id}#call-{w.id}", "", label=o.get("label") or "A caller"))
         return out
 
     def today(self, s: Session, facility: Facility) -> list[Item]:
@@ -613,9 +613,10 @@ def router(pages: Pages) -> APIRouter:
             return templates.TemplateResponse(request, "today.html", {
                 "facilities": facilities, "facility": current, "items": items, "local": local, "nav": "today"})
 
-    @r.get("/reminder-check", response_class=HTMLResponse)
-    def reminder_check_page(request: Request, facility: str | None = None):
-        """The check in front of a reminder: which past-due tenants a collections text must not go to, and why. Read from the worker's last pass."""
+    @r.get("/calls-and-reminders", response_class=HTMLResponse)
+    def calls_and_reminders_page(request: Request, facility: str | None = None):
+        """One front-desk job: the callers to call back, and the past-due tenants a collections text must not go to, and why. Two lists, each
+        with its own count, read from the worker's last pass."""
         with session() as s:
             facilities = pages.facilities(s)
             if not facilities:
@@ -623,10 +624,24 @@ def router(pages: Pages) -> APIRouter:
             current = next((f for f in facilities if f.provider_id == facility), None) if facility is not None else facilities[0]
             if current is None:
                 raise HTTPException(404, "No such facility")
-            rows = pages.reminder_checks(s, current, visitor=spend.visitor_of(request) if pages.live else None)
-            return templates.TemplateResponse(request, "reminder_check.html", {
-                "facilities": facilities, "facility": current, "rows": rows, "holds": sum(1 for row in rows if row["state"] == "hold"),
-                "quiet": in_quiet_hours(current, utcnow()), "chips": CHECK_CHIPS, "money": money, "nav": "reminder-check"})
+            reminder_rows = pages.reminder_checks(s, current, visitor=spend.visitor_of(request) if pages.live else None)
+            call_rows = [{"id": w.id, "label": (w.observed or {}).get("label") or "A caller", "who": (w.observed or {}).get("who"),
+                          "calls": len((w.observed or {}).get("calls", [])), "since": local(w.opened_at), "problem": w.problem,
+                          "task": missed_calls.task_words(w), "proof": w.closing_evidence} for w in missed_calls.open_calls(s, current)]
+            return templates.TemplateResponse(request, "calls_and_reminders.html", {
+                "facilities": facilities, "facility": current, "call_rows": call_rows, "waiting": len(call_rows), "won": missed_calls.closed_calls(s, current),
+                "chips": missed_calls.CHIPS, "who_words": missed_calls.WHO_WORDS, "local": local,
+                "reminder_rows": reminder_rows, "holds": sum(1 for row in reminder_rows if row["state"] == "hold"),
+                "quiet": in_quiet_hours(current, utcnow()), "check_chips": CHECK_CHIPS, "money": money, "nav": "calls-and-reminders"})
+
+    @r.get("/reminder-check")
+    def reminder_check_moved(facility: str | None = None):
+        """The reminder check is a list on Calls and reminders now; an old address still lands on it."""
+        return RedirectResponse(f"/calls-and-reminders{'?facility=' + facility if facility else ''}#reminders", status_code=301)
+
+    @r.get("/missed-calls")
+    def missed_calls_moved(facility: str | None = None):
+        return RedirectResponse(f"/calls-and-reminders{'?facility=' + facility if facility else ''}#calls", status_code=301)
 
     @r.get("/rent-changes", response_class=HTMLResponse)
     def rent_changes_page(request: Request, facility: str | None = None):
@@ -643,24 +658,6 @@ def router(pages: Pages) -> APIRouter:
                 "facilities": facilities, "facility": current, "rows": rows, "money": money, "chips": RENT_CHIPS, "step_chips": STEP_CHIPS,
                 "open": sum(1 for r in rows if r["state"] in rent_changes.TODAY), "review_percent": rent_changes.REVIEW_PERCENT,
                 "review_days": rent_changes.REVIEW_DAYS, "notice_why": rent_changes.NOTICE_WHY, "nav": "rent-changes"})
-
-    @r.get("/missed-calls", response_class=HTMLResponse)
-    def missed_calls_page(request: Request, facility: str | None = None):
-        """Every caller the facility missed, what the FMS says about them, and the callback a person is asked for."""
-        with session() as s:
-            facilities = pages.facilities(s)
-            if not facilities:
-                raise HTTPException(503, "No facility has been read from the FMS yet")
-            current = next((f for f in facilities if f.provider_id == facility), None) if facility is not None else facilities[0]
-            if current is None:
-                raise HTTPException(404, "No such facility")
-            rows = [{"id": w.id, "label": (w.observed or {}).get("label") or "A caller", "who": (w.observed or {}).get("who"),
-                     "calls": len((w.observed or {}).get("calls", [])), "since": local(w.opened_at), "problem": w.problem,
-                     "task": missed_calls.task_words(w), "proof": w.closing_evidence} for w in missed_calls.open_calls(s, current)]
-            won = missed_calls.closed_calls(s, current)
-            return templates.TemplateResponse(request, "missed_calls.html", {
-                "facilities": facilities, "facility": current, "rows": rows, "won": won, "chips": missed_calls.CHIPS,
-                "who_words": missed_calls.WHO_WORDS, "proof": missed_calls.PROOF, "local": local, "nav": "missed-calls"})
 
     @r.get("/inbox", response_class=HTMLResponse)
     def inbox_page(request: Request, facility: str | None = None, text: int | None = None):
@@ -817,7 +814,7 @@ def router(pages: Pages) -> APIRouter:
                 for i in pages.today(s, f):
                     part = ("Payments" if i.link.startswith("/payments/") else "Lien files" if i.link.endswith("/lien")
                             else "Access" if i.link.startswith("/access/") else "Lien sales" if i.link.startswith("/sales/")
-                            else "Rent changes" if i.link.startswith("/rent-changes") else "Missed calls" if i.link.startswith("/missed-calls")
+                            else "Rent changes" if i.link.startswith("/rent-changes") else "Missed calls" if i.link.startswith("/calls-and-reminders")
                             else "Collections")
                     groups.setdefault((part, i.head), []).append(i)
                     by_part[part] += 1

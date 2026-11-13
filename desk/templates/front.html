@@ -71,7 +71,7 @@
       </a>
       {% endif %}
       {% if check_rows %}{% set r = check_rows[0] %}
-      <a class="bx bx-stop" href="/reminder-check" style="--i:4">
+      <a class="bx bx-stop" href="/calls-and-reminders#reminders" style="--i:4">
         <span class="bx-q">Should the reminder go out?</span>
         <span class="cyc" style="--P:9s"><span class="bx-bubble">STOP</span><span class="bx-chip act">Must not be texted</span></span>
         <span class="bx-sub"><b>{{ r.label }}.</b> Unit {{ r.unit }}. The check sends this tenant back to your reminder tool with the reason.</span>
@@ -335,7 +335,7 @@
       <p class="kicker" style="--c:var(--lilac)">{% include "icons/message-square.svg" %}Reminder check</p>
       <h2>A reminder tool should not text a tenant who asked to stop, or who is on a payment plan.</h2>
       <p>Your reminder tool decides who to text. Before it does, Gatehouse checks each past-due account against what the FMS and the desk know: a STOP, a payment still being checked, a lien file, a payment arrangement. A tenant who must not be texted, or whose text waits for a person, comes back with the reason. Gatehouse sends nothing.</p>
-      <a class="open" href="/reminder-check">Open the reminder check {% include "icons/arrow-right.svg" %}</a>
+      <a class="open" href="/calls-and-reminders#reminders">Open the reminder check {% include "icons/arrow-right.svg" %}</a>
     </div>
     <div class="frame" data-reveal>
       <div class="frame-bar"><span><b>Reminder check</b> &middot; {{ facility.name }}</span></div>
@@ -383,7 +383,7 @@
       <p class="kicker" style="--c:var(--teal)">{% include "icons/phone.svg" %}Missed calls</p>
       <h2>A missed call is done when the FMS shows what came of it.</h2>
       <p>Your phone system logs the calls nobody answered. Gatehouse looks each caller up in the FMS by the whole number, asks staff to call back through one FMS task per caller, and counts a lead as won only when the FMS shows it converted. A number on two customers goes to a person. It creates no lead or customer from a caller ID, and it sends no text: a missed call is not consent.</p>
-      <a class="open" href="/missed-calls">Open the missed calls {% include "icons/arrow-right.svg" %}</a>
+      <a class="open" href="/calls-and-reminders#calls">Open the missed calls {% include "icons/arrow-right.svg" %}</a>
     </div>
     <div class="frame" data-reveal>
       <div class="frame-bar"><span><b>Missed calls</b> &middot; {{ facility.name }}</span></div>

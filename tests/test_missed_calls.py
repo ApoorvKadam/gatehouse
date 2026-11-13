@@ -114,7 +114,7 @@ def test_the_page_shows_each_caller_and_a_conversion_the_fms_reported(fms_url, s
     from .test_console import visible
     from .test_pages import preview
     with TestClient(preview(fms_url)) as client:
-        page = visible(client.get("/missed-calls").text)
+        page = visible(client.get("/calls-and-reminders").text)
         assert "Jonah Reyes" in page and "Unknown caller, number ending 0199" in page and "Caller ID too short to look up" in page
         assert "Done when: A person picks which customer called" in page
         today = visible(client.get("/today").text)
@@ -127,5 +127,5 @@ def test_the_page_shows_each_caller_and_a_conversion_the_fms_reported(fms_url, s
         with client.app.state.session_factory() as s:
             again(s, fresh, s.scalar(select(Facility).where(Facility.provider_id == ORLANDO)), "local", fms_url)
         fresh.close()
-        page = visible(client.get("/missed-calls").text)
+        page = visible(client.get("/calls-and-reminders").text)
         assert "Closed on what the FMS reported" in page and "Converted: the FMS shows a lease created for this lead" in page
