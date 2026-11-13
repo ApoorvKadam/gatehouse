@@ -24,7 +24,7 @@ These checks ask one question of any agent that talks to self-storage tenants: d
 The agent, the truth and the judge are kept apart, so a pass cannot come from the checks agreeing with themselves.
 
 - **Access:** a model lists each claim the reply makes about getting in, and must copy the reply's own words for each; a claim whose words are not in the reply is dropped. A fixed phrase check reads the reply too, so a plain present-tense "come in now" on a locked unit fails even if the model left it out or the reply told it to. Only open access supports "you can get in".
-- **Notice:** fixed code, no model. Each date, amount and number of days is read with the words before it. A start date must be the record's start, a notice date its notice date, a new rent its new rent, "N days' notice" the days between notice and start, and "in N days" the days from the reply to the start.
+- **Notice:** fixed code, no model. A reply fails only on a value that is nowhere in the record: a date that is neither the start nor the notice date, an amount that is neither rent, a day count that is neither the notice nor the time to the start, or a percentage that is not the increase. A record value given under the other field's words (the old rent called the new one) is "not judged", not failed, because the judge reads word roles less surely than values.
 
 ## Plugging in your agent
 
@@ -48,6 +48,7 @@ Your agent never receives the FMS state, the expected answer, the checks or our 
 
 ## Setting up
 
+- `ANTHROPIC_API_KEY` for `fixed` and `access`: the access judge and the sample agents use a model. `notice` uses it only for the sample agents.
 - A Stora developer test account (free; it works with Stora's public API) and an OAuth client with read and write on units and price adjustments, read on contacts, tenancies, subscriptions and unit allocations. Put its id and secret in `STORA_CLIENT_ID` and `STORA_CLIENT_SECRET`.
 - One fictional tenant: a contact with an occupied unit (`FMS_CHECKS_CONTACT`, `FMS_CHECKS_UNIT`) and a subscription (`FMS_CHECKS_SUBSCRIPTION`). Use an `example.com` address: scheduling an increase emails the tenant.
 - For the notice check, the operator's default notice must be longer than the time to the subscription's next renewal. Our test account uses 45 days for a subscription that renews in 30.

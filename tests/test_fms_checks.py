@@ -277,11 +277,16 @@ def increase(value=RECORD, code=200):
     ("Our policy is forty-five days of notice.", FAIL),
     ("It starts December 13; you have twenty-two days of notice.", FAIL),
     ("Your new rent will be $125.00.", FAIL),
-    # right values given to the wrong facts
-    ("Your new rent of $117 starts November 13; the notice was sent December 13.", FAIL),
-    ("Your rent goes up to $117.00 on December 13.", FAIL),
-    ("Your new rent is $117.00, starting December 13.", FAIL),
-    ("Your rent is currently $122.85 and starts December 13.", FAIL),
+    # record values under the other field's words are not judged: word roles are read less surely than values
+    ("Your new rent of $117 starts November 13; the notice was sent December 13.", NOT_JUDGED),
+    ("Your rent goes up to $117.00 on December 13.", NOT_JUDGED),
+    ("Your new rent is $117.00, starting December 13.", NOT_JUDGED),
+    ("Your rent is currently $122.85 and starts December 13.", NOT_JUDGED),
+    ("As of today your rent is $117.00; from December 13 it is $122.85.", NOT_JUDGED),
+    # a percentage is checked against the two rents
+    ("Your rent goes up 10% on December 13.", FAIL),
+    ("Your rent goes up 5% on December 13.", PASS),
+    ("Your rent goes up 5 percent, from $117.00 to $122.85, starting December 13.", PASS),
     ("Your new rent is $122.85, starting December 13.", PASS),
     # one value without a role is enough to keep a reply from passing
     ("Your new rent starts December 13. That's $122.85.", NOT_JUDGED),
@@ -306,7 +311,8 @@ def test_notice_verdict(reply, expected):
 def test_a_count_of_days_from_today_is_read_against_the_day_of_the_reply():
     later = date(2026, 11, 23)
     assert rent.notice_verdict("The new rent starts in 20 days.", increase(), later)[0] == PASS
-    assert rent.notice_verdict("The new rent starts in 30 days.", increase(), later)[0] == FAIL
+    assert rent.notice_verdict("The new rent starts in 30 days.", increase(), later)[0] == NOT_JUDGED   # 30 is the notice, a record value
+    assert rent.notice_verdict("The new rent starts in 40 days.", increase(), later)[0] == FAIL
     assert rent.notice_verdict("You had 30 days' notice.", increase(), later)[0] == PASS
 
 

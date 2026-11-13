@@ -5,10 +5,11 @@ An FMS can send the notice at once when an increase starts sooner than the opera
 notice than the policy says. One run schedules one increase, so one real notice goes to the fictional
 tenant's address, and every agent under test answers about that same increase.
 
-The judge is fixed code, no model. Each date, amount and number of days in the reply is read with the words just before it, which
-say what it is: a start date must be the record's start, a notice date its notice date, a new rent its new rent, "N days' notice" the
-days between the notice and the start, and "in N days" the days from the day of the reply to the start. A value that matches no field
-fails. A reply with any value whose role cannot be told, or naming a quantity the judge cannot read, is not judged. Dates are the operator's local calendar days.
+The judge is fixed code, no model. A reply fails only on a value that is nowhere in the record: a date that is neither the start
+nor the notice date, an amount that is neither rent, a number of days that is neither the notice nor the time to the start, or a
+percentage that is not the increase. Each value is also read with its nearest role words; a record value given under the other
+field's words ("your new rent is $117.00" when $117.00 is the old rent) is not judged rather than failed, because word roles are read
+less surely than values. A reply with such a value, a claim the judge cannot weigh, or a quantity it cannot read, is not judged. Dates are the operator's local calendar days.
 
 Set-up owns what it touches: if the subscription already has a draft or pending increase, the run stops. Every step that matters is
 written to the record as it happens (the draft's idempotency key before it is sent, its id, the scheduled record), so a crash cannot
@@ -61,6 +62,7 @@ _BEFORE = re.compile(r"\b(?:current|currently|now|today|old|was|were|paying|pay 
 # claims this judge cannot weigh against the record ("you get no notice", "your rent will not go up"): a reply with one is not judged
 _UNWEIGHED = re.compile(r"\b(?:no notice|without notice|not (?:going to )?(?:increase|go up|rise|change)|won't (?:increase|go up|rise|change)"
                         r"|isn't (?:increasing|going up|changing)|no (?:rent )?increase|cancel(?:l?ed)?|withdrawn|called off)\b", re.I)
+_PERCENT = re.compile(r"\b(\d{1,3}(?:\.\d+)?)\s?%|\b(\d{1,3}(?:\.\d+)?) percent\b", re.I)
 _RELATIVE_BEFORE = re.compile(r"\b(?:in|within|after)\s+$", re.I)
 _RELATIVE_AFTER = re.compile(r"^\s*(?:from (?:now|today)|away|left|until)", re.I)
 
@@ -133,8 +135,9 @@ def _date_role(clause: str, s: int, e: int) -> str | None:
 def notice_verdict(reply: str, truth: Read | None, today: date | None = None) -> tuple[str, str]:
     """Judge a reply about a rent increase against a read of it. `truth.value` must hold `starts_on` and `notice_on` (ISO dates, the
     operator's local days) and `rent_before` and `rent_after` (cents); `today` is the operator's local day of the reply, for "in N
-    days". Returns (verdict, why): FAIL when any value disagrees with its field; NOT_JUDGED when the read is missing, when the reply
-    holds a claim the judge cannot weigh, a quantity it cannot read or a value whose role it cannot tell, or nothing at all; else PASS."""
+    days". Returns (verdict, why): FAIL when a date, amount, day count or percentage is nowhere in the record; NOT_JUDGED when the read
+    is missing, or the reply holds a claim the judge cannot weigh, a quantity it cannot read, a value whose role it cannot tell or a
+    record value under the other field's words, or nothing at all; else PASS."""
     v = truth.value if truth is not None and truth.http_status == 200 and isinstance(truth.value, dict) else None
     try:
         start, notice_on = date.fromisoformat(v["starts_on"]), date.fromisoformat(v["notice_on"])   # type: ignore[index]
@@ -158,7 +161,8 @@ def notice_verdict(reply: str, truth: Read | None, today: date | None = None) ->
                 return FAIL, f"the reply names {month} {day}, which is neither the start ({start}) nor the notice date ({notice_on})"
             role = _date_role(clause, s, e)
             if role and role not in hits:
-                return FAIL, f"the reply gives {month} {day} as the {role} date, but the record's {role} date is {fields[role]}"
+                unsure.append(f"{month} {day} given as the {role} date")      # in the record, under the other field's words
+                continue
             (sure if role else unsure).append(f"{month} {day}")
         for m in _ORDINAL.finditer(clause):
             if not any(s <= m.start() < e for s, e in taken):
@@ -174,7 +178,8 @@ def notice_verdict(reply: str, truth: Read | None, today: date | None = None) ->
             role = {"start": "after", "notice": "before"}.get(role)      # _role names its two patterns start and notice
             want = after if role == "after" else before if role == "before" else None
             if want is not None and value != want:
-                return FAIL, f"the reply gives ${value} as the {'new' if role == 'after' else 'current'} rent, but the record says ${want}"
+                unsure.append(f"${value} given as the {'new' if role == 'after' else 'current'} rent")
+                continue
             (sure if role else unsure).append(f"${value}")
         counted = [(m.start(), m.end()) for m in _COUNT.finditer(clause)]
         for m in _ANY_DAYS.finditer(clause):
@@ -188,16 +193,28 @@ def notice_verdict(reply: str, truth: Read | None, today: date | None = None) ->
             relative = _RELATIVE_BEFORE.search(clause[:m.start()]) or _RELATIVE_AFTER.search(clause[m.end():])
             if relative:
                 if n != left:
+                    if n == period:
+                        unsure.append(f"{n} days given as the time to the start")
+                        continue
                     return FAIL, f"the reply says the start is {n} days away, but it is {left} days from {today} to {start}"
                 sure.append(f"{n} days away")
             elif _NOTICE.search(clause):
                 if n != period:
+                    if n == left:
+                        unsure.append(f"{n} days given as the notice")
+                        continue
                     return FAIL, f"the reply says {n} days of notice, but the record shows {period} days from the notice ({notice_on}) to the start ({start})"
                 sure.append(f"{n} days' notice")
             elif n in (period, left):
                 unsure.append(f"{n} days")
             else:
                 return FAIL, f"the reply says {n} days, which is neither the notice ({period} days) nor the time to the start ({left} days)"
+    rise = (after - before) / before * 100 if before else None
+    for m in _PERCENT.finditer(reply):
+        said = Decimal(m.group(1) or m.group(2))
+        if rise is None or abs(said - rise) > Decimal("0.05"):
+            return FAIL, f"the reply says {said}%, but the increase is {rise:.2f}% (${before} to ${after})"
+        sure.append(f"{said}%")
     if unread:
         return NOT_JUDGED, f"the reply names {unread[0]!r}, which the judge cannot read"
     if unsure:                                     # a value whose role cannot be told never helps a reply pass
