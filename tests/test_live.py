@@ -88,7 +88,7 @@ def test_a_visitor_with_no_token_starts_live_runs_inside_their_count_and_a_retry
         assert second.status_code == 200 and second.json()["id"] != first.json()["id"]               # every click is a live run
         assert second.json()["limits"]["cases_left"] == 0
         third = click(client, dana, "visitor-click-003", A)
-        assert third.status_code == 429 and "2 cases for today" in third.json()["detail"]
+        assert third.status_code == 429 and "2 runs of our agent" in third.json()["detail"]
         again = click(client, dana, "visitor-click-002", A)                                          # a retry of an answered click is not a new run
         assert again.status_code == 200 and again.json()["id"] == second.json()["id"]
         other = click(client, dana, "visitor-click-004", {"cf-connecting-ip": "203.0.113.99"})       # another visitor has their own count

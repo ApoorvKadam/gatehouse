@@ -317,7 +317,7 @@ def test_operations_shows_what_the_agent_did_and_not_what_it_cost(fms_url, sim):
     """A spend figure answers no question a visitor has at that moment; the server enforces the limit and says so when it is hit."""
     with TestClient(preview(fms_url)) as visitor:
         text = visitor.get("/operations").text
-        assert "Our agent today" in text and "Explorations" in text
+        assert "Our agent today" in text and "Texts explored" in text and "Voicemails read" in text
         assert "Spent" not in text and "$0." not in text
 
 

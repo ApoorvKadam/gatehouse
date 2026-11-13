@@ -677,6 +677,9 @@ GUARDS = {
     evaluate_calls.CONVERTED: "disagree",
     evaluate_calls.ATTEMPT_CLOSED: "late",
     evaluate_calls.STAFF_AS_FMS: "disagree",
+    # the voicemail reader: a part kept that the caller did not state or a phone number, and anything changed because of what a voicemail said
+    evaluate_calls.VM_UNSUPPORTED: "disagree",
+    evaluate_calls.VM_ACTED: "disagree",
 }
 
 

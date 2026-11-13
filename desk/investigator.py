@@ -605,15 +605,22 @@ def check_reminder(inbound: InboundMessage, ask) -> tuple[dict | None, dict | No
         return dropped("the kind is not one of the allowed values")
     if text_id != f"text:in:{inbound.id}":
         return dropped("it rests on a text other than the one being read")
-    words = quote.split() if isinstance(quote, str) else []
-    # whole words: a quote cannot start or end inside a word of the text ("paychec" is not in "paycheck")
-    pattern = (r"(?<!\w)" if words and words[0][0].isalnum() else "") + r"\s+".join(re.escape(w) for w in words) + (r"(?!\w)" if words and words[-1][-1].isalnum() else "")
-    span = re.search(pattern, inbound.body, re.IGNORECASE) if words else None
+    span = find_words(quote, inbound.body)
     words_kept = " ".join(span.group(0).split()) if span else ""
     if not 4 <= len(words_kept) <= MAX_QUOTE:
         return dropped("the quote is not in that text word for word")
     return ({"kind": kind, "text_id": text_id, "quote": words_kept, "text_at": inbound.received_at.isoformat(timespec="seconds")},
             {"asked": True, "accepted": True, "why": "", "kind": asked})
+
+
+def find_words(quote, text: str) -> re.Match | None:
+    """Where the quote's words stand in the text, as whole words, whatever the case and the spacing between them: a quote cannot
+    start or end inside a word of the text ("paychec" is not in "paycheck"). None when they are not there."""
+    words = quote.split() if isinstance(quote, str) else []
+    if not words:
+        return None
+    pattern = (r"(?<!\w)" if words[0][0].isalnum() else "") + r"\s+".join(re.escape(w) for w in words) + (r"(?!\w)" if words[-1][-1].isalnum() else "")
+    return re.search(pattern, text, re.IGNORECASE)
 
 
 def verify(session: Session, scope: Scope, packet: dict, fresh_for: timedelta = SALE_FRESH_FOR) -> dict:
@@ -663,7 +670,63 @@ def verify(session: Session, scope: Scope, packet: dict, fresh_for: timedelta = 
             "lease_id": lease.provider_id, "as_of": item.updated_at.isoformat(timespec="seconds"), "says": says}
 
 
-class Investigation:
+class PaidRun:
+    """What every run of our agent shares, whatever it reads: the model calls it pays for, counted on its row, the heartbeat that
+    shows it is still going, and how it ends."""
+
+    def __init__(self, session: Session, client, row: AgentRun):
+        self.session, self.client, self.row = session, client, row
+
+    def _ask(self, kwargs: dict, worst: float):
+        """One model call, tried at most twice, and never one that could take the run past WORST_RUN_USD; None when the run has
+        reached that limit. The SDK's own retries are off, so every attempt is counted here: an attempt that ended with no answer
+        (a timeout, a dropped connection) may still have been billed, so it is counted at the most it could have cost. An error the
+        provider answered with was not billed, and one that cannot pass (a refused key, a bad request) is not tried again."""
+        client = getattr(self.client, "with_options", lambda **_: self.client)(max_retries=0)
+        for attempt in (1, 2):
+            if self.row.cost_usd + worst > WORST_RUN_USD:
+                return None
+            try:
+                return client.messages.create(**kwargs)
+            except Exception as exc:
+                status = getattr(exc, "status_code", None)
+                if status is None:
+                    self.row.cost_usd += worst
+                    self.session.commit()           # the attempt is paid for whatever happens next
+                if attempt == 2 or (status is not None and status not in RETRY_STATUS and status < 500):
+                    raise
+
+    def _beat(self) -> bool:
+        """Write the heartbeat, but only for a run that is still running, in one statement. False once the desk has given the run
+        up as cut off, and then no more model calls are paid for it. What this run has written so far is saved first, and no
+        transaction stays open while the model is called."""
+        done = self.session.execute(update(AgentRun).where(AgentRun.id == self.row.id, AgentRun.status == "running").values(beat_at=utcnow()))
+        self.session.commit()
+        if done.rowcount != 1:
+            self.session.refresh(self.row)
+            return False
+        return True
+
+    def _count(self, response, worst: float) -> None:
+        """Count an answer from its usage. An answer whose usage cannot be read was billed all the same, so it is counted at its worst."""
+        try:
+            usage = response.usage
+            tokens_in, tokens_out, cost = usage.input_tokens, usage.output_tokens, cost_usd(MODEL, usage)
+        except Exception:
+            log.warning("agent run %s: a model answer had no readable usage, so it is counted at its worst", self.row.id)
+            tokens_in, tokens_out, cost = 0, 0, worst
+        self.row.turns += 1
+        self.row.input_tokens += tokens_in
+        self.row.output_tokens += tokens_out
+        self.row.cost_usd += cost
+        log.info("agent run %s model=%s in=%d out=%d cost=$%.5f total=$%.5f", self.row.id, MODEL, tokens_in, tokens_out, cost, self.row.cost_usd)
+
+    def _end(self, status: str, stop_reason: str | None, error: str | None, **more) -> None:
+        settle(self.session, self.row.id, status=status, stop_reason=stop_reason, error=error, **more)
+        self.session.refresh(self.row)
+
+
+class Investigation(PaidRun):
     """One run of the model over one text."""
 
     def __init__(self, session: Session, client, row: AgentRun, scope: Scope, inbound: InboundMessage, fresh_for: timedelta = SALE_FRESH_FOR):
@@ -791,54 +854,6 @@ class Investigation:
         size = len(system.encode()) + len(json.dumps(TOOLS).encode()) + len(json.dumps(messages, default=_as_data).encode()) + 1024
         price_in, price_out = PRICES[MODEL]
         return (size * price_in + MAX_TOKENS * price_out) / 1_000_000
-
-    def _ask(self, kwargs: dict, worst: float):
-        """One model call, tried at most twice, and never one that could take the run past WORST_RUN_USD; None when the run has
-        reached that limit. The SDK's own retries are off, so every attempt is counted here: an attempt that ended with no answer
-        (a timeout, a dropped connection) may still have been billed, so it is counted at the most it could have cost. An error the
-        provider answered with was not billed, and one that cannot pass (a refused key, a bad request) is not tried again."""
-        client = getattr(self.client, "with_options", lambda **_: self.client)(max_retries=0)
-        for attempt in (1, 2):
-            if self.row.cost_usd + worst > WORST_RUN_USD:
-                return None
-            try:
-                return client.messages.create(**kwargs)
-            except Exception as exc:
-                status = getattr(exc, "status_code", None)
-                if status is None:
-                    self.row.cost_usd += worst
-                    self.session.commit()           # the attempt is paid for whatever happens next
-                if attempt == 2 or (status is not None and status not in RETRY_STATUS and status < 500):
-                    raise
-
-    def _beat(self) -> bool:
-        """Write the heartbeat, but only for a run that is still running, in one statement. False once the desk has given the run
-        up as cut off, and then no more model calls are paid for it. What this run has written so far is saved first, and no
-        transaction stays open while the model is called."""
-        done = self.session.execute(update(AgentRun).where(AgentRun.id == self.row.id, AgentRun.status == "running").values(beat_at=utcnow()))
-        self.session.commit()
-        if done.rowcount != 1:
-            self.session.refresh(self.row)
-            return False
-        return True
-
-    def _count(self, response, worst: float) -> None:
-        """Count an answer from its usage. An answer whose usage cannot be read was billed all the same, so it is counted at its worst."""
-        try:
-            usage = response.usage
-            tokens_in, tokens_out, cost = usage.input_tokens, usage.output_tokens, cost_usd(MODEL, usage)
-        except Exception:
-            log.warning("agent run %s: a model answer had no readable usage, so it is counted at its worst", self.row.id)
-            tokens_in, tokens_out, cost = 0, 0, worst
-        self.row.turns += 1
-        self.row.input_tokens += tokens_in
-        self.row.output_tokens += tokens_out
-        self.row.cost_usd += cost
-        log.info("agent run %s model=%s in=%d out=%d cost=$%.5f total=$%.5f", self.row.id, MODEL, tokens_in, tokens_out, cost, self.row.cost_usd)
-
-    def _end(self, status: str, stop_reason: str | None, error: str | None, **more) -> None:
-        settle(self.session, self.row.id, status=status, stop_reason=stop_reason, error=error, **more)
-        self.session.refresh(self.row)
 
     def _accept(self, packet: dict, stop_reason: str | None, problem: str | None) -> None:
         if problem is not None:
