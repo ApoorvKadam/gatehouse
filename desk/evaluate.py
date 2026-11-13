@@ -675,6 +675,8 @@ GUARDS = {
     evaluate_calls.SECOND_TASK: "twice",
     evaluate_calls.TASK_CLOSED: "disagree",
     evaluate_calls.CONVERTED: "disagree",
+    evaluate_calls.ATTEMPT_CLOSED: "late",
+    evaluate_calls.STAFF_AS_FMS: "disagree",
 }
 
 
