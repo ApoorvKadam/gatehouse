@@ -18,14 +18,13 @@
     <nav aria-label="Main">
       <a href="/" {% if nav == 'front' %}aria-current="page"{% endif %}>Overview</a>
       <a href="/today" {% if nav == 'today' %}aria-current="page"{% endif %}>Today</a>
-      <a href="/reminder-check" {% if nav == 'reminder-check' %}aria-current="page"{% endif %}>Reminder check</a>
-      <a href="/rent-changes" {% if nav == 'rent-changes' %}aria-current="page"{% endif %}>Rent changes</a>
-      <a href="/missed-calls" {% if nav == 'missed-calls' %}aria-current="page"{% endif %}>Missed calls</a>
+      <a href="/calls-and-reminders" {% if nav == 'calls-and-reminders' %}aria-current="page"{% endif %}>Calls and reminders</a>
       <a href="/inbox" {% if nav == 'inbox' %}aria-current="page"{% endif %}>Messages</a>
-      <a href="/evaluation" {% if nav == 'evaluation' %}aria-current="page"{% endif %}>Evaluation</a>
+      <a href="/rent-changes" {% if nav == 'rent-changes' %}aria-current="page"{% endif %}>Rent changes</a>
       <a href="/operations" {% if nav == 'operations' %}aria-current="page"{% endif %}>Operations</a>
+      <a href="/evaluation" {% if nav == 'evaluation' %}aria-current="page"{% endif %}>Evaluation</a>
     </nav>
-    {% if facilities and nav in ('today', 'inbox', 'reminder-check', 'rent-changes', 'missed-calls') %}
+    {% if facilities and nav in ('today', 'calls-and-reminders', 'inbox', 'rent-changes') %}
     <form method="get" action="/{{ nav }}">
       <label for="facility" class="visually-hidden">Facility</label>
       <select id="facility" name="facility" onchange="this.form.submit()">
@@ -42,7 +41,7 @@
 <footer>
   <div class="wrap foot">
     <div class="foot-brand">{% set guard_size = 72 %}{% set guard_pose = "" %}{% include "guard.html" %}<b>Gatehouse</b><span>Unfinished work in self-storage, checked against the FMS.</span></div>
-    <nav class="foot-col" aria-label="Work"><h2>Work</h2><a href="/today">Today</a><a href="/inbox">Messages</a><a href="/reminder-check">Reminder check</a><a href="/rent-changes">Rent changes</a><a href="/missed-calls">Missed calls</a></nav>
+    <nav class="foot-col" aria-label="Work"><h2>Work</h2><a href="/today">Today</a><a href="/calls-and-reminders">Calls and reminders</a><a href="/inbox">Messages</a><a href="/rent-changes">Rent changes</a></nav>
     <nav class="foot-col" aria-label="Proof"><h2>Proof</h2><a href="/evaluation">Evaluation</a><a href="/operations">Operations</a></nav>
     <div class="foot-col"><h2>About</h2><a class="gh-link" href="https://github.com/ApoorvKadam/gatehouse" rel="noopener">{% include "icons/github.svg" %}GitHub</a><span>FMS shapes follow Cubby's public Operator API. Not an official integration.</span></div>
     <p class="foot-note"><b>Synthetic technical preview.</b>Every tenant, payment and document is made up, and nothing on these pages changes a real FMS.</p>

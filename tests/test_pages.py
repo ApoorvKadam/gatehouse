@@ -79,7 +79,7 @@ def test_reading_every_page_writes_nothing(fms_url, sim):
     app = preview(fms_url)
     with TestClient(app) as visitor:
         before = counts(app)
-        pages = ["/", "/today", "/today?facility=fac_NSalbany001", "/reminder-check", "/reminder-check?facility=fac_NSalbany001", "/inbox", "/evaluation", "/operations"]
+        pages = ["/", "/today", "/today?facility=fac_NSalbany001", "/calls-and-reminders", "/calls-and-reminders?facility=fac_NSalbany001", "/inbox", "/evaluation", "/operations"]
         for case_id in range(1, 7):
             pages += [f"/accounts/{case_id}", f"/accounts/{case_id}/lien"]
         pages += ["/payments/1", "/payments/2"]
@@ -207,7 +207,7 @@ def test_the_front_page_shows_every_built_feature_with_a_link_into_it(fms_url, s
                         "A reminder tool should not text a tenant who asked to stop, or who is on a payment plan."):
             assert heading in page
         florida, albany = (f"/accounts/{account_of(app, unit)}/lien" for unit in ("E-505", "D-310"))
-        for link in ("/today", "/payments/1", "/payments/2", florida, albany, "/reminder-check"):
+        for link in ("/today", "/payments/1", "/payments/2", florida, albany, "/calls-and-reminders"):
             assert f'href="{link}"' in page and visitor.get(link).status_code == 200
         assert "cents" not in page   # amounts read as dollars
         # the excerpt is the check's own rows: the tenant who texted STOP, and the arrangement the FMS has not paused
@@ -328,10 +328,10 @@ def test_no_page_names_a_record_by_an_id(fms_url, sim):
     from .test_console import visible
     marker, code = re.compile(r"\[gatehouse work item"), re.compile(r"\b[A-Z]{2,}_[A-Z_]{2,}\b|(?<![/\w])[a-z]{2,}_[a-z_]{2,}\b(?!\.py)")     # a file path such as desk/evaluate_texts.py is not a code
     with TestClient(preview(fms_url)) as client:
-        start = ["/", "/today", "/reminder-check", "/rent-changes", "/inbox", "/evaluation", "/operations"]
+        start = ["/", "/today", "/calls-and-reminders", "/rent-changes", "/inbox", "/evaluation", "/operations"]
         facilities = re.findall(r'<option[^>]*value="([^"]+)"', client.get("/today").text)
         assert len(facilities) == 2
-        start += [f"/{page}?facility={f}" for f in facilities for page in ("today", "inbox", "missed-calls")]
+        start += [f"/{page}?facility={f}" for f in facilities for page in ("today", "inbox", "calls-and-reminders")]
         seen, todo, texts = set(), list(start), {}
         while todo:
             path = todo.pop()
@@ -341,7 +341,7 @@ def test_no_page_names_a_record_by_an_id(fms_url, sim):
             page = client.get(path)
             assert page.status_code == 200, path
             texts[path] = visible(page.text)
-            for link in re.findall(r'href="(/(?:accounts|payments|access|sales|inbox)[^"#]*)"', page.text):
+            for link in re.findall(r'href="(/(?:accounts|payments|access|sales|inbox|calls-and-reminders)[^"#]*)"', page.text):
                 todo.append(link.replace("&amp;", "&"))
         assert len(seen) >= 30 and sum("text=" in p for p in seen) >= 5, sorted(seen)
         for path, text in texts.items():
@@ -351,3 +351,16 @@ def test_no_page_names_a_record_by_an_id(fms_url, sim):
         everything = " ".join(texts.values())
         for said in ("Staff confirmation required", "applied on the FMS ledger", "recorded in the FMS", "Auction record found for this lease", "Duplicate protection"):
             assert said in everything, said
+
+
+def test_the_old_addresses_of_the_two_lists_land_on_calls_and_reminders(fms_url, sim):
+    """Reminder check and Missed calls are two lists on one page now; a bookmark to either still arrives at its own list."""
+    with TestClient(preview(fms_url)) as client:
+        for old, anchor in (("/reminder-check", "#reminders"), ("/missed-calls", "#calls")):
+            for facility in ("", "?facility=fac_NSalbany001"):
+                moved = client.get(old + facility, follow_redirects=False)
+                assert moved.status_code == 301 and moved.headers["location"] == "/calls-and-reminders" + facility + anchor
+        page = client.get("/calls-and-reminders").text
+        assert page.count('aria-current="page"') == 1 and ">Calls and reminders</a>" in page and 'id="calls"' in page and 'id="reminders"' in page
+        assert page.index('id="calls"') < page.index('id="reminders"')            # the callers waiting come first
+        assert ">Reminder check</a>" not in page and ">Missed calls</a>" not in page   # one tab, not two

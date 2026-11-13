@@ -179,17 +179,19 @@ def test_a_paid_account_loses_its_verdict_and_the_rest_stay(session, adapter, si
 def test_the_page_and_the_api_show_who_must_not_be_texted_and_why(fms_url, sim):
     with TestClient(preview(fms_url)) as visitor:
         page = visitor.get("/reminder-check").text
-        assert "Reminder check at Northstar Storage, Orlando East" in page and "Gatehouse sends nothing" in page
+        assert "Calls and reminders at Northstar Storage, Orlando East" in page and "sends no text" in page and 'id="reminders"' in page
         found = re.search(r"(\d+) of (\d+) past-due accounts should not get a text today", page)
         assert found and int(found.group(1)) == 4 and int(found.group(2)) == 5          # Omar is past due with nothing in the way
-        # only the tenant who texted STOP is labelled a must-not; the rest are held for a person or for a fix
-        assert page.count("Must not be texted") == 1 and "Not paused in the FMS" in page and page.count('class="chip act"') == 1
+        # only the tenant who texted STOP is labelled a must-not; the rest are held for a person or for a fix (counted in the reminder list
+        # alone, since the missed calls above it carry chips of their own)
+        reminders = page[page.index('id="reminders"'):]
+        assert reminders.count("Must not be texted") == 1 and "Not paused in the FMS" in reminders and reminders.count('class="chip act"') == 1
         assert page.count("Clear to text") == 1 and "Unit F-610" in page and "Nothing in the records says this tenant should not be texted." in page
         for reason in ("has not paused collections texts for it", "This number texted STOP", "A lien file has begun for this account",
                        "arrangement on unit A-012"):
             assert reason in page, reason
         albany = visitor.get("/reminder-check", params={"facility": "fac_NSalbany001"}).text
-        assert "Reminder check at Northstar Storage, Albany Central" in albany and "A lien file has begun for this account" in albany
+        assert "Calls and reminders at Northstar Storage, Albany Central" in albany and "A lien file has begun for this account" in albany
         assert visitor.get("/reminder-check", params={"facility": "fac_HBtampa0001"}).status_code == 404
         rows = visitor.get(f"/api/facilities/{ORLANDO}/reminder-check").json()["rows"]
         marcus = next(r for r in rows if r["lease"] == "lease_BellC0207")
