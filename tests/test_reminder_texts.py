@@ -379,7 +379,7 @@ def test_the_case_notes_say_what_the_agent_asked_for_and_that_the_check_holds_it
         line = reminder_line(client, priya)
         assert line == ('Our agent read their words as a dispute of what is owed: "I got a reminder text". It asked the facility to wait before '
                         'texting them, and the check now holds their texts for a person. Open the Reminder check')
-        assert f'href="/reminder-check?facility={ORLANDO}"' in client.get(f"/inbox?text={priya}").text            # the wait stands, so there is a row to open
+        assert f'href="/calls-and-reminders?facility={ORLANDO}#reminders"' in client.get(f"/inbox?text={priya}").text            # the wait stands, so there is a row to open
 
 
 def test_the_case_notes_do_not_claim_a_hold_for_a_tenant_who_owes_nothing(fms_url, sim):
