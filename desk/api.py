@@ -27,7 +27,7 @@ from .cases import queue, sync_facility
 from .config import Settings
 from .guard import ASK, LIFETIME, SLOW_DOWN, UNSET, Guard, Unreachable
 from .conversation import Conversation
-from . import integration, spend
+from . import integration, spend, voicemail
 from .investigator import CALL_TIMEOUT, SALE_FRESH_FOR, investigate, run_view
 from .investigator import progress as run_progress
 from .lien_files import ensure_append_only, evaluate_case, record_evidence, replay
@@ -37,7 +37,7 @@ from .messaging import inbox, match_pending, outbound_view, play_tenant, receive
 from .reminder_check import with_texts
 from .models import (
     AgentRun, CaseEvent, DelinquencyCase, DeskBinding, Facility, InboundMessage, Lease, LedgerSnapshot, LienEvaluation, PaymentCommand,
-    ReminderCheck, RentChangeCheck,
+    ReminderCheck, RentChangeCheck, WorkItem,
 )
 from .payments import (
     IdentityClaim, PaymentRefused, PaymentService, check_identity, collected, confirm, propose, tenant_message,
@@ -91,6 +91,11 @@ class InvestigateIn(BaseModel):
     request_id: str = Field(min_length=8, max_length=64,
                             description="chosen by the screen for each request and kept for its retries; sending it twice is one run")
     again: bool = Field(default=False, description="prepare the case again on a text that already has notes")
+
+
+class ReadVoicemailIn(BaseModel):
+    voicemail: str = Field(min_length=16, max_length=16, description="the version of the voicemail the page shows; a call that now carries other words is refused")
+    again: bool = Field(default=False, description="read the voicemail again when it already has a reading")
 
 
 class PlayIn(BaseModel):
@@ -504,7 +509,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
     def agent_run(run_id: int, request: Request, session: Session = Depends(db), who: str = Depends(viewer)):
         """One run with its trace: every model turn and lookup, and the records each lookup returned."""
         run = session.get(AgentRun, run_id)
-        message = session.get(InboundMessage, run.inbound_id) if run is not None else None
+        message = session.get(InboundMessage, run.inbound_id) if run is not None and run.inbound_id is not None else None
         facility = session.get(Facility, message.facility_id) if message is not None and message.facility_id is not None else None
         if run is None or facility is None or not seen_by(message, who, request):
             raise HTTPException(404, "run not found")
@@ -658,6 +663,43 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         except missed_calls.CallbackRefused as exc:
             raise HTTPException(409, str(exc)) from exc
         return {"id": record.id, "outcome": record.outcome, "recorded_at": record.recorded_at.isoformat(), "closed": closed}
+
+    def call_item(session: Session, item_id: int) -> WorkItem:
+        """A missed call's item on a facility the current FMS key can see; anything else is answered as not found."""
+        item = session.get(WorkItem, item_id)
+        facility = session.get(Facility, item.facility_id) if item is not None and item.kind == missed_calls.KIND else None
+        if facility is None:
+            raise HTTPException(404, "call not found")
+        check_facility(session, facility.provider_id)
+        return item
+
+    @app.post("/api/missed-calls/{item_id}/voicemail-reading")
+    def read_call_voicemail(item_id: int, body: ReadVoicemailIn, request: Request, response: Response, session: Session = Depends(db),
+                            who: str = Depends(actor)):
+        """Our agent reads the caller's voicemail and the desk keeps each part whose words stand in it. It writes nothing anywhere else:
+        no FMS write, no text, no call back record. The same budget and allowance as a text's exploration."""
+        if chat_client is None:
+            raise HTTPException(503, "the desk has no model key configured")
+        require_check(request, who)
+        item = call_item(session, item_id)
+        visitor = spend.visitor_of(request) if who == "visitor" else None
+        try:
+            run, _started = voicemail.read_voicemail(session, chat_client, item, body.voicemail, body.again or who == "visitor", visitor,
+                                                     lambda s, exclude: spend.refusal(s, settings.daily_budget_usd, settings.visitor_cases_per_day, visitor, exclude))
+        except spend.Refused as exc:
+            raise HTTPException(429, str(exc)) from exc
+        except (voicemail.Stale, voicemail.Busy) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        if run.status == "running":
+            response.status_code = 202          # another request's reading is going; the page polls the call for it
+        return voicemail.reading_view(run)
+
+    @app.get("/api/missed-calls/{item_id}/voicemail-reading")
+    def call_voicemail_reading(item_id: int, session: Session = Depends(db), _: str = Depends(viewer)):
+        """The newest reading of the words the call carries now, going or done, or null."""
+        return {"reading": voicemail.reading_view(voicemail.latest_reading(session, call_item(session, item_id)))}
 
     @app.get("/api/integration")
     def integration_open(session: Session = Depends(db), _: str = Depends(viewer)):

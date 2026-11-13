@@ -27,6 +27,26 @@
               {% if r.task %}<p class="work-proof">{{ r.task }}</p>{% endif %}
               {% for c in r.records %}<p class="work-proof">{{ outcomes[c.outcome] }}{% if c.note %}: "{{ c.note|readable }}"{% endif %}{{ '' if c.note and c.note[-1] in '.!?' else '.' }} Recorded by {{ c.recorded_by }}, {{ local(c.recorded_at) }}.</p>{% endfor %}
             <p class="work-proof muted">Done when: {{ r.proof }}</p>
+            {% if r.voicemail %}
+            <div class="vm" data-vm="{{ r.id }}" data-version="{{ r.voicemail }}"{% if r.reading and r.reading.status == 'running' %} data-running="1"{% endif %}>
+              <p class="vm-step"{% if not (r.reading and r.reading.status == 'running') %} hidden{% endif %}><span class="chip wait">Running</span>Our agent is reading the voicemail.</p>
+              {% if r.reading and r.reading.status != 'running' %}
+              <div class="vm-read">
+                <h3>What the caller stated</h3>
+                {% if r.reading.kept %}
+                <dl class="vm-parts">{% for k in r.reading.kept %}<div><dt>{{ k.label }}</dt><dd><span class="chip plain">Caller stated</span>"{{ k.quote|readable }}"</dd></div>{% endfor %}</dl>
+                {% endif %}
+                {% if r.reading.unknown %}<p class="work-proof">{{ r.reading.unknown }}</p>{% endif %}
+                {% for d in r.reading.dropped %}<p class="work-proof muted small">Not kept, {{ d.label|lower }}: "{{ d.quote|readable }}". {{ d.why|upfirst }}.</p>{% endfor %}
+                <p class="small muted">Our agent read the voicemail, and the desk kept only the caller's own words. A voicemail changes nothing in the FMS and sends nothing. Call back on the number the phone system gave.</p>
+              </div>
+              {% endif %}
+              {% if live %}
+              <p class="vm-foot"><button class="button" type="button" data-read="{{ r.id }}">{{ 'Read again' if r.reading and r.reading.status != 'running' else 'Read the voicemail with our agent' }}</button></p>
+              <p class="small" data-read-error role="alert" hidden></p>
+              {% endif %}
+            </div>
+            {% endif %}
             </td>
           </tr>
         {% endfor %}
@@ -34,6 +54,7 @@
       </table>
     </div>
     <p class="small muted">The calls come from the phone system's own log, not the FMS; in this preview both are simulated.</p>
+    {% if check and not check.verified %}<div class="cf-turnstile" data-sitekey="{{ check.sitekey }}" data-action="visit" data-appearance="interaction-only" data-callback="gatehouseChecked" data-error-callback="gatehouseCheckFailed"></div>{% endif %}
     {% else %}
     <p class="empty">No missed call is waiting at this facility.</p>
     {% endif %}
@@ -83,4 +104,43 @@
   </section>
   {% endif %}
 </div>
+{% if live %}
+{% include "check_script.html" %}
+<script>
+// read a caller's voicemail with our agent: the button waits for the bot check, the page shows the reading going from the live run, and
+// reloads with the reading once the desk has checked it
+(function () {
+  document.querySelectorAll("[data-vm]").forEach(function (box) {
+    var id = box.getAttribute("data-vm"), version = box.getAttribute("data-version");
+    var button = box.querySelector("[data-read]"), step = box.querySelector(".vm-step"), error = box.querySelector("[data-read-error]");
+    var read = box.querySelector(".vm-read"), label = button ? button.textContent : "";
+    function watch() {
+      fetch("/api/missed-calls/" + id + "/voicemail-reading").then(function (r) {
+        if (!r.ok) { failed("The reading could not be loaded. Reload the page."); return; }      // only a dropped connection is tried again
+        return r.json().then(function (b) { if (b && b.reading && b.reading.status !== "running") location.reload(); else setTimeout(watch, 1000); });
+      }, function () { setTimeout(watch, 3000); })
+        .catch(function () { failed("The reading could not be loaded. Reload the page."); });
+    }
+    function going() { step.hidden = false; if (read) read.hidden = true; if (button) { button.disabled = true; button.textContent = "Reading..."; } }
+    function failed(text) {
+      step.hidden = true; if (read) read.hidden = false;
+      if (button) { button.disabled = false; button.textContent = label; }
+      if (error) { error.textContent = text; error.hidden = false; }
+    }
+    if (box.hasAttribute("data-running")) { going(); watch(); }
+    if (!button) return;
+    button.addEventListener("click", function () {
+      going(); if (error) error.hidden = true;
+      checked().then(function () {
+        return fetch("/api/missed-calls/" + id + "/voicemail-reading", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ voicemail: version, again: true }) });
+      }).then(function (r) { return r.json().then(function (body) { return { code: r.status, body: body }; }); }).then(function (res) {
+        if (res.code === 200) { location.reload(); return; }
+        if (res.code === 202) { watch(); return; }
+        failed(res.body && typeof res.body.detail === "string" ? res.body.detail : "Our agent could not read it just now. Try again in a minute.");
+      }).catch(function (err) { failed(err && err.check ? err.message : "The request failed. Try again."); });
+    });
+  });
+})();
+</script>
+{% endif %}
 {% endblock %}
