@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import JSON, Boolean, CheckConstraint, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base, utcnow
@@ -386,17 +386,25 @@ def record_kind(record_id: str, text: str | None) -> str:
 
 
 class AgentRun(Base):
-    """One investigation of one inbound text: what Claude was shown, which records it looked at, the packet it submitted, what
-    the desk checked itself, and what the model calls cost. The packet is Claude's work; `verified` is the desk's own check of
-    it against its records, and the two are kept apart on purpose."""
+    """One run of our agent: an investigation of one inbound text, or a reading of one missed call's voicemail. It keeps what the
+    model was shown, which records it looked at, what it submitted, what the desk checked itself, and what the model calls cost. The
+    packet is the model's work; `verified` is the desk's own check of it, and the two are kept apart on purpose. Both kinds count in
+    the same day's budget and the same visitor allowance."""
 
     __tablename__ = "agent_runs"
-    # the database, not a read before the insert, keeps two requests from running the model twice on the same text: one run
-    # at a time, and a text's runs are numbered, so a second run without `again` finds the first one's number taken
+    # the database, not a read before the insert, keeps two requests from running the model twice on the same text or voicemail: one
+    # run at a time, and the runs are numbered, so a second run without `again` finds the first one's number taken
     __table_args__ = (Index("one_running_run_per_text", "inbound_id", unique=True, sqlite_where=_RUNNING_SQL, postgresql_where=_RUNNING_SQL),
-                      UniqueConstraint("inbound_id", "generation"))
+                      UniqueConstraint("inbound_id", "generation"),
+                      Index("one_running_reading_per_call", "work_item_id", unique=True, sqlite_where=_RUNNING_SQL, postgresql_where=_RUNNING_SQL),
+                      UniqueConstraint("work_item_id", "generation"),
+                      CheckConstraint("(inbound_id IS NULL) <> (work_item_id IS NULL)", name="one_subject"))
     id: Mapped[int] = mapped_column(primary_key=True)
-    inbound_id: Mapped[int] = mapped_column(ForeignKey("inbound_messages.id"))
+    inbound_id: Mapped[int | None] = mapped_column(ForeignKey("inbound_messages.id"), nullable=True)
+    # a reading of a missed call's voicemail: the call's work item, and a hash of the exact words read, so a reading of words the
+    # caller's item no longer carries is never shown as the reading of the words on the page
+    work_item_id: Mapped[int | None] = mapped_column(ForeignKey("work_items.id"), nullable=True, index=True)
+    voicemail_hash: Mapped[str | None] = mapped_column(String, nullable=True)
     generation: Mapped[int] = mapped_column(Integer, default=1)
     # a preview visitor, as a short hash of where the request came from; none for an operator. It counts a visitor's cases for the day.
     visitor: Mapped[str | None] = mapped_column(String, nullable=True, index=True)

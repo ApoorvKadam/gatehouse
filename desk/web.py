@@ -31,7 +31,7 @@ from .models import (
 from .payments import tenant_message
 from .messaging import in_quiet_hours
 from .reminder_check import hold_note, with_texts
-from . import missed_calls, rent_changes
+from . import missed_calls, rent_changes, voicemail
 from .sequence import sequence
 from .wording import TROUBLES, plain, words
 
@@ -630,14 +630,19 @@ def router(pages: Pages) -> APIRouter:
             call_rows = [{"id": w.id, "label": (w.observed or {}).get("label") or "A caller", "who": (w.observed or {}).get("who"),
                           "calls": len((w.observed or {}).get("calls", [])), "since": local(w.opened_at), "problem": w.problem,
                           "task": missed_calls.AFTER if (w.observed or {}).get("callback") == "spoke" else missed_calls.task_words(w),
-                          "proof": w.closing_evidence, "records": missed_calls.callback_records(s, w), "waiting": (w.observed or {}).get("callback") != "spoke"}
+                          "proof": w.closing_evidence, "records": missed_calls.callback_records(s, w), "waiting": (w.observed or {}).get("callback") != "spoke",
+                          "voicemail": voicemail.digest((w.observed or {})["voicemail"]) if (w.observed or {}).get("voicemail") else None,
+                          "reading": voicemail.reading_view(voicemail.latest_reading(s, w))}
                          for w in missed_calls.open_calls(s, current)]
+            checked = pages.guard is not None and pages.guard.on
+            check = {"sitekey": pages.guard.sitekey, "verified": pages.guard.valid(request.cookies.get(spend.COOKIE)) is not None} if pages.live and checked else None
             return templates.TemplateResponse(request, "calls_and_reminders.html", {
                 "facilities": facilities, "facility": current, "call_rows": call_rows, "waiting": sum(1 for r in call_rows if r["waiting"] and r["who"] not in ("withheld", "short", "shared")),   # only callers who can be called
                 "won": missed_calls.closed_calls(s, current), "by_staff": missed_calls.closed_calls(s, current, by_staff=True), "outcomes": missed_calls.OUTCOMES,
                 "chips": missed_calls.CHIPS, "who_words": missed_calls.WHO_WORDS, "local": local,
                 "reminder_rows": reminder_rows, "holds": sum(1 for row in reminder_rows if row["state"] == "hold"),
-                "quiet": in_quiet_hours(current, utcnow()), "check_chips": CHECK_CHIPS, "money": money, "nav": "calls-and-reminders"})
+                "quiet": in_quiet_hours(current, utcnow()), "check_chips": CHECK_CHIPS, "money": money, "nav": "calls-and-reminders",
+                "live": pages.live, "check": check})
 
     @r.get("/reminder-check")
     def reminder_check_moved(facility: str | None = None):
@@ -832,7 +837,7 @@ def router(pages: Pages) -> APIRouter:
                         "Access": ago(s.scalar(select(func.max(AccessView.observed_at))), now)}
             runs = s.scalars(select(AgentRun).where(AgentRun.started_at >= spend.day_start(now))).all()
             outcomes = Counter(a.get("outcome") for r in runs for a in (r.actions or []) if a.get("kind") == "staff_review")
-            agent = {"runs": len(runs),
+            agent = {"runs": sum(1 for r in runs if r.inbound_id is not None), "readings": sum(1 for r in runs if r.work_item_id is not None),
                      "confirmed": outcomes["linked"] + outcomes["requested"], "unconfirmed": outcomes["not_confirmed"] + outcomes["refused"]}
             return templates.TemplateResponse(request, "operations.html", {
                 "open_work": open_work, "by_who": by_who.most_common(), "by_part": by_part.most_common(), "peak": max(by_who.values(), default=1),

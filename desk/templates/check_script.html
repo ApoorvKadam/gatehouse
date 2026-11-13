@@ -1,0 +1,24 @@
+{# the bot check a visitor passes once before a run or a typed text; pages include it with a check from web.py #}
+{% if check and not check.verified %}<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>{% endif %}
+<script>
+// the bot check: a press waits for it once, and a browser that has passed already has nothing to wait for
+var gatehouseCheck = Promise.resolve();
+function checkError(text) { var e = new Error(text); e.check = true; return e; }
+{% if check and not check.verified %}
+gatehouseCheck = new Promise(function (resolve, reject) {
+  window.gatehouseChecked = function (token) {
+    fetch("/api/visitor", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: token }) })
+      .then(function (r) {
+        if (r.ok) { resolve(); return; }
+        return r.json().then(function (body) { reject(checkError(body && typeof body.detail === "string" ? body.detail : "The quick check did not pass. Reload the page and try again.")); });
+      })
+      .catch(function () { reject(checkError("The quick check could not run. Reload the page and try again.")); });
+  };
+  window.gatehouseCheckFailed = function () { reject(checkError("The quick check could not run. Reload the page and try again.")); };
+});
+gatehouseCheck.catch(function () {});
+{% endif %}
+function checked() {
+  return Promise.race([gatehouseCheck, new Promise(function (_, reject) { setTimeout(function () { reject(checkError("The quick check could not run. Reload the page and try again.")); }, 20000); })]);
+}
+</script>

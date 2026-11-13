@@ -168,7 +168,7 @@ def problem(who: Who, calls: list[dict], zone: str | None) -> str:
             "unknown": "The FMS has no customer with this number. Gatehouse creates no lead or customer from a caller ID alone.",
             "withheld": "The caller withheld their number, so there is no one to look up or call back.",
             "short": "The caller ID has fewer than ten digits, so Gatehouse looks nobody up with it: a person decides who called."}[who.kind]
-    voicemail = next((c["voicemail"] for c in calls if c.get("voicemail")), None)
+    voicemail = next((c["voicemail"] for c in reversed(calls) if c.get("voicemail")), None)
     return f"{rang} {said}" + (f' Voicemail: "{voicemail}"' if voicemail else " No voicemail.")
 
 
@@ -176,7 +176,7 @@ def task_for(who: Who, calls: list[dict], number: str, zone: str | None) -> tupl
     """The callback a person is asked for, or None when there is no one to call (a withheld number) or no one to name (a shared number)."""
     if who.kind in ("withheld", "shared", "short"):
         return None
-    voicemail = next((c["voicemail"] for c in calls if c.get("voicemail")), None)
+    voicemail = next((c["voicemail"] for c in reversed(calls) if c.get("voicemail")), None)
     lines = [f"Missed call from {number} on {said_when(_at(calls[0]['at']), zone)}" + (f", and {len(calls) - 1} more since." if len(calls) > 1 else ".")]
     if voicemail:
         lines.append(f'Voicemail: "{voicemail}"')
@@ -245,7 +245,8 @@ def reconcile_missed_calls(session: Session, adapter: FMSAdapter, facility: Faci
             observed.pop("callback")                # a later call is a new call to return: the earlier call back does not cover it
             item.who_acts = WHO
         observed.update(calls=[c["callId"] for c in mine], who=who.kind, label=label(who, number),
-                        lead=getattr(who.lead, "provider_id", None), customer=who.customer)
+                        lead=getattr(who.lead, "provider_id", None), customer=who.customer,
+                        voicemail=next((c["voicemail"] for c in reversed(mine) if c.get("voicemail")), None))   # the newest words staff read, as the phone system gave them
         if who.lead is not None and who.lead.status in OPEN_LEAD:
             observed["lead_status"] = who.lead.status     # what the lead was while the call was open; an end after it closes the item
         if item is None:

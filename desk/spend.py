@@ -78,11 +78,11 @@ def allowance(session: Session, budget_usd: float, cases_per_day: int, visitor: 
     left = max(0.0, budget_usd - spent_today(session, now, exclude))
     cases_left = None if visitor is None else max(0, cases_per_day - cases_today(session, visitor, now, exclude))
     if cases_left == 0:
-        return Allowance(False, f"You have used your {cases_per_day} cases for today. They come back at midnight, New York time.", 0, left)
+        return Allowance(False, f"You have used today's {cases_per_day} runs of our agent. They come back at midnight, New York time.", 0, left)
     if visitor is not None and left < WORST_RUN_USD:
         return Allowance(False, "Today's budget for live runs is used up. It comes back at midnight, New York time.", cases_left, left)
     if running(session, exclude) >= MAX_RUNNING:
-        return Allowance(False, "Cases are being prepared for other visitors. Try again in a minute.", cases_left, left)
+        return Allowance(False, "Our agent is busy with other visitors. Try again in a minute.", cases_left, left)
     return Allowance(True, None, cases_left, left)
 
 
