@@ -35,6 +35,10 @@ Our agent does the reading: it looks up the tenant's records, writes the case no
 - **Simulated:** the FMS, with its gate codes and unit locks, the phone system's missed-call log and the outside auction site. The FMS simulator follows Cubby's public API documentation, including its awkward parts: a decline still answers 200, a pending payment must never be retried, and a text has no idempotency key.
 - **Not shown yet:** no operator has used it. All tenants, facilities and payments are synthetic.
 
+## Checks against a real FMS
+
+`fms_checks` asks whether an agent tells a tenant only what the FMS shows right now, judged against a real FMS test account (it works with Stora's public API), not the simulator. Two checks: a locked unit after the tenant says they paid, and how much notice a rent increase gave. On the test account, the sample agent that reads the record passed 11 of 11 access runs and 3 of 3 notice runs; the sample agent with a wrong belief failed 9 of 10 access runs (once it declined) and 3 of 3 notice runs. An outside agent can answer over HTTPS; none has yet. How it judges and how to plug in an agent: [docs/agent-checks.md](docs/agent-checks.md).
+
 ## Run it
 
 ```bash
@@ -53,4 +57,4 @@ docker build --target test -t gatehouse:test . && docker run --rm gatehouse:test
 - The live preview: [gatehouse-peug.onrender.com](https://gatehouse-peug.onrender.com), on synthetic data.
 - The [full write-up](docs/details.md): where it fits next to the vendors, each part in depth, the API, the Florida lien rules and the limits.
 
-The FMS simulator is not an official Cubby integration. Lien-law reference data is from the [Stitch Storage dataset](https://stitchstorage.com/self-storage-lien-laws/data), CC BY 4.0. Gatehouse does not give legal advice, process real payments or authorize property sales.
+The FMS simulator is not an official Cubby integration, and `fms_checks` is not an official Stora integration. Lien-law reference data is from the [Stitch Storage dataset](https://stitchstorage.com/self-storage-lien-laws/data), CC BY 4.0. Gatehouse does not give legal advice, process real payments or authorize property sales.

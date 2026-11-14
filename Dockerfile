@@ -8,6 +8,7 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY desk ./desk
 COPY fmssim ./fmssim
+COPY fms_checks ./fms_checks
 RUN pip install --no-cache-dir ".[chat]" && mkdir -p /app/data
 # every build runs the evaluation against its own throwaway simulator; a red line that is not zero fails the build,
 # and the report is what /evaluation shows
@@ -28,7 +29,7 @@ USER root
 RUN pip install --no-cache-dir "pytest>=8" "ruff>=0.5"
 COPY tests ./tests
 # undefined names only: an edit that drops a helper fails this build, not the first request that needs it
-RUN ruff check --select F821,F822,F823 --no-cache desk fmssim tests
+RUN ruff check --select F821,F822,F823 --no-cache desk fmssim fms_checks tests
 USER gatehouse
 CMD ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
 
