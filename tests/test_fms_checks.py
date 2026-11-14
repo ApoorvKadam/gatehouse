@@ -146,7 +146,7 @@ class FakeStora:
     def unit_access(self, unit_id):
         return unit(self.after_lock if self.locked else OPEN)
 
-    def held_units(self):
+    def held_units(self, contact_id=None):
         return Read("units", 200, "r-units", "t", ["unit_1"] if self.locked else [])
 
 
@@ -522,7 +522,7 @@ def test_a_list_page_without_its_list_is_no_read_and_stops_the_run(tmp_path):
     assert held.value is None and held.http_status != 200
 
     class Unreadable(FakeStora):
-        def held_units(self):
+        def held_units(self, contact_id=None):
             return Read("units", 200, None, "t", None, "unreadable page")
     stora2 = Unreadable(after_lock=RESTRICTED)
     out = access.run(Agent("x"), judge_saying("can_enter", "x"), stora2, stora2, SESSION, tmp_path / "r.jsonl")
@@ -546,3 +546,24 @@ def test_a_lost_schedule_answer_is_asked_again_and_the_record_still_kept(tmp_pat
     assert len(keys) == 2 and keys[0] == keys[1] and results[0]["clean_up"] == "done"
     events = [json.loads(line).get("event") for line in record.read_text().splitlines() if line.strip()]
     assert "scheduled record" in events
+
+
+def test_only_the_tenants_own_held_units_stop_a_run():
+    def held(uid, tenancy):
+        return {"id": uid, "status": "overlock", "unit_allocation": {"tenancy": tenancy}}
+    units = [held("u_mine", {"id": "t_mine", "contact": {"id": "con_me"}}), held("u_other", {"id": "t_other", "contact": {"id": "con_fixture"}}),
+             held("u_unknown", "t_gone"), held("u_blank", {"id": "t_blank", "contact": {"id": ""}}),
+             {"id": "u_open", "status": "occupied", "unit_allocation": {"tenancy": {"id": "t_mine", "contact": {"id": "con_me"}}}}]
+    asked = []
+
+    def handler(request):
+        if request.url.path == "/oauth2/token":
+            return httpx.Response(200, json={"access_token": "t", "expires_in": 7200})
+        asked.append(request.url.path)
+        assert request.url.params["expand"] == "unit_allocation,unit_allocation.tenancy"
+        return httpx.Response(200, json={"units": units, "meta": {"request_id": "r", "pagination": {"next": None}}})
+
+    stora = Stora(READ_ONLY, client_id="id", client_secret="s", http=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert stora.held_units("con_me").value == ["u_mine", "u_unknown", "u_blank"]   # another tenant's lock is not ours to worry about
+    assert stora.held_units().value == ["u_mine", "u_other", "u_unknown", "u_blank"]
+    assert asked == ["/2025-09/units"] * 2                                 # one list a read, never a request per unit

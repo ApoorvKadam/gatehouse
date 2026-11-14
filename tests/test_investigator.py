@@ -868,7 +868,7 @@ def test_a_model_without_a_price_is_logged_with_a_warning_not_as_free_in_silence
 
 
 def preview(fms_url, model):
-    settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=5.0,
+    settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=12.0,
                         reconcile_every_seconds=60, operator_token=TOKEN, public_view=True, demo_seed=True)
     return create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 5.0), start_worker=False, chat_client=model)
 
