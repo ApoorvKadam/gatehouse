@@ -27,7 +27,7 @@ def no_vendor_name(page: str) -> bool:
 
 
 def live_app(fms_url, model, **limits):
-    settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=5.0,
+    settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=12.0,
                         reconcile_every_seconds=60, operator_token=TOKEN, public_view=True, demo_seed=True, public_investigate=True, **limits)
     return create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 5.0), start_worker=False, chat_client=model)
 

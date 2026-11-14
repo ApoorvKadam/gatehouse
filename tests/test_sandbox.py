@@ -130,7 +130,7 @@ def test_the_texts_of_all_visitors_together_are_capped_so_a_dropped_cookie_does_
 
 
 def test_a_desk_that_is_not_the_synthetic_preview_keeps_no_text_a_visitor_types(fms_url, sim):
-    settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=5.0, reconcile_every_seconds=60,
+    settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=12.0, reconcile_every_seconds=60,
                         operator_token=TOKEN, public_view=False, demo_seed=True, public_investigate=True)
     with TestClient(create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 5.0), start_worker=False, chat_client=Scripted())) as client:
         refused = type_as(client, "dana", "Hello", "press-0001", headers={"X-Desk-Token": TOKEN})

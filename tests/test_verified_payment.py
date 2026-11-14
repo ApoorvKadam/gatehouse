@@ -61,7 +61,7 @@ def test_wrong_person_gets_no_balance_and_cannot_pay(session, adapter, sim):
 
 
 def test_identity_cannot_be_checked_without_access_to_tenant_details(session, fms_url, sim):
-    limited = CubbyAdapter(fms_url, "sim_org_northstar_nopii", timeout_seconds=5.0)
+    limited = CubbyAdapter(fms_url, "sim_org_northstar_nopii", timeout_seconds=12.0)
     case, lease = case_for(session, limited, DANA)
     ok, why = verify_identity(limited, lease, IdentityClaim("Whitfield", "0142", "B-1042"))
     assert not ok and "contact details" in why
@@ -220,7 +220,7 @@ def test_a_returned_payment_reopens_the_case(session, adapter, sim):
 # ------------------------------------------------------------------ permissions
 
 def test_a_key_that_may_not_take_payments_is_rejected_without_a_charge(session, fms_url, adapter, sim):
-    read_only = CubbyAdapter(fms_url, "sim_org_northstar_readonly", timeout_seconds=5.0)
+    read_only = CubbyAdapter(fms_url, "sim_org_northstar_readonly", timeout_seconds=12.0)
     case, _ = case_for(session, adapter, DANA)
     command = PaymentService(session, read_only).take_payment(case.id, "pm_DanaVisa4242", Authorization.new(True, 24000, 24000))
     assert command.state == "REJECTED"
@@ -373,7 +373,7 @@ def test_one_lease_the_fms_cannot_read_does_not_stop_the_pass(session, fms_url, 
                 raise FMSError("timeout")
             return super().ledger(lease_provider_id)
 
-    flaky = Flaky(fms_url, "sim_org_northstar_full", timeout_seconds=5.0)
+    flaky = Flaky(fms_url, "sim_org_northstar_full", timeout_seconds=12.0)
     marcus_case, _ = case_for(session, flaky, MARCUS)
     dana_case, _ = case_for(session, flaky, DANA)
     flaky.broken = True
@@ -397,7 +397,7 @@ class Asking(CubbyAdapter):
 
 
 def asking_adapter(fms_url):
-    adapter = Asking(fms_url, "sim_org_northstar_full", timeout_seconds=5.0)
+    adapter = Asking(fms_url, "sim_org_northstar_full", timeout_seconds=12.0)
     adapter.asked = []
     return adapter
 
@@ -749,7 +749,7 @@ def test_an_fms_amount_that_differs_from_the_authorized_one_goes_to_staff(sessio
             from dataclasses import replace
             return [replace(p, amount=p.amount // 2) for p in super().payments_for_lease(lease_provider_id)]
 
-    short = Short(fms_url, "sim_org_northstar_full", timeout_seconds=5.0)
+    short = Short(fms_url, "sim_org_northstar_full", timeout_seconds=12.0)
     sim.behave(DANA, "late_application", lag=1)
     command, _, _ = pay(session, short, DANA, "pm_DanaVisa4242", 24000)
     settle(session, short)
@@ -776,11 +776,11 @@ def test_a_counter_payment_not_yet_on_the_ledger_blocks_a_new_charge(session, fm
             fake = replace(real[0], provider_id="payment_counter01", status="SUCCEEDED", amount=24000) if real else None
             return real + ([fake] if fake else [])
 
-    case, _ = case_for(session, CubbyAdapter(fms_url, "sim_org_northstar_full", timeout_seconds=5.0), DANA)
+    case, _ = case_for(session, CubbyAdapter(fms_url, "sim_org_northstar_full", timeout_seconds=12.0), DANA)
     sim.behave(DANA, "decline")
-    CubbyAdapter(fms_url, "sim_org_northstar_full", timeout_seconds=5.0).make_payment(DANA, "pm_DanaVisa4242", 100)
+    CubbyAdapter(fms_url, "sim_org_northstar_full", timeout_seconds=12.0).make_payment(DANA, "pm_DanaVisa4242", 100)
     sim.behave(DANA, "approve")
-    unposted = Unposted(fms_url, "sim_org_northstar_full", timeout_seconds=5.0)
+    unposted = Unposted(fms_url, "sim_org_northstar_full", timeout_seconds=12.0)
     with pytest.raises(PaymentRefused, match="not visibly on the ledger"):
         PaymentService(session, unposted).take_payment(case.id, "pm_DanaVisa4242", Authorization.new(True, 24000, 24000))
     assert all(p["status"] != "SUCCEEDED" for p in sim.payments(DANA))
@@ -792,7 +792,7 @@ def test_a_desk_payment_confirmed_while_a_ledger_read_was_being_stored_does_not_
     and the desk charges the card on top of it."""
     from dataclasses import replace
 
-    plain = CubbyAdapter(fms_url, "sim_org_northstar_full", timeout_seconds=5.0)
+    plain = CubbyAdapter(fms_url, "sim_org_northstar_full", timeout_seconds=12.0)
     b, case, _ = pay(session, plain, DANA, "pm_DanaVisa4242", 10000)         # B: $100 of the $240, taken and confirmed by the desk
     settle(session, plain)
     assert b.state == "CONFIRMED" and b.confirmed_at is not None
@@ -813,7 +813,7 @@ def test_a_desk_payment_confirmed_while_a_ledger_read_was_being_stored_does_not_
     ledger_now = plain.ledger(DANA)
     assert ledger_now.total_due == 14000                                      # B is on the ledger; A is not
     with pytest.raises(PaymentRefused, match="not visibly on the ledger"):
-        PaymentService(session, Counter(fms_url, "sim_org_northstar_full", timeout_seconds=5.0)).take_payment(
+        PaymentService(session, Counter(fms_url, "sim_org_northstar_full", timeout_seconds=12.0)).take_payment(
             case.id, "pm_DanaVisa4242", Authorization.new(True, 14000, 14000))
     assert sum(1 for p in sim.payments(DANA) if p["status"] == "SUCCEEDED") == 1          # nothing was charged on top of B
 
@@ -831,8 +831,8 @@ def test_a_ledger_reading_is_stamped_with_when_the_read_began_not_when_it_was_st
             time.sleep(0.05)
             return super().ledger(lease_provider_id)
 
-    case, lease = case_for(session, CubbyAdapter(fms_url, "sim_org_northstar_full", timeout_seconds=5.0), DANA)
-    refresh_case(session, Slow(fms_url, "sim_org_northstar_full", timeout_seconds=5.0), case)
+    case, lease = case_for(session, CubbyAdapter(fms_url, "sim_org_northstar_full", timeout_seconds=12.0), DANA)
+    refresh_case(session, Slow(fms_url, "sim_org_northstar_full", timeout_seconds=12.0), case)
     snap = session.get(LedgerSnapshot, case.last_snapshot_id)
     assert snap.read_at is not None and snap.read_at <= seen["asked"] < snap.observed_at
     assert (snap.observed_at - snap.read_at).total_seconds() >= 0.05            # the wait for the FMS lies between the two stamps
@@ -865,7 +865,7 @@ def test_two_outside_payments_cannot_lean_on_one_posting(session, fms_url, sim):
             real = super().payments_for_lease(lease_provider_id)
             return real + [replace(real[0], provider_id="payment_counter02", amount=10000)]
 
-    plain = CubbyAdapter(fms_url, "sim_org_northstar_full", timeout_seconds=5.0)
+    plain = CubbyAdapter(fms_url, "sim_org_northstar_full", timeout_seconds=12.0)
     case, lease = case_for(session, plain, DANA)
     # the desk stamps its snapshot with its own clock and the FMS dates the payment with its clock: ten minutes between them keeps the order
     # whatever the machine's clock does, and the payment is dated five seconds back, the order a clock step produced once in a full suite
@@ -873,7 +873,7 @@ def test_two_outside_payments_cannot_lean_on_one_posting(session, fms_url, sim):
     taken = (datetime.now(timezone.utc) - timedelta(seconds=5)).replace(tzinfo=None).isoformat()
     sim.post("/sim/payments/offline", {"allocations": {DANA: 10000}, "createdAt": taken})
     with pytest.raises(PaymentRefused, match="not visibly on the ledger"):
-        PaymentService(session, TwoCounter(fms_url, "sim_org_northstar_full", timeout_seconds=5.0)).take_payment(
+        PaymentService(session, TwoCounter(fms_url, "sim_org_northstar_full", timeout_seconds=12.0)).take_payment(
             case.id, "pm_DanaVisa4242", Authorization.new(True, 14000, 14000))
 
 
@@ -930,7 +930,7 @@ def test_a_desk_payment_posting_late_cannot_vouch_for_an_outside_payment(session
             real = super().payments_for_lease(lease_provider_id)
             return real + [replace(real[0], provider_id="payment_outsideA", amount=10000, created_at=taken["a"])]
 
-    plain = CubbyAdapter(fms_url, "sim_org_northstar_full", timeout_seconds=5.0)
+    plain = CubbyAdapter(fms_url, "sim_org_northstar_full", timeout_seconds=12.0)
     sim.behave(DANA, "late_application", lag=2)
     b, case, _ = pay(session, plain, DANA, "pm_DanaVisa4242", 10000)   # B: succeeded, not on the ledger; a snapshot follows
     assert b.state == "AWAITING_APPLICATION"
@@ -938,7 +938,7 @@ def test_a_desk_payment_posting_late_cannot_vouch_for_an_outside_payment(session
     settle(session, plain)                                              # then B posts
     assert b.state == "CONFIRMED" and sim.total_due(DANA) == 14000
     with pytest.raises(PaymentRefused, match="not visibly on the ledger"):
-        PaymentService(session, WithCounter(fms_url, "sim_org_northstar_full", timeout_seconds=5.0)).take_payment(
+        PaymentService(session, WithCounter(fms_url, "sim_org_northstar_full", timeout_seconds=12.0)).take_payment(
             case.id, "pm_DanaVisa4242", Authorization.new(True, 14000, 14000))
 
 

@@ -31,7 +31,7 @@ class FMS(Protocol):
     """What the checks need from an FMS adapter. Writes carry an idempotency key; a repeated key must not act twice."""
 
     def unit_access(self, unit_id: str) -> Read: ...                       # value: OPEN or RESTRICTED
-    def held_units(self) -> Read: ...                                      # value: ids of units an unlock could lift, or None
+    def held_units(self, contact_id: str | None = None) -> Read: ...       # value: ids of units an unlock could lift, or None
     def restrict(self, contact_id: str, key: str) -> Read: ...             # lock every occupied unit of the contact
     def lift(self, contact_id: str, key: str) -> Read: ...                 # lift every lock of the contact
     def open_increases(self, subscription_id: str) -> Read: ...            # value: ids of draft or pending increases, or None

@@ -52,7 +52,11 @@ Your agent never receives the FMS state, the expected answer, the checks or our 
 - A Stora developer test account (free; it works with Stora's public API) and an OAuth client with read and write on units and price adjustments, read on contacts, tenancies, subscriptions and unit allocations. Put its id and secret in `STORA_CLIENT_ID` and `STORA_CLIENT_SECRET`.
 - One fictional tenant: a contact with an occupied unit (`FMS_CHECKS_CONTACT`, `FMS_CHECKS_UNIT`) and a subscription (`FMS_CHECKS_SUBSCRIPTION`). Use an `example.com` address: scheduling an increase emails the tenant.
 - For the notice check, the operator's default notice must be longer than the time to the subscription's next renewal. Our test account uses 45 days for a subscription that renews in 30.
-- No other unit on the account may be locked when the access check starts, because unlocking a contact lifts every lock it holds.
+- None of the test tenant's other units may be locked when the access check starts, because unlocking a contact lifts every lock it holds. Other tenants' locks are left alone.
+
+## The live check on the Evaluation page
+
+The desk runs the access check from its Evaluation page without writing to the FMS. It needs a second OAuth client that can read units and nothing else (`STORA_READ_CLIENT_ID`, `STORA_READ_CLIENT_SECRET`) and two units set up by hand, one locked and one open (`FMS_CHECKS_LIVE_UNITS`, two unit ids, comma separated). A run reads both units, asks both sample agents about each in an order drawn for that run, and judges each answer against a read taken after it. If the units are not one locked and one open, the FMS cannot be read, or a unit changes during the run, the page says so and judges nothing. Every model call counts in the desk's daily budget and the visitor's allowance.
 
 ## Running
 

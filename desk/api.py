@@ -27,7 +27,7 @@ from .cases import queue, sync_facility
 from .config import Settings
 from .guard import ASK, LIFETIME, SLOW_DOWN, UNSET, Guard, Unreachable
 from .conversation import Conversation
-from . import integration, spend, voicemail
+from . import integration, live_check, spend, voicemail
 from .investigator import CALL_TIMEOUT, SALE_FRESH_FOR, investigate, run_view
 from .investigator import progress as run_progress
 from .lien_files import ensure_append_only, evaluate_case, record_evidence, replay
@@ -129,7 +129,7 @@ class ReviewIn(BaseModel):
 
 
 def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = None, start_worker: bool = True,
-               chat_client=None) -> FastAPI:
+               chat_client=None, live_reader=None) -> FastAPI:
     settings = settings or Settings.from_env()
     if settings.public_view and not (settings.demo_seed and urlsplit(settings.fms_base_url).hostname in ("127.0.0.1", "localhost")):
         # anyone can read the preview without a token, so it may only ever hold the synthetic world
@@ -147,6 +147,9 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         import anthropic
         # a call that hangs is cut off after a minute and tried once more, so no run sits on a dead connection for ten
         chat_client = anthropic.Anthropic(timeout=CALL_TIMEOUT, max_retries=1)
+    if live_reader is None and settings.live_check_units and settings.live_check_client_id and settings.live_check_client_secret:
+        from fms_checks.stora import Stora
+        live_reader = Stora(live_check.UNIT_READ, client_id=settings.live_check_client_id, client_secret=settings.live_check_client_secret)
     # the bot check is on only in the preview that lets a visitor start a run, and only when both of its keys are set
     guard = Guard(settings.turnstile_sitekey, settings.turnstile_secret, settings.turnstile_host) if settings.public_view and settings.public_investigate and chat_client is not None else Guard()
     # Conversations live in this process: a restart ends them (their proposals and payments are in the database).
@@ -189,7 +192,8 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         from .web import HERE, Pages, router
         app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
         app.include_router(router(Pages(factory, trace, worker if start_worker else None,
-                                        live=chat_client is not None and settings.public_investigate, guard=guard)))
+                                        live=chat_client is not None and settings.public_investigate, guard=guard,
+                                        live_check=chat_client is not None and live_reader is not None and settings.live_check_units is not None)))
 
     @app.exception_handler(StaleDataError)
     async def changed_meanwhile(_, exc: StaleDataError):
@@ -515,6 +519,32 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
             raise HTTPException(404, "run not found")
         check_facility(session, facility.provider_id)
         return run_view(run, trace=True)
+
+    @app.post("/api/live-check")
+    def start_live_check(request: Request, response: Response, session: Session = Depends(db), who: str = Depends(actor)):
+        """Two sample agents answer a tenant about two units on a real FMS test account, and the desk judges each answer against a
+        read of the unit after it. It never writes to the FMS. One run at a time; the same budget and allowance as any run."""
+        if chat_client is None or live_reader is None or settings.live_check_units is None:
+            raise HTTPException(503, "the live check is off")
+        if from_elsewhere(request):              # the start takes no body, so a form on another site could post it
+            raise HTTPException(403, "this request came from another site")
+        require_check(request, who)
+        visitor = spend.visitor_of(request) if who == "visitor" else None
+        try:
+            run, _started = live_check.start(session, chat_client, live_reader, settings.live_check_units, visitor,
+                                             lambda s, exclude: spend.refusal(s, settings.daily_budget_usd, settings.visitor_cases_per_day, visitor, exclude))
+        except spend.Refused as exc:
+            raise HTTPException(429, str(exc)) from exc
+        except live_check.Off as exc:
+            raise HTTPException(503, "the live check is off") from exc
+        if run.status == "running":
+            response.status_code = 202          # another request's run is going; the page polls for it
+        return live_check.view(run)
+
+    @app.get("/api/live-check")
+    def live_check_latest(session: Session = Depends(db), _: str = Depends(viewer)):
+        """The newest run of the live check: its progress while it goes, then its answers and verdicts."""
+        return {"run": live_check.view(live_check.latest(session))}
 
     @app.get("/api/cases/{case_id}")
     def case_detail(case_id: int, session: Session = Depends(db), _: str = Depends(viewer)):

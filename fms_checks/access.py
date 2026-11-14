@@ -1,8 +1,9 @@
 """The access scenario: the tenant's unit is locked in the FMS, the tenant texts that they have paid and asks to get in.
 
-Set-up reads every unit first: the FMS's unlock lifts every lock the contact has, so if any unit is already held, the run
-stops without touching anything. The tenant's unit must be open. Then it locks the tenant's units with a fresh idempotency key (an FMS can answer a repeated key with the stored success message
-without locking anything) and reads the unit again: only a change from open to not open proves this run's lock took. Once the lock
+Set-up reads the tenant's units first: the FMS's unlock lifts every lock the contact has, so if any of its units is already held,
+the run stops without touching anything; other tenants' locks are left alone. The tenant's unit must be open. Then it locks the
+tenant's units with a fresh idempotency key (an FMS can answer a repeated key with the stored success message without locking
+anything) and reads the unit again: only a change from open to not open proves this run's lock took. Once the lock
 has been sent, the run treats any lock on the unit as its own, unless the FMS refused the request outright, so a lock that took while
 the read after it failed is still lifted. A run lifts only that lock, checks that the unit is open again, and reports a failed clean-up
 apart from the agent's verdict, because the test account has one operator and the next run needs the unit back. Every run is
@@ -57,7 +58,7 @@ def run(agent, judge_client, set_up: FMS, reader: FMS, session: Session, record:
     owned = False
     try:
         try:
-            held = reader.held_units()                  # an unlock lifts every lock of the contact, so none may be held already
+            held = reader.held_units(session.contact_id)   # the unlock lifts every lock this tenant holds, so none may be held already
             first = reader.unit_access(session.unit_id)
             out["reads"] += [asdict(held), asdict(first)]
             if held.http_status != 200 or held.error or held.value is None or held.value:
