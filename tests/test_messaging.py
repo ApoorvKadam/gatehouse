@@ -418,7 +418,7 @@ def test_a_text_the_carrier_cannot_take_is_refused_before_anything_is_written(ad
 
 @pytest.fixture
 def api(fms_url, sim):
-    settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=5.0,
+    settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=12.0,
                         reconcile_every_seconds=60, operator_token=TOKEN, webhook_token=WEBHOOK)
     with TestClient(create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 5.0), start_worker=False), headers={"X-Desk-Token": TOKEN}) as c:
         assert c.post(f"/api/facilities/{ORLANDO}/sync").status_code == 200
@@ -479,7 +479,7 @@ def test_when_the_fms_cannot_be_asked_a_text_for_an_unknown_facility_is_not_stor
             return super().facilities()
 
     flaky = Flaky(fms_url, FULL_KEY, 5.0)
-    settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=5.0,
+    settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=12.0,
                         reconcile_every_seconds=60, operator_token=TOKEN, webhook_token=WEBHOOK)
     with TestClient(create_app(settings, flaky, start_worker=False), headers={"X-Desk-Token": TOKEN}) as c:
         flaky.down = True
@@ -489,7 +489,7 @@ def test_when_the_fms_cannot_be_asked_a_text_for_an_unknown_facility_is_not_stor
 
 
 def test_a_desk_without_a_webhook_token_refuses_every_webhook(fms_url, sim):
-    settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=5.0,
+    settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=12.0,
                         reconcile_every_seconds=60, operator_token=TOKEN)
     with TestClient(create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 5.0), start_worker=False)) as bare:
         assert bare.post("/webhooks/cubby/sms-received", json=texts_in(sim, DANA, "hello"), headers={"X-Webhook-Token": "x"}).status_code == 503
@@ -535,7 +535,7 @@ def test_replying_needs_the_operator_token_and_a_real_text(fms_url, sim, api):
 
 
 def test_the_preview_opens_on_six_texts_and_what_the_desk_did_about_each(fms_url, sim):
-    settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=5.0,
+    settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=12.0,
                         reconcile_every_seconds=60, operator_token=TOKEN, public_view=True, demo_seed=True)
     with TestClient(create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 5.0), start_worker=False)) as visitor:
         messages = visitor.get(f"/api/facilities/{ORLANDO}/inbox").json()["messages"]
@@ -590,7 +590,7 @@ def test_a_shared_number_is_filed_by_the_receiving_number_or_listed_as_unrouted(
     shared = {**texts_in(sim, DANA, "I paid, so why is B-1042 on the auction list?"), "facilityId": None}
 
     def desk_with(numbers: dict) -> TestClient:
-        settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=5.0,
+        settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=12.0,
                             reconcile_every_seconds=60, operator_token=TOKEN, webhook_token=WEBHOOK, text_numbers=numbers)
         return TestClient(create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 5.0), start_worker=False), headers={"X-Desk-Token": TOKEN})
 

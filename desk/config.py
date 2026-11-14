@@ -28,6 +28,16 @@ def _text_numbers(raw: str | None) -> dict[str, str]:
     return value
 
 
+def _two_units(raw: str | None) -> tuple[str, str] | None:
+    """FMS_CHECKS_LIVE_UNITS: two unit ids, comma separated. Anything else stops the desk at startup, naming the setting."""
+    if not raw:
+        return None
+    units = tuple(u.strip() for u in raw.split(","))
+    if len(units) != 2 or not all(units) or units[0] == units[1]:
+        raise ValueError("FMS_CHECKS_LIVE_UNITS must name two different unit ids, comma separated")
+    return units[0], units[1]
+
+
 @dataclass(frozen=True)
 class Settings:
     database_url: str
@@ -63,6 +73,11 @@ class Settings:
     turnstile_secret: str | None = None
     # the one address the check must have been passed on; the check is on only with all three set, and the desk never takes it from the request
     turnstile_host: str | None = None
+    # the live access check on the Evaluation page: two unit ids on an FMS test account (one locked, one open), and credentials that
+    # can read units and nothing else. Unset, the check is off.
+    live_check_units: tuple[str, str] | None = None
+    live_check_client_id: str | None = field(default=None, repr=False)
+    live_check_client_secret: str | None = field(default=None, repr=False)
 
     @staticmethod
     def from_env() -> "Settings":
@@ -88,4 +103,7 @@ class Settings:
             turnstile_sitekey=os.environ.get("DESK_TURNSTILE_SITEKEY") or None,
             turnstile_secret=os.environ.get("DESK_TURNSTILE_SECRET") or None,
             turnstile_host=os.environ.get("DESK_TURNSTILE_HOST") or None,
+            live_check_units=_two_units(os.environ.get("FMS_CHECKS_LIVE_UNITS")),
+            live_check_client_id=os.environ.get("STORA_READ_CLIENT_ID") or None,
+            live_check_client_secret=os.environ.get("STORA_READ_CLIENT_SECRET") or None,
         )

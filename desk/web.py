@@ -31,7 +31,7 @@ from .models import (
 from .payments import tenant_message
 from .messaging import in_quiet_hours
 from .reminder_check import hold_note, with_texts
-from . import missed_calls, rent_changes, voicemail
+from . import live_check, missed_calls, rent_changes, voicemail
 from .sequence import sequence
 from .wording import TROUBLES, plain, words
 
@@ -305,6 +305,7 @@ class Pages:
     worker: object | None = None                 # the reconciliation worker in this process, for the operations page
     live: bool = False                           # a visitor may prepare a case from the inbox (a model key and the switch are both there)
     guard: object | None = None                  # the bot check in front of the two public write paths (desk/guard.py)
+    live_check: bool = False                     # the live access check against a real FMS test account is set up (desk/live_check.py)
 
     def facilities(self, s: Session) -> list[Facility]:
         binding = s.get(DeskBinding, 1)
@@ -806,9 +807,13 @@ def router(pages: Pages) -> APIRouter:
     def evaluation(request: Request):
         report = evaluation_report()
         view = evaluation_view(report) if report is not None else {}
+        checked = pages.guard is not None and pages.guard.on
+        check = {"sitekey": pages.guard.sitekey, "verified": pages.guard.valid(request.cookies.get(spend.COOKIE)) is not None} if pages.live and checked else None
         with session() as s:
             return templates.TemplateResponse(request, "evaluation.html", {
-                "report": report, **view, "nav": "evaluation", "facilities": pages.facilities(s), "local": local})
+                "report": report, **view, "nav": "evaluation", "facilities": pages.facilities(s), "local": local,
+                "live_check_on": pages.live_check, "live_message": live_check.MESSAGE, "live_check": live_check.view(live_check.latest(s)) if pages.live_check else None,
+                "live": pages.live, "check": check})
 
     @r.get("/operations", response_class=HTMLResponse)
     def operations(request: Request):

@@ -104,6 +104,35 @@
   {% endfor %}
 </section>
 
+{% if live_check_on %}
+<section class="panel flows" id="live-check" data-live-check{% if live_check and live_check.status == 'running' %} data-running{% endif %}>
+  <h2>Checked against a real FMS<span class="muted">A test account on Stora, read when the check runs</span></h2>
+  <p class="lede">Two sample agents answer the same text from two test tenants: one whose unit is locked, one whose unit is open. After each answer the desk reads that unit again and judges the answer against the read.</p>
+  <p class="bubble in live-text">{{ live_message }}</p>
+  {% if live_check and live_check.answers %}
+  <div class="flow live flow-head" aria-hidden="true">
+    <span>Agent and unit</span><span>Its answer</span><span></span><span>Words judged</span><span></span><span>Unit read after</span><span>Result</span>
+  </div>
+  {% for a in live_check.answers|sort(attribute='unit') %}
+  <div class="flow live">
+    <div class="flow-who"><b class="flow-name">The agent that {{ a.agent }}</b><span class="small muted">About the {{ a.unit }} unit</span></div>
+    <p class="flow-node">{{ a.reply }}</p>
+    <span class="flow-arrow" aria-hidden="true">{% include "icons/arrow-right.svg" %}</span>
+    <p class="flow-node">{{ '"' ~ a.said ~ '"' if a.said else 'Nothing about getting in' }}</p>
+    <span class="flow-arrow" aria-hidden="true">{% include "icons/arrow-right.svg" %}</span>
+    <p class="flow-node">{{ a.after[:1]|upper }}{{ a.after[1:] }}</p>
+    <span class="flow-result"><span class="chip {{ 'done' if a.verdict == 'Right' else 'act' if a.verdict == 'Wrong' else 'plain' }}">{% if a.verdict == 'Right' %}{% include "icons/circle-check.svg" %}{% endif %}{{ a.verdict }}</span></span>
+  </div>
+  {% endfor %}
+  {% endif %}
+  {% if live_check and live_check.note %}<p class="note">{{ live_check.note }}</p>{% endif %}
+  <p class="small muted live-foot" data-live-step role="status">{% if live_check and live_check.status == 'running' %}{{ live_check.step or 'The check is running.' }}{% elif live_check and live_check.finished_at %}Last run finished {{ local(live_check.finished_at) }}. The check only reads the FMS; it never changes it.{% else %}No run yet. The check only reads the FMS; it never changes it.{% endif %}</p>
+  {% if live %}<p><button class="button" type="button" data-live-run>{{ 'Run it again' if live_check else 'Run the check' }}</button></p>
+  <p class="small" data-live-error role="alert" hidden></p>{% endif %}
+  {% if check and not check.verified %}<div class="cf-turnstile" data-sitekey="{{ check.sitekey }}" data-action="visit" data-appearance="interaction-only" data-callback="gatehouseChecked" data-error-callback="gatehouseCheckFailed"></div>{% endif %}
+</section>
+{% endif %}
+
 <details class="table-view">
   <summary>Table view of every result</summary>
   <table>
@@ -156,6 +185,45 @@
   document.addEventListener("keydown", function (e) { if (e.key === "Escape") hide(); });
 })();
 </script>
+{% if live_check_on and live %}
+{% include "check_script.html" %}
+<script>
+// the live check: the button waits for the bot check, the step line follows the live run while the request is going, and the page
+// reloads with the answers once the desk has judged them
+(function () {
+  var box = document.querySelector("[data-live-check]");
+  if (!box) return;
+  var button = box.querySelector("[data-live-run]"), step = box.querySelector("[data-live-step]"), error = box.querySelector("[data-live-error]");
+  var label = button ? button.textContent : "", waiting = false;
+  function poll() {
+    if (!waiting) return;
+    fetch("/api/live-check").then(function (r) { return r.ok ? r.json() : null; }).then(function (b) {
+      var run = b && b.run;
+      if (run && run.status === "running") { if (run.step) step.textContent = run.step; setTimeout(poll, 1000); }
+      else if (run && box.hasAttribute("data-running")) location.reload();
+      else setTimeout(poll, 1000);
+    }, function () { setTimeout(poll, 3000); });
+  }
+  function going() { waiting = true; step.textContent = "Starting the check."; if (button) { button.disabled = true; button.textContent = "Checking..."; } poll(); }
+  function failed(text) {
+    waiting = false; box.removeAttribute("data-running");
+    if (button) { button.disabled = false; button.textContent = label; }
+    if (error) { error.textContent = text; error.hidden = false; }
+  }
+  if (box.hasAttribute("data-running")) going();
+  if (!button) return;
+  button.addEventListener("click", function () {
+    going(); if (error) error.hidden = true;
+    checked().then(function () { return fetch("/api/live-check", { method: "POST" }); })
+      .then(function (r) { return r.json().then(function (body) { return { code: r.status, body: body }; }); }).then(function (res) {
+        if (res.code === 200) { location.reload(); return; }
+        if (res.code === 202) { box.setAttribute("data-running", ""); return; }
+        failed(res.body && typeof res.body.detail === "string" ? res.body.detail : "The check could not run just now. Try again in a minute.");
+      }).catch(function (err) { failed(err && err.check ? err.message : "The request failed. Try again."); });
+  });
+})();
+</script>
+{% endif %}
 {% else %}
 <p class="lede">This build has no evaluation report. The image build writes one with <code>python -m desk.evaluate</code>.</p>
 {% endif %}

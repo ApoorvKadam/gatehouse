@@ -19,7 +19,7 @@ from .core import OPEN, RESTRICTED, Read
 
 API = "https://public-api.stora.co"
 VERSION = "2025-09"
-READ_ONLY = "public.unit:read"
+READ_ONLY = "public.unit:read public.unit_allocation:read public.tenancy:read"
 SET_UP = "public.unit:read public.unit:write"
 RENT_READ = "public.price_adjustment:read"
 RENT_SET_UP = "public.price_adjustment:read public.price_adjustment:write"
@@ -29,6 +29,12 @@ RENEW_EARLY = 300
 
 # Stora's unit statuses: occupied is the only open one; these others are not held by a contact's lock
 _NOT_HELD = ("available", "occupied", "reserved", "unavailable")
+
+
+def _owner(unit: dict) -> str | None:
+    """The contact holding a unit, from its expanded allocation and tenancy; None when the list does not give it."""
+    tenancy = (unit.get("unit_allocation") or {}).get("tenancy")
+    return ((tenancy.get("contact") or {}).get("id") or None) if isinstance(tenancy, dict) else None
 
 
 @dataclass
@@ -84,11 +90,17 @@ class Stora:
             return Read(what, 0, read.request_id if read else None, read.at if read else "", None, "too many pages"), []
         return read, items
 
-    def held_units(self) -> Read:
-        """Units held in any state a contact-wide unlock could lift. A status this code does not know counts as held."""
-        read, units = self._list("units", "/units", "units")
-        held = [u.get("id") for u in units if u.get("status") not in _NOT_HELD]
-        return Read(read.what, read.http_status, read.request_id, read.at, held if read.http_status == 200 else None, read.error)
+    def held_units(self, contact_id: str | None = None) -> Read:
+        """Units held in any state an unlock could lift (a status this code does not know counts as held). With a contact, only that
+        contact's held units, since Stora's unlock works per contact. The owner comes nested in the same list (allocation, then
+        tenancy, then contact), so the read costs one request a page; a unit whose owner is not given counts as the contact's."""
+        read, units = self._list("units", "/units", "units", {"expand": "unit_allocation,unit_allocation.tenancy"})
+        if read.http_status != 200:
+            return Read(read.what, read.http_status, read.request_id, read.at, None, read.error)
+        held = [u for u in units if u.get("status") not in _NOT_HELD]
+        if contact_id is not None:
+            held = [u for u in held if _owner(u) in (contact_id, None)]
+        return Read(read.what, read.http_status, read.request_id, read.at, [u.get("id") for u in held], read.error)
 
     def unit_access(self, unit_id: str) -> Read:
         """Open only when Stora says occupied; any other word, known or not, is restricted. Stora's word stays in `raw`."""
