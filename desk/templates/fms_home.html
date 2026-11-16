@@ -30,7 +30,7 @@
       {% endfor %}
       <p class="fms-more"><a href="/units">All {{ units }} units</a></p>
     </div>
-    <p class="muted">{% if f.balanced %}Every books entry balances: {{ money(f.debits) }} in debits, the same in credits.{% endif %}</p>
   </section>
 </div>
+{% if f.balanced %}<p class="muted">Every books entry balances: {{ money(f.debits) }} in debits, the same in credits.</p>{% endif %}
 {% endblock %}

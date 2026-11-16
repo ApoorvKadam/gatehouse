@@ -1,13 +1,18 @@
 """The agentic FMS on the public site: a real sign-in in front of every FMS page and write, each session on its own copy of the
 books, the seven screens drawn from the generated year, a staff decision through the gate, and the old screens gone. A scripted
 client stands in for the model."""
+import glob
 import html
 import json
+import os
 import re
+from datetime import date, datetime, timezone
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
+from core.books import at_local
+from core.seed import NOW
 from desk import spend
 from desk.adapter.cubby import CubbyAdapter
 from desk.api import create_app
@@ -47,7 +52,9 @@ def site(fms_url, client=None, **kw):
     settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=12.0,
                         reconcile_every_seconds=60, operator_token="op-token", staff_token="staff-token", public_view=True, demo_seed=True,
                         public_investigate=client is not None, **kw)
-    return create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 5.0), start_worker=False, chat_client=client)
+    app = create_app(settings, CubbyAdapter(fms_url, FULL_KEY, 5.0), start_worker=False, chat_client=client)
+    app.state.front_desk.clock = lambda: NOW       # the fixed day the graded messages and these checks were written for
+    return app
 
 
 def sign_in(app) -> TestClient:
@@ -101,7 +108,8 @@ def test_the_demo_login_signs_in_and_out_and_a_wrong_one_is_refused(fms_url, sim
         wrong = c.post("/sign-in", data={"name": DEMO_NAME, "password": "guess"}, follow_redirects=False)
         assert wrong.status_code == 401 and "do not match" in wrong.text and SESSION not in wrong.cookies
         assert c.post("/sign-in", data={"name": DEMO_NAME.upper(), "password": DEMO_PASSWORD}, follow_redirects=False).status_code == 303
-        assert c.get("/home").status_code == 200
+        home = c.get("/home")
+        assert home.status_code == 200 and "Dana Reyes" in home.text
         c.post("/sign-out")
         assert c.get("/home", follow_redirects=False).headers["location"] == "/sign-in"
 
@@ -130,6 +138,11 @@ def test_the_screens_show_the_generated_year_in_words(fms_url, sim):
             assert not re.search(r"\b[a-z]+_[a-z_]+\b", words), (p, re.findall(r"\b[a-z]+_[a-z_]+\b", words)[:3])   # no codes
             assert not re.search(r"(?i)claude|haiku|sonnet|anthropic|openai|gpt|our agent", words), p
         assert c.get("/tenants?q=A108").text.count('href="/tenants/') == 1
+        # every month's charges add up: billed is paid, removed or still open (his question of 2026-11-16 about the top box)
+        for key in re.findall(r'<option value="(\d{4}-\d{2})"', pages["/billing"].text):
+            box = seen(c.get("/billing", params={"month": key}).text)
+            got = {k: float(v.replace(",", "")) for k, v in re.findall(r"(Rent billed|Fees billed|Paid|Removed or waived|Still open) \$([\d,]+\.\d\d)", box)}
+            assert len(got) == 5 and round(got["Rent billed"] + got["Fees billed"], 2) == round(got["Paid"] + got["Removed or waived"] + got["Still open"], 2), (key, got)
 
 
 def test_our_agent_off_sends_every_message_to_staff_and_the_books_stay(fms_url, sim):
@@ -147,10 +160,11 @@ def test_a_reversal_lands_on_this_copy_only_is_shown_after_a_reload_and_start_ov
         assert run(a, "james", shift="s2", run_id="r1").status_code == 200
         shown = seen(a.get("/messages").text)
         assert "Reversed the second copy" in shown and "Fee income" in shown and "You are right" in shown
+        assert "Reading cost" in shown and "1,200 tokens read, 150 written" in shown          # his message of 2026-11-16: the cost shows in the FMS too
         james = record_of(a, "James Carter")
         assert "Late fee removed: duplicate" in seen(a.get(james).text)
         assert "removed" not in seen(b.get(james).text)
-        assert "James Carter" in seen(a.get("/today").text).split("Closed by Porter", 1)[1]
+        assert "James Carter" in seen(a.get("/today").text).split("Closed by Tilden", 1)[1]
         a.post("/start-over")
         assert "removed" not in seen(a.get(james).text)
 
@@ -171,6 +185,11 @@ def test_staff_remove_a_fee_she_never_signed_for_through_the_gate_with_a_note(fm
         assert "No open disputes" in after and after.count("Removed the fee") == 1 and "her signed lease has no admin fee" in after
         priya = record_of(c, "Priya Shah")
         assert "Admin fee removed: not in the signed schedule" in seen(c.get(priya).text)
+
+
+def test_a_naive_day_start_is_read_as_utc_on_new_york_time():
+    from desk.front_desk import as_utc
+    assert as_utc(datetime(2026, 11, 16, 5, 0)) == datetime(2026, 11, 16, 5, 0, tzinfo=timezone.utc)
 
 
 def test_ten_tries_a_day_a_morning_counts_once_and_start_over_gives_none_back(fms_url, sim):
@@ -195,7 +214,8 @@ def test_the_overview_is_public_and_the_old_screens_are_gone(fms_url, sim):
         words = seen(page.text)
         assert "38 right" in words and "handled 23" in words and "120 units" in words and 'href="/sign-in"' in page.text
         assert not re.search(r"(?i)claude|haiku|sonnet|anthropic|openai|gpt|our agent|github", re.sub(r"(?s)<footer.*</footer>", "", page.text)), "GitHub belongs in the footer only"
-        assert "Porter" in words and "could not close" not in words
+        assert "Tilden" in words and "could not close" not in words
+        assert not re.search(r"(?i)surveyed|earlier screens|later steps|separate model|with code deciding|made up and said", words), "internal notes stay off the public page"
     with sign_in(app) as c:
         for path in ("/evaluation", "/inbox", "/front-desk", "/calls-and-reminders", "/rent-changes", "/operations", "/api/inbox/unrouted",
                      "/api/front-desk/tenants", "/api/live-check"):
@@ -229,6 +249,7 @@ def test_his_corrections_of_the_night_stay_corrected(fms_url, sim):
     with TestClient(app) as c:
         page = c.get("/sign-in").text
         assert f'value="{DEMO_NAME}"' in page and f'value="{DEMO_PASSWORD}"' in page
+        assert ">Username</label>" in page and "." in DEMO_NAME, "a sign-in asks for a username, and the demo one looks like a real one"
         overview = c.get("/").text
         hero = overview.split('class="ov-hero"', 1)[1].split("</section>", 1)[0]
         assert "<video" not in hero and 'class="ov-shot"' in hero and overview.index('class="ov-shot"') < overview.index('id="walkthrough"')
@@ -237,3 +258,21 @@ def test_his_corrections_of_the_night_stay_corrected(fms_url, sim):
         conversations = cold.split('class="fms-convs"', 1)[1].split("</ol>", 1)[0]
         assert "/today" not in conversations and conversations.count('href="/messages?unread=') == len(SHIFT)
         assert 'id="read-one"' in cold                       # the first unread message is open, with its own read button
+
+
+def test_the_date_is_the_real_day_and_a_new_day_brings_new_books(fms_url, sim):
+    """2026-11-16, his order: the FMS date is today's date and changes every day, with no second date explained anywhere."""
+    app = site(fms_url, Script(reader))
+    fd = app.state.front_desk
+    with sign_in(app) as c:
+        home = c.get("/home").text
+        assert "Sat, Nov 14, 2026" in seen(home) and not re.search(r"(?i)facility date|demo date", home)
+        assert run(c, "james", shift="s2", run_id="r1").status_code == 200
+        fd.clock = lambda: at_local(date(2026, 12, 3), 8)
+        assert "Thu, Dec 3, 2026" in seen(c.get("/home").text)
+        assert "Reversed the second copy" not in seen(c.get("/messages").text)          # yesterday's copy stayed with yesterday
+        root, ext = os.path.splitext(fd.path)
+        assert [os.path.basename(p) for p in glob.glob(f"{glob.escape(root)}-*{ext}")] == [os.path.basename(f"{root}-2026-12-03{ext}")]   # Nov 14's copy went
+        maria = next(t["text"] for t in fd.tenants() if t["shift"] == "s1")
+        assert maria.startswith("I paid on November 3rd")                               # "the 3rd" would now read as Dec 3
+        assert run(c, "maria", text=maria, shift="s1", run_id="r2").status_code == 200

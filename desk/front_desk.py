@@ -5,18 +5,21 @@ what the next one sees. A message is read by our agent; code checks every claim 
 records it. Runs count against the visitor's tries and the day's budget."""
 from __future__ import annotations
 
+import glob
+import os
 import secrets
 import threading
 from collections import OrderedDict
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
+from core.books import ZONE, at_local, local
 from core.case import READ_ONLY, handle
 from core.cases import load
-from core.seed import NOW, build
+from core.seed import build
 from core.store import BASE, Store
 
 from . import spend
@@ -49,9 +52,17 @@ class CaseIn(BaseModel):
     run: str | None = Field(default=None, max_length=40)       # one shift run is one try
 
 
+def as_utc(at: datetime) -> datetime:
+    """A naive time here is UTC, as spend.day_start() gives it; astimezone() would read it as the server's local time,
+    which on New York time put the day's start at 5 AM and let a repeated press through between midnight and then."""
+    return at.replace(tzinfo=timezone.utc) if at.tzinfo is None else at.astimezone(timezone.utc)
+
+
 class FrontDesk:
-    def __init__(self, path: str, client=None):
+    def __init__(self, path: str, client=None, clock=None):
         self.path, self.client = path, client
+        self.clock = clock or (lambda: datetime.now(ZONE))      # the real time in Orlando; tests pass a fixed one
+        self.day: date | None = None                            # the day the books were made for
         self.lock = threading.RLock()
         self.store: Store | None = None
         self.cast: dict[str, dict] = {}
@@ -60,17 +71,23 @@ class FrontDesk:
         self._views: OrderedDict[str, tuple] = OrderedDict()
         self._facts: dict | None = None
 
+    def today(self) -> date:
+        return local(self.clock()).date()
+
     def ready(self) -> Store:
-        """The core's database, with the generated year in it."""
+        """The core's database, with the generated year up to this morning in it; a new day makes new books."""
         with self.lock:
-            if self.store is None:
-                self._seed()
+            today = self.today()
+            if self.store is None or self.day != today:
+                self._seed(today)
         return self.store
 
-    def _seed(self) -> None:
-        """The generated year, written once into the core's database (seconds on a small instance; desk/api.py starts it at boot)."""
-        store = Store(self.path)
-        year = build()
+    def _seed(self, today: date) -> None:
+        """The year up to midnight today, written into a database of the day's own (seconds on a small instance; desk/api.py
+        starts it at boot). Yesterday's file keeps yesterday's visitor copies: the footer says a copy lasts a day."""
+        root, ext = os.path.splitext(self.path)
+        store = Store(self.path if self.path == ":memory:" else f"{root}-{today.isoformat()}{ext}")
+        year = build(today=today, cutoff=at_local(today))
         if not store.events(BASE):
             with store.write():
                 store.append(BASE, year.led.pending)
@@ -78,8 +95,14 @@ class FrontDesk:
         store.db.execute("CREATE TABLE IF NOT EXISTS usage(id INTEGER PRIMARY KEY, at TEXT NOT NULL, visitor TEXT NOT NULL, "
                          "run TEXT NOT NULL, shift TEXT, cents REAL NOT NULL)")
         store.db.execute("CREATE UNIQUE INDEX IF NOT EXISTS usage_once ON usage(visitor, run, shift)")
-        self.cast, self.store = year.cast, store
-        self._year = year
+        self._views.clear()             # event ids start again in the new file, so no cached view may match
+        self._facts = None
+        self.cast, self.store, self._year, self.day = year.cast, store, year, today
+        if self.path != ":memory:":     # visitor copies last a day: files older than yesterday's go (a run begun before midnight keeps yesterday's)
+            keep = {f"{root}-{d.isoformat()}{ext}" for d in (today, today - timedelta(days=1))}
+            for old in glob.glob(f"{glob.escape(root)}-????-??-??{ext}*"):
+                if old.removesuffix("-wal").removesuffix("-shm") not in keep:
+                    os.remove(old)
 
     def view(self, visitor: str, everything: bool = False) -> tuple:
         """What the pages read for one copy: its books, its own events, whether every entry balances and the debits, and with
@@ -102,14 +125,15 @@ class FrontDesk:
 
     def facts(self) -> dict:
         """The facility's own numbers for the Overview, from the base year (which never changes after it is built)."""
-        if self._facts is not None:         # read without the lock, so the Overview never waits behind a running case
+        if self._facts is not None and self.day == self.today():     # read without the lock, so the Overview never waits behind a running case
             return self._facts
         with self.lock:
+            store = self.ready()
             if self._facts is None:
-                b = self.ready().books(BASE)
+                b, now = store.books(BASE), self.clock()
                 self._facts = {"units": len(b.units), "rented": sum(1 for x in b.leases.values() if x.ended is None), "tenants": len(b.tenants),
                                "leases": len(b.leases), "charges": len(b.charges), "payments": len(b.payments), "declined": len(b.declined),
-                               "past_due": sum(1 for t in b.tenants if b.past_due(t, NOW)), "past_due_cents": sum(b.past_due(t, NOW) for t in b.tenants)}
+                               "past_due": sum(1 for t in b.tenants if b.past_due(t, now)), "past_due_cents": sum(b.past_due(t, now) for t in b.tenants)}
             return self._facts
 
     @staticmethod
@@ -120,12 +144,12 @@ class FrontDesk:
         """What our agent's front desk calls cost since `since`, plus what a running case has reserved."""
         with self.lock:
             cents = self.ready().db.execute("SELECT COALESCE(SUM(cents), 0) FROM usage WHERE at >= ?",
-                                            (since.astimezone(timezone.utc).isoformat(),)).fetchone()[0]
+                                            (as_utc(since).isoformat(),)).fetchone()[0]
         return (cents + self.reserved) / 100
 
     def runs_today(self, visitor: str) -> dict[str, set]:
         """Today's tries by this visitor, each with the shift messages it ran: a shift is one try, a typed message is one try."""
-        since = spend.day_start().astimezone(timezone.utc).isoformat()
+        since = as_utc(spend.day_start()).isoformat()
         out: dict[str, set] = {}
         for run, shift in self.ready().db.execute("SELECT run, shift FROM usage WHERE visitor = ? AND at >= ?", (visitor, since)):
             out.setdefault(run, set()).add(shift)
@@ -142,7 +166,7 @@ class FrontDesk:
     def tenants(self) -> list[dict]:
         self.ready()
         b = self._year.led.books
-        return [{"role": i["role"], "name": b.tenants[self.cast[i["role"]]["tenant"]].name, "shift": i["id"], "text": i["text"],
+        return [{"role": i["role"], "name": b.tenants[self.cast[i["role"]]["tenant"]].name, "shift": i["id"], "text": self._year.words(i["text"]),
                  "units": [b.leases[l].unit for l in self.cast[i["role"]]["leases"]]} for i in SHIFT]
 
     def run(self, visitor: str, body: CaseIn, live: bool, tries_per_day: int | None = None, budget_left=None) -> dict:
@@ -152,7 +176,7 @@ class FrontDesk:
             if body.tenant not in self.cast:
                 raise HTTPException(404, "no such tenant on the page")
             item = next((i for i in SHIFT if i["id"] == body.shift), None)
-            if body.shift is not None and (item is None or item["text"] != body.text or item["role"] != body.tenant):
+            if body.shift is not None and (item is None or self._year.words(item["text"]) != body.text or item["role"] != body.tenant):
                 raise HTTPException(422, "that is not one of this morning's messages")
             # a run id is honoured only for this morning's messages, each once; a typed message is always a try of its own
             # the New York day is part of a shift's run, so the same page can run the shift again tomorrow
@@ -179,7 +203,7 @@ class FrontDesk:
         with self.lock:
             cost = WORST_CASE_CENTS
             try:
-                res = handle(store, stream, case, phone, body.text, READ_ONLY, NOW, client=self.client, model_off=not live)
+                res = handle(store, stream, case, phone, body.text, READ_ONLY, self.clock(), client=self.client, model_off=not live)
                 cost = res.cents                 # a failed case keeps its worst cost: it may still have been billed
             finally:
                 # the cost is written and the reservation released in one step, so no request sees neither

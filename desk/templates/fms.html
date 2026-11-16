@@ -3,7 +3,7 @@
 {% block bodyclass %}fms{% endblock %}
 {% block header %}
 <header class="fms-rail">
-  <a class="brand" href="/home"><span class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>{{ brand }}</a>
+  <a class="brand" href="/home">{% include "icons/staddle.svg" %}{{ brand }}</a>
   <nav aria-label="FMS">
     {% for group, items in menu %}
     <p class="fms-group">{{ group }}</p>
@@ -11,7 +11,7 @@
     {% endfor %}
   </nav>
   <div class="fms-me">
-    <p><b>Office manager</b><span>Your demo copy</span></p>
+    <p><b>Dana Reyes</b><span>Office manager</span></p>
     <form method="post" action="/start-over"><button type="submit" title="Throw away every change on this copy and start from this morning again">{% include "icons/rotate-ccw.svg" %}<span>Start over</span></button></form>
     <form method="post" action="/sign-out"><button type="submit">{% include "icons/log-out.svg" %}<span>Sign out</span></button></form>
   </div>
@@ -19,7 +19,7 @@
 {% endblock %}
 {% block main %}
 <div class="fms-topbar"><div class="fms-topbar-in">
-  <p class="fms-where"><b>{{ f.name }}</b> <span>{{ f.b.facility.city }}</span> <span class="fms-date" title="Every due date and late fee on these pages counts from this date">Facility date {{ today }}</span></p>
+  <p class="fms-where"><b>{{ f.name }}</b> <span>{{ f.b.facility.city }}</span> <span class="fms-date">{{ today }}</span></p>
   <form class="fms-find" method="get" action="/tenants" role="search">
     <label for="find" class="visually-hidden">Find a tenant by name, phone or unit</label>
     {% include "icons/search.svg" %}<input id="find" name="q" maxlength="60" placeholder="Find a tenant by name, phone or unit">
@@ -28,6 +28,21 @@
 <div class="fms-page">
 {% block body %}{% endblock %}
 </div>
+<script>
+// a table fills its frame with the spare width shared equally by its columns, so every gap between columns is the same
+(function () {
+  function spread() {
+    document.querySelectorAll(".fms-table").forEach(function (t) {
+      t.style.setProperty("--extra", "0px");
+      var n = t.rows.length ? t.rows[0].cells.length : 0, free = t.parentElement.clientWidth - t.offsetWidth;
+      if (n && free > 0) t.style.setProperty("--extra", Math.floor(free / n * 10) / 10 + "px");
+    });
+  }
+  spread();
+  document.fonts.ready.then(spread);
+  new ResizeObserver(spread).observe(document.querySelector(".fms-page"));
+})();
+</script>
 {% endblock %}
 {% block footer %}
 <footer class="fms-foot">

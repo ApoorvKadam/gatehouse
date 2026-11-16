@@ -13,7 +13,7 @@
       <tbody>
         {% for p in people %}
         <tr><td><a href="/tenants/{{ p.slug }}">{{ p.name }}</a></td><td>{{ p.units|join(', ') }}</td><td class="num">{{ money(p.owed) }}</td>
-          <td>{% for text, tone in f.chips(p) %}<span class="chip {{ tone }}">{{ text }}</span> {% endfor %}</td><td class="muted">{{ p.paid }}</td><td class="num">{{ money(p.rent) if p.rent else '' }}</td><td>{{ p.since }}</td><td class="muted">{{ p.phone }}</td></tr>
+          <td><span class="fms-stack">{% for text, tone in f.chips(p) %}<span class="chip {{ tone }}">{{ text }}</span>{% endfor %}</span></td><td class="muted">{{ p.paid }}</td><td class="num">{{ money(p.rent) if p.rent else '' }}</td><td>{{ p.since }}</td><td class="muted">{{ p.phone }}</td></tr>
         {% endfor %}
       </tbody>
     </table></div>
