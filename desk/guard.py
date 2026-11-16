@@ -46,22 +46,22 @@ class Guard:
         self._tries: dict[str, deque[float]] = {}
         self._passes: deque[float] = deque()
 
-    def _sig(self, ident: str, expires: str) -> str:
-        return hmac.new(self._key, f"visitor:{ident}:{expires}".encode(), "sha256").hexdigest()[:32]
+    def _sig(self, ident: str, expires: str, kind: str) -> str:
+        return hmac.new(self._key, f"{kind}:{ident}:{expires}".encode(), "sha256").hexdigest()[:32]
 
-    def cookie(self) -> str:
+    def cookie(self, kind: str = "visitor") -> str:
         """A new cookie value: a random id, the time it stops counting and a signature over both, so nobody can make one the desk will
-        accept or keep one past its day."""
+        accept or keep one past its day. The kind is signed too: a bot-check pass never counts as a sign-in, nor the other way."""
         ident, expires = secrets.token_hex(16), str(int(self._now()) + LIFETIME)
-        return f"{ident}.{expires}.{self._sig(ident, expires)}"
+        return f"{ident}.{expires}.{self._sig(ident, expires, kind)}"
 
-    def valid(self, value: str | None) -> str | None:
-        """The id in a cookie this desk signed and has not yet let lapse, or None."""
+    def valid(self, value: str | None, kind: str = "visitor") -> str | None:
+        """The id in a cookie of this kind that this desk signed and has not yet let lapse, or None."""
         ident, _, rest = (value or "").partition(".")
         expires, _, sig = rest.partition(".")
         if not (re.fullmatch(r"[0-9a-f]{32}", ident) and re.fullmatch(r"\d{1,12}", expires)):
             return None
-        if int(expires) <= self._now() or not hmac.compare_digest(sig.encode(), self._sig(ident, expires).encode()):
+        if int(expires) <= self._now() or not hmac.compare_digest(sig.encode(), self._sig(ident, expires, kind).encode()):
             return None
         return ident
 

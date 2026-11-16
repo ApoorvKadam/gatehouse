@@ -18,6 +18,24 @@
   <div class="head-title"><h1>Evaluation</h1><p class="tagline">We break it on purpose, every build.</p></div>
   {% if report %}<p class="head-result"><span class="chip {{ 'done' if report.ok else 'act' }}">{% include "icons/circle-check.svg" %}{{ 'Passed' if report.ok else 'Failed' }}</span> Run when this build was made, {{ local(report.generated) }}</p>{% endif %}
 </div>
+{% if front_desk %}
+<section class="panel fd-score" aria-label="Front desk: our agent against a fixed-rule workflow">
+  <h2>Front desk: our agent against a fixed-rule workflow<span class="muted">Run on {{ front_desk.ran_at }}</span></h2>
+  <p class="small">{{ front_desk.comparison.set[:1]|upper }}{{ front_desk.comparison.set[1:] }}.{% if front_desk.comparison.note %} {{ front_desk.comparison.note }}{% endif %}</p>
+  <div class="fd-bars">
+    {% for a in front_desk.comparison.arms %}
+    <div class="fd-bar-row">
+      <span class="fd-bar-name">{{ a.arm }}</span>
+      <span class="fd-bar-track" role="img" aria-label="{{ a.right }} of {{ a.cases }} right"><i style="width: {{ (100 * a.right / a.cases)|round(1) }}%"></i></span>
+      <span class="fd-bar-num"><b>{{ a.right }}</b> of {{ a.cases }}</span>
+      <span class="small muted">{{ a.critical }} serious error{{ '' if a.critical == 1 else 's' }}, {{ a.to_staff }} sent to staff{% if a.cents_median %}, {{ a.cents_median }} cents a message{% endif %}</span>
+    </div>
+    {% endfor %}
+  </div>
+  <p class="small">Reading on {{ front_desk.reading.messages }} messages our agent had never seen: {{ front_desk.reading.fully_right }} matched the labels exactly, below the bar of {{ front_desk.reading.bar }} set before the run. Wrong amounts accepted: {{ front_desk.reading.wrong_amounts }}. Disputes missed: {{ front_desk.reading.disputes_missed }}.</p>
+  <p class="small">Choosing, on one shared reading of {{ front_desk.choosing.cases }} practice cases: code {{ front_desk.choosing.code }}, the best model {{ front_desk.choosing.best_model }}. {{ front_desk.choosing.decision }}</p>
+</section>
+{% endif %}
 {% if report %}
 <p class="lede">Every build runs each scenario against its own throwaway simulator and counts the red lines. A red line above zero stops the build.</p>
 

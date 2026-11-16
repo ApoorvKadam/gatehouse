@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}{% block page %}{% endblock %} | {{ f.name }} | Gatehouse{% endblock %}
+{% block bodyclass %}fms{% endblock %}
+{% block header %}
+<header class="fms-rail">
+  <a class="brand" href="/home"><span class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>Gatehouse</a>
+  <nav aria-label="FMS">
+    {% for group, items in menu %}
+    <p class="fms-group">{{ group }}</p>
+    {% for key, label, icon in items %}<a href="/{{ key }}" {% if nav == key %}aria-current="page"{% endif %}>{% include "icons/" ~ icon ~ ".svg" %}<span>{{ label }}</span></a>{% endfor %}
+    {% endfor %}
+  </nav>
+  <div class="fms-me">
+    <p><b>Office manager</b><span>Your demo copy</span></p>
+    <form method="post" action="/start-over"><button type="submit" title="Throw away every change on this copy and start from this morning again">{% include "icons/rotate-ccw.svg" %}<span>Start over</span></button></form>
+    <form method="post" action="/sign-out"><button type="submit">{% include "icons/log-out.svg" %}<span>Sign out</span></button></form>
+  </div>
+</header>
+{% endblock %}
+{% block main %}
+<div class="fms-topbar">
+  <p class="fms-where"><b>{{ f.name }}</b> <span>{{ f.b.facility.city }}</span> <span class="fms-date" title="Every due date and late fee on these pages counts from this date">Facility date {{ today }}</span></p>
+  <form class="fms-find" method="get" action="/tenants" role="search">
+    <label for="find" class="visually-hidden">Find a tenant by name, phone or unit</label>
+    {% include "icons/search.svg" %}<input id="find" name="q" maxlength="60" placeholder="Find a tenant by name, phone or unit">
+  </form>
+</div>
+<div class="fms-page">
+{% block body %}{% endblock %}
+</div>
+{% endblock %}
+{% block footer %}
+<footer class="fms-foot">
+  <p><b>Demo copy.</b> A made-up facility with a year of made-up tenants, charges and payments. Your changes stay on your copy for a day, and nobody else sees them. Replies are shown here, never sent.</p>
+</footer>
+{% endblock %}

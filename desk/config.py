@@ -66,6 +66,8 @@ class Settings:
     # in the preview, any visitor may start a live run on a seeded text, within these limits ($1 a day in all,
     # ten full cases per visitor a day). Without a model key there is no run, whatever this says.
     public_investigate: bool = False
+    # the reconciliation desk's old screens and API on the preview instead of the FMS; only their tests turn it on
+    old_screens: bool = False
     daily_budget_usd: float = 1.0
     visitor_cases_per_day: int = 10
     # the bot check in front of the two public write paths (desk/guard.py); it is on only when both keys are set

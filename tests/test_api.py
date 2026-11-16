@@ -50,7 +50,7 @@ def test_a_desk_with_no_token_configured_refuses_everything(fms_url, sim):
 
 def preview_settings(fms_url, **kw) -> Settings:
     return Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=12.0,
-                    reconcile_every_seconds=60, operator_token=TOKEN, staff_token=STAFF, public_view=True, **kw)
+                    reconcile_every_seconds=60, operator_token=TOKEN, staff_token=STAFF, public_view=True, old_screens=True, **kw)
 
 
 def test_the_public_preview_reads_without_a_token_but_changes_nothing(fms_url, sim):

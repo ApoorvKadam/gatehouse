@@ -1,0 +1,40 @@
+{% extends "fms.html" %}
+{% block page %}Home{% endblock %}
+{% block body %}
+<header class="head">
+  <h1>Home</h1>
+</header>
+<div class="fms-grid">
+  <section class="panel" aria-labelledby="h-work">
+    <h2 id="h-work">Work waiting</h2>
+    <ul class="fms-list">
+      <li><a href="/today">{% if waiting %}{{ waiting }} message{{ 's' if waiting != 1 }} from this morning not read yet{% else %}Every message from this morning has been read{% endif %}</a></li>
+      <li><a href="/today">{{ handed }} message{{ 's' if handed != 1 }} handed to staff</a></li>
+      <li><a href="/today#disputes">{{ disputes }} dispute{{ 's' if disputes != 1 }} waiting for a decision</a></li>
+    </ul>
+  </section>
+  <section class="panel" aria-labelledby="h-units">
+    <h2 id="h-units">Units rented</h2>
+    {% for r in rows %}
+    <div class="fms-row"><span>Row {{ r.row }}</span><span class="fms-track" aria-hidden="true"><i style="width: {{ (100 * r.rented / r.units)|round(1) }}%"></i></span><span>{{ r.rented }} of {{ r.units }}</span></div>
+    {% endfor %}
+    <p class="fms-more"><a href="/units">All {{ rows|sum(attribute='units') }} units</a></p>
+  </section>
+  <section class="panel" aria-labelledby="h-month">
+    <h2 id="h-month">{{ month.name }} so far</h2>
+    <dl class="fms-facts">
+      <div><dt>Rent billed</dt><dd>{{ money(month.rent) }}</dd></div>
+      <div><dt>Fees billed</dt><dd>{{ money(month.fees) }}</dd></div>
+      <div><dt>Collected</dt><dd>{{ money(month.collected) }}</dd></div>
+      <div><dt>Still open from {{ month.name.split(' ')[0] }}</dt><dd>{{ money(month.open) }}</dd></div>
+    </dl>
+    <p class="fms-more"><a href="/billing">Billing and payments</a></p>
+  </section>
+  <section class="panel" aria-labelledby="h-past">
+    <h2 id="h-past">Past due</h2>
+    <p class="fms-big">{{ past|length }} tenants owe {{ money(past|sum(attribute='past')) }}</p>
+    <p class="muted">Charges past their due date, leaving out any fee whose collection is paused by a dispute. {% if f.balanced %}Every books entry balances: {{ money(f.debits) }} in debits, the same in credits.{% endif %}</p>
+    <p class="fms-more"><a href="/billing#past-due">Who owes what</a></p>
+  </section>
+</div>
+{% endblock %}

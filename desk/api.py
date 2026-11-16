@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from datetime import timedelta
 from urllib.parse import urlsplit
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm.exc import StaleDataError
 from typing import Annotated
@@ -185,12 +185,17 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
     app = FastAPI(title="Gatehouse", lifespan=lifespan)
     app.state.session_factory = factory
     app.state.guard = guard
+    # the reconciliation desk's own API on the simulator; on the public site the FMS (desk/fms.py) replaces it, and its code stays
+    # until the simulator is retired
+    old = APIRouter()
     if settings.public_view:
-        # the operator screens; for now they exist only in the read-only preview, which needs no sign-in
         from fastapi.staticfiles import StaticFiles
 
-        from .web import HERE, Pages, router
+        from .web import HERE
         app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
+    if settings.public_view and settings.old_screens:
+        # the reconciliation desk's screens, kept for their tests until the simulator is retired
+        from .web import Pages, router
         app.include_router(router(Pages(factory, trace, worker if start_worker else None,
                                         live=chat_client is not None and settings.public_investigate, guard=guard,
                                         live_check=chat_client is not None and live_reader is not None and settings.live_check_units is not None)))
@@ -276,6 +281,9 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
             checks["fms"] = "ok"
         except Exception as exc:
             checks["fms"] = type(exc).__name__
+        front_desk = getattr(app.state, "front_desk", None)
+        if front_desk is not None:
+            checks["books"] = "ok" if front_desk.store is not None else "the facility's year is still being built"
         if not start_worker:
             checks["worker"] = "not running in this process"
         elif not worker.alive():
@@ -285,7 +293,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         ready_now = all(v == "ok" for v in checks.values())
         return JSONResponse({"ready": ready_now, "checks": checks}, status_code=200 if ready_now else 503)
 
-    @app.post("/api/facilities/{facility_id}/sync")
+    @old.post("/api/facilities/{facility_id}/sync")
     def sync(facility_id: str, session: Session = Depends(db), _: str = Depends(operator)):
         check_facility(session, facility_id)
         try:
@@ -294,12 +302,12 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
             raise HTTPException(502, f"FMS read failed: {exc}") from exc
         return {"cases": len(cases)}
 
-    @app.get("/api/facilities/{facility_id}/queue")
+    @old.get("/api/facilities/{facility_id}/queue")
     def facility_queue(facility_id: str, session: Session = Depends(db), _: str = Depends(viewer)):
         check_facility(session, facility_id)
         return {"rows": [r.__dict__ for r in queue(session, facility_id)], "collected": collected(session, adapter.provider, facility_id)}
 
-    @app.get("/api/facilities/{facility_id}/rent-changes")
+    @old.get("/api/facilities/{facility_id}/rent-changes")
     def facility_rent_changes(facility_id: str, session: Session = Depends(db), _: str = Depends(viewer)):
         """Each rent change the operator scheduled or completed at a facility, as the worker last read it: whether the account can take it,
         whether the FMS applied it, whether the first full bill after it is the new rent. Gatehouse changes no rent."""
@@ -309,7 +317,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
                                 .where(Lease.facility_id == facility.id).order_by(Lease.unit_name)).all() if facility is not None else []
         return {"facility": facility_id, "rent_changes": [{"lease": lease_id, **c.data, "read_at": c.observed_at} for lease_id, c in found]}
 
-    @app.get("/api/facilities/{facility_id}/reminder-check")
+    @old.get("/api/facilities/{facility_id}/reminder-check")
     def facility_reminder_check(facility_id: str, session: Session = Depends(db), _: str = Depends(viewer)):
         """The check in front of a reminder tool: for each past-due lease, whether a collections text may go and why not, as the worker last read
         it from the FMS. Gatehouse sends nothing; the tool that does can ask here first."""
@@ -336,7 +344,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         check_facility(session, facility_id)
         return session.scalar(select(Facility).where(Facility.provider_id == facility_id))
 
-    @app.post("/webhooks/cubby/sms-received")
+    @old.post("/webhooks/cubby/sms-received")
     def sms_received(payload: dict, x_webhook_token: str | None = Header(default=None), session: Session = Depends(db)):
         """Cubby's SMS Received webhook. Cubby documents no signing, so the sender must present the shared token, in a header
         that a gateway such as Make.com adds. A 200 tells Cubby the text is kept, and a text already kept is a 200 too,
@@ -370,19 +378,19 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
                 log.warning("could not match text %s yet: %s", row.id, exc)
         return {"stored": row is not None}
 
-    @app.get("/api/facilities/{facility_id}/inbox")
+    @old.get("/api/facilities/{facility_id}/inbox")
     def facility_inbox(facility_id: str, limit: int = 50, offset: int = 0, session: Session = Depends(db), _: str = Depends(viewer)):
         """The texts people sent this facility, newest first, each matched to a tenant or marked as not matched."""
         facility = known_facility(session, facility_id)
         return {"messages": inbox(session, facility, min(max(limit, 1), 200), max(offset, 0)) if facility else []}
 
-    @app.get("/api/inbox/unrouted")
+    @old.get("/api/inbox/unrouted")
     def unrouted_texts(limit: int = 50, offset: int = 0, session: Session = Depends(db), _: str = Depends(viewer)):
         """Texts kept without a facility because no facility is set for the number that received them."""
         binding = session.get(DeskBinding, 1)
         return {"messages": unrouted(session, binding.facility_ids if binding else [], min(max(limit, 1), 200), max(offset, 0))}
 
-    @app.post("/api/inbox/{message_id}/reply")
+    @old.post("/api/inbox/{message_id}/reply")
     def reply_to_text(message_id: int, body: ReplyIn, session: Session = Depends(db), _: str = Depends(operator)):
         """A person at the desk answers a text through Cubby. The rule still applies: a number that texted STOP, one the FMS
         has switched off, or one that is not the customer's number on file gets nothing, and the answer says why."""
@@ -419,7 +427,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         if guard.on and guard.valid(request.cookies.get(spend.COOKIE)) is None:
             raise HTTPException(403, ASK)
 
-    @app.post("/api/visitor")
+    @old.post("/api/visitor")
     def check_visitor(body: VisitorIn, request: Request, response: Response):
         """The bot check, once for each browser. The page sends what the check gave it; the desk asks whether it is genuine, was given on
         the desk's own address (set when the desk is started, never read from the request) and was given for this check, and only then gives
@@ -444,7 +452,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         response.set_cookie(spend.COOKIE, guard.cookie(), max_age=LIFETIME, httponly=True, samesite="lax", secure=spend.is_https(request))
         return {"verified": True}
 
-    @app.post("/api/inbox/texts")
+    @old.post("/api/inbox/texts")
     def play_text(body: PlayIn, request: Request, session: Session = Depends(db), who: str = Depends(actor)):
         """A visitor plays the tenant: types a text as one of the tenants they may play. The desk keeps it the way it keeps a text from the
         webhook, matches it to a tenant by the number, and it belongs to this visitor alone. The visitor supplies only the words."""
@@ -469,7 +477,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         log.info("a visitor typed a text: visitor %s, sender %s, %d characters, %s", visitor[:6], body.sender, len(body.body), row.match_state)
         return {"id": row.id, "facility": facility.provider_id if facility is not None else None, "match": row.match_state}
 
-    @app.post("/api/inbox/{message_id}/investigate")
+    @old.post("/api/inbox/{message_id}/investigate")
     def investigate_text(message_id: int, body: InvestigateIn, request: Request, response: Response, session: Session = Depends(db),
                          who: str = Depends(actor)):
         """Reads a matched text, looks up the desk's records and prepares the case. The desk checks the packet against
@@ -499,7 +507,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         left = spend.allowance(session, settings.daily_budget_usd, settings.visitor_cases_per_day, visitor)
         return {**run_view(run), "limits": {"cases_left": left.cases_left, "budget_left_usd": round(left.budget_left_usd, 4)}}
 
-    @app.get("/api/inbox/{message_id}/progress")
+    @old.get("/api/inbox/{message_id}/progress")
     def inbox_progress(message_id: int, request: Request, session: Session = Depends(db), who: str = Depends(viewer)):
         """The steps the latest run on a text has taken so far, in plain words, for a page that is waiting for the run to finish."""
         message = session.get(InboundMessage, message_id)
@@ -509,7 +517,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         check_facility(session, facility.provider_id)
         return run_progress(session, message_id)
 
-    @app.get("/api/agent-runs/{run_id}")
+    @old.get("/api/agent-runs/{run_id}")
     def agent_run(run_id: int, request: Request, session: Session = Depends(db), who: str = Depends(viewer)):
         """One run with its trace: every model turn and lookup, and the records each lookup returned."""
         run = session.get(AgentRun, run_id)
@@ -520,7 +528,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         check_facility(session, facility.provider_id)
         return run_view(run, trace=True)
 
-    @app.post("/api/live-check")
+    @old.post("/api/live-check")
     def start_live_check(request: Request, response: Response, session: Session = Depends(db), who: str = Depends(actor)):
         """Two sample agents answer a tenant about two units on a real FMS test account, and the desk judges each answer against a
         read of the unit after it. It never writes to the FMS. One run at a time; the same budget and allowance as any run."""
@@ -541,12 +549,12 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
             response.status_code = 202          # another request's run is going; the page polls for it
         return live_check.view(run)
 
-    @app.get("/api/live-check")
+    @old.get("/api/live-check")
     def live_check_latest(session: Session = Depends(db), _: str = Depends(viewer)):
         """The newest run of the live check: its progress while it goes, then its answers and verdicts."""
         return {"run": live_check.view(live_check.latest(session))}
 
-    @app.get("/api/cases/{case_id}")
+    @old.get("/api/cases/{case_id}")
     def case_detail(case_id: int, session: Session = Depends(db), _: str = Depends(viewer)):
         case = get_case(session, case_id)
         lease = session.get(Lease, case.lease_id)
@@ -562,7 +570,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
             "history": [{"kind": e.kind, "actor": e.actor, "source": e.source, "detail": e.detail, "at": e.occurred_at} for e in events],
         }
 
-    @app.post("/api/cases/{case_id}/identity")
+    @old.post("/api/cases/{case_id}/identity")
     def identity(case_id: int, body: IdentityIn, session: Session = Depends(db), _: str = Depends(operator)):
         case = get_case(session, case_id)
         check = check_identity(session, adapter, case, IdentityClaim(body.last_name, body.phone_last4, body.unit_name))
@@ -576,7 +584,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
             PaymentService(session, adapter)._refresh(case)
         return answer
 
-    @app.post("/api/cases/{case_id}/proposals")
+    @old.post("/api/cases/{case_id}/proposals")
     def make_proposal(case_id: int, body: ProposalIn, session: Session = Depends(db), _: str = Depends(operator)):
         """What the front desk reads back to the tenant before charging anything."""
         case = get_case(session, case_id)
@@ -587,7 +595,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         return {"proposal_id": p.id, "amount": p.amount, "card_last4": p.card_last4, "expires_at": p.expires_at,
                 "read_back": f"We will charge ${p.amount / 100:,.2f} to the card ending in {p.card_last4}. Is that okay?"}
 
-    @app.post("/api/cases/{case_id}/proposals/{proposal_id}/confirm")
+    @old.post("/api/cases/{case_id}/proposals/{proposal_id}/confirm")
     def confirm_proposal(case_id: int, proposal_id: str, body: ConfirmIn, session: Session = Depends(db), _: str = Depends(operator)):
         """The tenant said yes, as heard by a named person. Sending this again returns the same payment."""
         get_case(session, case_id)
@@ -598,7 +606,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         log.info("case %s payment %s %s", case_id, command.id, command.state)
         return command_json(command)
 
-    @app.post("/api/cases/{case_id}/chat")
+    @old.post("/api/cases/{case_id}/chat")
     def chat(case_id: int, body: ChatIn, session: Session = Depends(db), _: str = Depends(operator)):
         """One tenant message in, the desk's reply out. The channel in front of it (SMS, web chat) calls this."""
         case = get_case(session, case_id)
@@ -617,7 +625,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         reply = conversation.say(session, body.text)
         return {"conversation_id": conversation.id, **reply.__dict__}
 
-    @app.post("/api/cases/{case_id}/lien/evidence")
+    @old.post("/api/cases/{case_id}/lien/evidence")
     def add_evidence(case_id: int, body: EvidenceIn, session: Session = Depends(db), _: str = Depends(operator)):
         case = get_case(session, case_id)
         try:
@@ -626,7 +634,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
             raise HTTPException(422, str(exc)) from exc
         return {"id": row.id, "kind": row.kind, "facts": row.facts, "document_sha256": row.document_sha256}
 
-    @app.get("/api/cases/{case_id}/lien")
+    @old.get("/api/cases/{case_id}/lien")
     def lien_file(case_id: int, session: Session = Depends(db), _: str = Depends(operator)):
         """The lien file evaluated now: every finding with its basis, the timing under this policy, and the state."""
         case = get_case(session, case_id)
@@ -644,7 +652,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
                                    "and earliest_sale is their summary, not a deadline."} if ref else None),
         }
 
-    @app.get("/api/lien/evaluations/{evaluation_id}/replay")
+    @old.get("/api/lien/evaluations/{evaluation_id}/replay")
     def replay_evaluation(evaluation_id: int, session: Session = Depends(db), _: str = Depends(viewer)):
         row = session.get(LienEvaluation, evaluation_id)
         if row is None:
@@ -652,7 +660,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         get_case(session, row.case_id)   # same facility rule as the case
         return {"evaluation_id": row.id, "same_result": replay(row)}
 
-    @app.get("/api/payments/{command_id}")
+    @old.get("/api/payments/{command_id}")
     def payment(command_id: int, session: Session = Depends(db), _: str = Depends(viewer)):
         command = session.get(PaymentCommand, command_id)
         if command is None:
@@ -660,7 +668,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         get_case(session, command.case_id)   # same facility rule as the case
         return command_json(command)
 
-    @app.post("/api/payments/{command_id}/resolve")
+    @old.post("/api/payments/{command_id}/resolve")
     def resolve(command_id: int, body: StaffResolutionIn, session: Session = Depends(db), _: str = Depends(operator),
                 x_staff_token: str | None = Header(default=None)):
         """Staff settle a payment the desk could not: what they found at the FMS or the processor, in their words."""
@@ -680,7 +688,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
             raise HTTPException(409, str(exc)) from exc
         return command_json(command)
 
-    @app.post("/api/missed-calls/{item_id}/callback")
+    @old.post("/api/missed-calls/{item_id}/callback")
     def callback(item_id: int, body: CallbackIn, session: Session = Depends(db), _: str = Depends(operator),
                  x_staff_token: str | None = Header(default=None)):
         """Staff record what came of a call back. Who recorded it comes from the staff token, the time from the server; no FMS write."""
@@ -703,7 +711,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         check_facility(session, facility.provider_id)
         return item
 
-    @app.post("/api/missed-calls/{item_id}/voicemail-reading")
+    @old.post("/api/missed-calls/{item_id}/voicemail-reading")
     def read_call_voicemail(item_id: int, body: ReadVoicemailIn, request: Request, response: Response, session: Session = Depends(db),
                             who: str = Depends(actor)):
         """Our agent reads the caller's voicemail and the desk keeps each part whose words stand in it. It writes nothing anywhere else:
@@ -726,26 +734,38 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
             response.status_code = 202          # another request's reading is going; the page polls the call for it
         return voicemail.reading_view(run)
 
-    @app.get("/api/missed-calls/{item_id}/voicemail-reading")
+    @old.get("/api/missed-calls/{item_id}/voicemail-reading")
     def call_voicemail_reading(item_id: int, session: Session = Depends(db), _: str = Depends(viewer)):
         """The newest reading of the words the call carries now, going or done, or null."""
         return {"reading": voicemail.reading_view(voicemail.latest_reading(session, call_item(session, item_id)))}
 
-    @app.get("/api/integration")
+    @old.get("/api/integration")
     def integration_open(session: Session = Depends(db), _: str = Depends(viewer)):
         """Answers the FMS gave that its documentation does not describe, not yet reviewed (or seen again since). No payment, customer or account data."""
         return {"open": [{"id": r.id, "endpoint": r.endpoint, "field": r.field, "kind": r.kind, "value": r.value, "count": r.count,
                           "first_seen": r.first_seen.isoformat(), "last_seen": r.last_seen.isoformat()} for r in integration.open_observations(session)]}
 
-    @app.post("/api/integration/{observation_id}/review")
+    @old.post("/api/integration/{observation_id}/review")
     def integration_review(observation_id: int, body: ReviewIn, session: Session = Depends(db), _: str = Depends(operator)):
         row = integration.review(session, observation_id, body.note)
         if row is None:
             raise HTTPException(404, "no such record")
         return {"id": row.id, "reviewed_at": row.reviewed_at.isoformat(), "open": integration.is_open(row)}
 
-    @app.post("/api/reconcile")
+    @old.post("/api/reconcile")
     def reconcile(session: Session = Depends(db), _: str = Depends(operator)):
         return {"checked": PaymentService(session, adapter).reconcile_all()}
 
+    if not settings.public_view or settings.old_screens:
+        app.include_router(old)
+    else:
+        # the public site: the Overview and the agentic FMS on the core's own books (core/), in a database of its own for this process
+        from .fms import mount as mount_fms
+        from .front_desk import FrontDesk
+        core_path = os.environ.get("CORE_DATABASE_PATH") or os.path.join(tempfile.mkdtemp(prefix="gatehouse-core-"), "core.db")
+        front_desk = app.state.front_desk = FrontDesk(core_path, chat_client)
+        mount_fms(app, front_desk, settings, guard, from_elsewhere, factory, live=chat_client is not None and settings.public_investigate)
+        if start_worker:
+            # the year is built while the site starts, so no visitor waits for it on their first page
+            threading.Thread(target=front_desk.ready, name="core-seed", daemon=True).start()
     return app

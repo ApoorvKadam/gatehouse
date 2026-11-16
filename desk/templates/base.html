@@ -7,10 +7,11 @@
 <link rel="preload" href="{{ url_for('static', path='geist.woff2') }}" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="{{ url_for('static', path='source-serif-4.woff2') }}" as="font" type="font/woff2" crossorigin>
 <link rel="icon" type="image/svg+xml" href="{{ url_for('static', path='favicon.svg') }}">
-<link rel="stylesheet" href="{{ url_for('static', path='gatehouse.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', path='gatehouse.css') }}?v={{ css_version }}">
 <script>document.documentElement.classList.add("js")</script>
 </head>
 <body class="{% block bodyclass %}{% endblock %}">
+{% block header %}
 <header class="top">
   <span class="scroll-line" aria-hidden="true"></span>
   <div class="wrap">
@@ -35,9 +36,11 @@
     {% endif %}
   </div>
 </header>
+{% endblock %}
 <main>
 {% block main %}{% endblock %}
 </main>
+{% block footer %}
 <footer>
   <div class="wrap foot">
     <div class="foot-brand">{% set guard_size = 72 %}{% set guard_pose = "" %}{% include "guard.html" %}<b>Gatehouse</b><span>Unfinished work in self-storage, checked against the FMS.</span></div>
@@ -47,6 +50,7 @@
     <p class="foot-note"><b>Synthetic technical preview.</b>Every tenant, payment and document is made up, and nothing on these pages changes a real FMS.</p>
   </div>
 </footer>
+{% endblock %}
 <script>
 // The guard (desk/static/mascot): its head follows the pointer across a 3x3 sheet of directions, it blinks now and then while a
 // person reads, and a press shows a reaction from the second sheet with a small squash. Without a fine pointer it faces forward.

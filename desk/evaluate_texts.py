@@ -86,7 +86,7 @@ def swap_run() -> list:
 def world(url: str, model: Scripted):
     httpx.post(f"{url}/sim/reset", json={}, headers={"Authorization": f"Bearer {KEY}"}, timeout=15)
     settings = Settings(database_url="sqlite:///:memory:", fms_base_url=url, fms_api_key=KEY, fms_timeout_seconds=5.0, reconcile_every_seconds=60,
-                        operator_token="evaluation", public_view=True, demo_seed=True, public_investigate=True, visitor_cases_per_day=50)
+                        operator_token="evaluation", public_view=True, old_screens=True, demo_seed=True, public_investigate=True, visitor_cases_per_day=50)
     return create_app(settings, CubbyAdapter(url, KEY, 5.0), start_worker=False, chat_client=model)
 
 
