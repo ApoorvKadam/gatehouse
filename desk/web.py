@@ -45,6 +45,7 @@ HERE = Path(__file__).parent
 templates = Jinja2Templates(directory=HERE / "templates")
 templates.env.filters["readable"] = plain      # no provider or record id, state codes and times as words
 # the stylesheet's address changes with its content, so a browser never keeps an old copy after a deploy
+templates.env.globals["brand"] = "Gatehouse"      # the product's displayed name, in one place; the address and the repository keep theirs
 templates.env.globals["css_version"] = __import__("hashlib").sha256((HERE / "static" / "gatehouse.css").read_bytes()).hexdigest()[:10]
 templates.env.filters["words"] = words         # one FMS status code as words: IN_PROGRESS reads "in progress"
 templates.env.filters["upfirst"] = lambda text: text[:1].upper() + text[1:] if text else text   # capitalize lowers the rest: "the FMS" became "the fms"

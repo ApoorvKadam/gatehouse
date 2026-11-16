@@ -24,7 +24,7 @@
   {% endif %}
   <section class="panel" aria-labelledby="h-agent">
     <h2 id="h-agent">What {{ agent }} may do</h2>
-    <p class="muted">{{ agent }} is the agent inside Gatehouse. It reads each message. Code checks every claim against the books and picks the action; nothing is written unless the checks allow it.</p>
+    <p class="muted">{{ agent }} is the agent inside {{ brand }}. It reads each message. Code checks every claim against the books and picks the action; nothing is written unless the checks allow it.</p>
     <ul class="fms-may">{% for text, moves in actions %}<li><span>{{ text }}</span>{% if moves %}<span class="chip plain">Changes money</span>{% endif %}</li>{% endfor %}</ul>
     <p class="muted">Rent is never waived. A fee under dispute, a lease that has ended, and anything the tenant asks for that the rules do not allow go to staff.</p>
   </section>

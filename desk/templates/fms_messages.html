@@ -18,10 +18,35 @@
       {% if c.handed %}<span class="chip act">Waiting for staff</span>{% elif c.waits %}<span class="chip wait">Answered, dispute open</span>{% else %}<span class="chip done">Closed</span>{% endif %}<span class="fms-snip">{{ c.text }}</span></a></li>
     {% endfor %}
     {% for t in waiting %}
-    <li class="fms-unread"><a href="/today"><b>{{ t.who.name }}</b> <span class="chip plain">Not read yet</span><span class="fms-snip">{{ t.text }}</span></a></li>
+    <li class="fms-unread{{ ' picked' if opened and opened.shift == t.shift }}"><a href="/messages?unread={{ t.shift }}" {% if opened and opened.shift == t.shift %}aria-current="true"{% endif %}><b>{{ t.who.name }}</b> <span class="chip plain">Not read yet</span><span class="fms-snip">{{ t.text }}</span></a></li>
     {% endfor %}
   </ol>
-  {% if picked %}
+  {% if opened %}
+  <article class="fms-case" aria-label="The message">
+    <p class="fms-card-head"><a href="/tenants/{{ opened.who.slug }}">{{ opened.who.name }}</a> <span class="muted">unit{{ 's' if opened.units|length > 1 }} {{ opened.units|join(' and ') }}</span> <span class="chip plain">Not read yet</span></p>
+    <q class="fms-quote">{{ opened.text }}</q>
+    <p class="muted">This text came in overnight. {{ agent }} reads it, code checks it against {{ opened.who.name.split(' ')[0] }}'s books, and the result shows here.{% if not live %} {{ agent }} is switched off on this copy, so it goes to staff.{% endif %}</p>
+    <p><button id="read-one" class="button primary" type="button" data-role="{{ opened.role }}" data-shift="{{ opened.shift }}">Have {{ agent }} read it</button></p>
+    <p id="read-one-status" class="fms-status" role="status" aria-live="polite"></p>
+  </article>
+  <script>
+  (function () {
+    var b = document.getElementById("read-one"), s = document.getElementById("read-one-status");
+    function readRun(fresh) { var r = sessionStorage.getItem("gh-run"); if (fresh || !r) { r = "r" + Date.now().toString(16); sessionStorage.setItem("gh-run", r); } return r; }
+    function send(fresh) {
+      return fetch("/api/fms/messages", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tenant: b.dataset.role, text: document.querySelector(".fms-quote").textContent, shift: b.dataset.shift, run: readRun(fresh) }) });
+    }
+    b.addEventListener("click", function () {
+      b.disabled = true; s.textContent = "{{ agent }} is reading the message.";
+      send(false).then(function (r) { return r.status === 409 ? send(true) : r; })
+        .then(function (r) { return r.ok ? r.json() : r.json().then(function (x) { throw new Error(x && typeof x.detail === "string" ? x.detail : "Something went wrong. Try again."); }); })
+        .then(function () { location.href = "/messages"; })
+        .catch(function (e) { s.textContent = e.message; b.disabled = false; });
+    });
+  })();
+  </script>
+  {% elif picked %}
   <article class="fms-case" aria-label="The message">
     <p class="fms-card-head">{% if picked.who %}<a href="/tenants/{{ picked.who.slug }}">{{ picked.who.name }}</a> <span class="muted">unit{{ 's' if picked.who.units|length > 1 }} {{ picked.who.units|join(' and ') }}</span>{% else %}A number that matches no tenant{% endif %}</p>
     <q class="fms-quote">{{ picked.text }}</q>
@@ -33,7 +58,7 @@
     {% if picked.outcomes %}
     <h3>What the records show and what was done</h3>
     {% for o in picked.outcomes %}
-    <div class="fms-outcome"><p>{{ o.says }}</p><p><span class="chip {{ 'act' if o.action == 'hand_to_staff' or not o.allowed else 'done' }}">{{ o.words }}</span> {% if o.check and o.action != 'hand_to_staff' %}<span class="muted">The rules: {{ o.check }}.</span>{% endif %}</p></div>
+    <div class="fms-outcome"><p>{{ o.says }}</p><p><span class="chip {{ 'act' if o.action == 'hand_to_staff' or not o.allowed else 'done' }}">{{ o.words }}</span> {% if o.check and o.action not in ('hand_to_staff', 'explain_charge') %}<span class="muted">The rules: {{ o.check }}.</span>{% endif %}</p></div>
     {% endfor %}
     {% endif %}
     {% for a in picked.asked %}<p class="muted">Also asked for, and refused: {{ a.check }}.</p>{% endfor %}

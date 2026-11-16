@@ -87,8 +87,9 @@
   var button = document.getElementById("read-all"), status = document.getElementById("read-status");
   var items = Array.prototype.slice.call(document.querySelectorAll("#waiting li"));
   function fail(r) { return r.json().then(function (b) { throw new Error(b && typeof b.detail === "string" ? b.detail : "Something went wrong. Try again."); }, function () { throw new Error("Something went wrong. Try again."); }); }
-  var run = Math.random().toString(16).slice(2, 14);
+  function readRun(fresh) { var r = sessionStorage.getItem("gh-run"); if (fresh || !r) { r = "r" + Date.now().toString(16); sessionStorage.setItem("gh-run", r); } return r; }
   button.addEventListener("click", function () {
+    var run = readRun(false);
     button.disabled = true;
     items.reduce(function (p, li, i) {
       return p.then(function () {
@@ -97,6 +98,12 @@
         li.classList.add("reading");
         return fetch("/api/fms/messages", { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ tenant: li.dataset.role, text: li.querySelector("q").textContent, shift: li.dataset.shift, run: run }) })
+          .then(function (r) {
+            if (r.status !== 409) return r;
+            run = readRun(true);         // that run already read this message on an earlier copy: read it under a fresh one
+            return fetch("/api/fms/messages", { method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ tenant: li.dataset.role, text: li.querySelector("q").textContent, shift: li.dataset.shift, run: run }) });
+          })
           .then(function (r) { return r.ok ? r.json() : fail(r); })
           .then(function (c) { li.classList.remove("reading"); li.classList.add(c.handed ? "to-staff" : "closed"); });
       });

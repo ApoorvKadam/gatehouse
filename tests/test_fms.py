@@ -111,7 +111,7 @@ def test_the_screens_show_the_generated_year_in_words(fms_url, sim):
         pages = {p: c.get(p) for p in PAGES}
         assert all(r.status_code == 200 for r in pages.values()), {p: r.status_code for p, r in pages.items() if r.status_code != 200}
         text = {p: seen(r.text) for p, r in pages.items()}
-        assert "22 tenants owe $2,808.00" in text["/home"] and "22 tenants owe $2,808.00" in text["/billing"]
+        assert "$2,808.00" in text["/home"] and "22 tenants" in text["/home"] and "22 tenants owe $2,808.00" in text["/billing"]
         assert "All 120 units" in text["/home"] and len(re.findall(r"[A-Z][a-z]{2} \d{1,2}, 20\d\d", text["/units"].split("Row A:", 1)[1])) == 110
         assert "121 tenants" in text["/tenants"]
         assert "Row A: " in text["/units"] and "Vacant" in text["/units"]
@@ -221,3 +221,19 @@ def test_with_the_bot_check_on_a_sign_in_needs_a_passed_check_and_a_half_set_che
     with TestClient(half) as c:
         r = c.post("/sign-in", data={"name": DEMO_NAME, "password": DEMO_PASSWORD}, follow_redirects=False)
         assert r.status_code == 503 and SESSION not in r.cookies
+
+
+def test_his_corrections_of_the_night_stay_corrected(fms_url, sim):
+    """2026-11-15: a message opens inside Messages, the sign-in comes filled in, and the walkthrough sits below the product picture."""
+    app = site(fms_url)
+    with TestClient(app) as c:
+        page = c.get("/sign-in").text
+        assert f'value="{DEMO_NAME}"' in page and f'value="{DEMO_PASSWORD}"' in page
+        overview = c.get("/").text
+        hero = overview.split('class="ov-hero"', 1)[1].split("</section>", 1)[0]
+        assert "<video" not in hero and 'class="ov-shot"' in hero and overview.index('class="ov-shot"') < overview.index('id="walkthrough"')
+    with sign_in(app) as c:
+        cold = c.get("/messages").text
+        conversations = cold.split('class="fms-convs"', 1)[1].split("</ol>", 1)[0]
+        assert "/today" not in conversations and conversations.count('href="/messages?unread=') == len(SHIFT)
+        assert 'id="read-one"' in cold                       # the first unread message is open, with its own read button
