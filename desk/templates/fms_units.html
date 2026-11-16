@@ -4,21 +4,22 @@
 <header class="head">
   <h1>Units</h1>
 </header>
-<p class="fms-summary">{% for r in occupancy %}Row {{ r.row }}: {{ r.rented }} of {{ r.units }} rented{{ '. ' if not loop.last else '.' }}{% endfor %}</p>
-<p class="fms-legend"><span><i></i>Rented</span><span><i class="act"></i>Past due</span><span><i class="wait"></i>Fee in dispute</span><span><i class="vacant"></i>Vacant</span></p>
-<div class="fms-map" aria-label="Unit map">
+{% set counts = namespace(occupied=0, past=0, dispute=0, vacant=0) %}{% for row, items in rows %}{% for u in items %}{% if not u.who %}{% set counts.vacant = counts.vacant + 1 %}{% elif u.chip and u.chip[1] == 'act' %}{% set counts.past = counts.past + 1 %}{% elif u.chip and u.chip[1] == 'wait' %}{% set counts.dispute = counts.dispute + 1 %}{% else %}{% set counts.occupied = counts.occupied + 1 %}{% endif %}{% endfor %}{% endfor %}
+<p class="fms-summary">Unit occupancy {{ ((100 * (counts.occupied + counts.past + counts.dispute)) / (counts.occupied + counts.past + counts.dispute + counts.vacant))|round|int }}%: {{ counts.occupied + counts.past + counts.dispute }} of {{ counts.occupied + counts.past + counts.dispute + counts.vacant }} units occupied.</p>
+<p class="fms-legend"><span><i class="occ"></i>Occupied <b>{{ counts.occupied }}</b></span><span><i class="act"></i>Past due <b>{{ counts.past }}</b></span><span><i class="wait"></i>Fee in dispute <b>{{ counts.dispute }}</b></span><span><i class="vac"></i>Vacant <b>{{ counts.vacant }}</b></span></p>
+<div class="fms-map" aria-label="Site map">
   {% for row, items in rows %}
   <section class="fms-map-row" aria-labelledby="m-row-{{ row }}">
-    <h3 id="m-row-{{ row }}">Row {{ row }}</h3>
+    <h3 id="m-row-{{ row }}">Building {{ row }}</h3>
     <ul class="fms-tiles">
-      {% for u in items %}<li>{% if u.who %}<a class="{{ u.chip[1] if u.chip else '' }}" href="/tenants/{{ u.who.slug }}" title="{{ u.unit }}: {{ u.who.name }}{{ ', ' ~ u.chip[0] if u.chip }}"><b>{{ u.unit }}</b><small>{{ u.who.name.split(' ')[-1] }}</small></a>{% else %}<span class="fms-vacant" title="{{ u.unit }}: vacant"><b>{{ u.unit }}</b><small>Vacant</small></span>{% endif %}</li>{% endfor %}
+      {% for u in items %}<li>{% if u.who %}<a class="{{ u.chip[1] if u.chip else 'occ' }}" href="/tenants/{{ u.who.slug }}" title="{{ u.unit }}: {{ u.who.name }}{{ ', ' ~ u.chip[0] if u.chip }}"><b>{{ u.unit }}</b><small>{{ u.who.name.split(' ')[0][0] }}. {{ u.who.name.split(' ')[-1] }}</small></a>{% else %}<span class="fms-vacant" title="{{ u.unit }}: vacant"><b>{{ u.unit }}</b><small aria-hidden="true">&nbsp;</small></span>{% endif %}</li>{% endfor %}
     </ul>
   </section>
   {% endfor %}
 </div>
 {% for row, items in rows %}
 <section class="fms-section" aria-labelledby="h-row-{{ row }}">
-  <h2 id="h-row-{{ row }}">Row {{ row }}</h2>
+  <h2 id="h-row-{{ row }}">Building {{ row }}</h2>
   <div class="fms-scroll" tabindex="0" role="region" aria-labelledby="h-row-{{ row }}"><table class="fms-table">
     <thead><tr><th>Unit</th><th>Tenant</th><th>Rented since</th><th>Needs attention</th><th class="num">Rent a month</th></tr></thead>
     <tbody>

@@ -112,9 +112,9 @@ def test_the_screens_show_the_generated_year_in_words(fms_url, sim):
         assert all(r.status_code == 200 for r in pages.values()), {p: r.status_code for p, r in pages.items() if r.status_code != 200}
         text = {p: seen(r.text) for p, r in pages.items()}
         assert "$2,808.00" in text["/home"] and "22 tenants" in text["/home"] and "22 tenants owe $2,808.00" in text["/billing"]
-        assert "All 120 units" in text["/home"] and len(re.findall(r"[A-Z][a-z]{2} \d{1,2}, 20\d\d", text["/units"].split("Row A:", 1)[1])) == 110
+        assert "All 120 units" in text["/home"] and len(re.findall(r"[A-Z][a-z]{2} \d{1,2}, 20\d\d", text["/units"].split("units occupied.", 1)[1])) == 110
         assert "121 tenants" in text["/tenants"]
-        assert "Row A: " in text["/units"] and "Vacant" in text["/units"]
+        assert "Building A" in text["/units"] and "Vacant 10" in text["/units"] and "Row A" not in text["/units"]
         assert "38 of 40 right" in text["/messages/tests"] and "23 of 40 right" in text["/messages/tests"]
         assert "We waive one late fee per tenant" in text["/rules"] and "$25.00" in text["/rules"]
         for name in ("Maria Lopez", "James Carter", "Priya Shah", "Faye Turner"):

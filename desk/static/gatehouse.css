@@ -1282,13 +1282,17 @@ html { font-size: 93.75%; }
 .fms-tiles a:hover { border-color: var(--ink-3); text-decoration: none; }
 .fms-tiles b { font-variant-numeric: tabular-nums; }
 .fms-tiles small { color: var(--ink-3); font-size: var(--t-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.fms-tiles .fms-vacant { background: transparent; border-style: dashed; color: var(--ink-3); }
+/* the industry's site-map colours (storEDGE: green vacant, blue occupied, red delinquent, yellow reserved) */
+.fms-tiles .occ { background: color-mix(in srgb, var(--blue) 12%, var(--paper)); border-color: color-mix(in srgb, var(--blue) 28%, var(--paper)); }
+.fms-tiles .fms-vacant { background: var(--chip-done); border-color: transparent; color: var(--chip-done-ink); }
 .fms-tiles .act { background: var(--chip-act); border-color: transparent; color: var(--chip-act-ink); }
 .fms-tiles .act small, .fms-tiles .wait small { color: inherit; opacity: .85; }
 .fms-tiles .wait { background: var(--chip-wait); border-color: transparent; color: var(--chip-wait-ink); }
 .fms-legend { display: flex; gap: var(--s4); flex-wrap: wrap; font-size: var(--t-sm); color: var(--ink-2); margin: var(--s2) 0 var(--s4); }
 .fms-legend span { display: inline-flex; align-items: center; gap: 6px; }
 .fms-legend i { width: 12px; height: 12px; border-radius: 3px; border: 1px solid var(--frame); background: var(--paper); }
-.fms-legend i.vacant { border-style: dashed; background: transparent; }
+.fms-legend i.occ { background: color-mix(in srgb, var(--blue) 12%, var(--paper)); border-color: color-mix(in srgb, var(--blue) 28%, var(--paper)); }
+.fms-legend i.vac { background: var(--chip-done); border-color: transparent; }
+.fms-legend b { font-variant-numeric: tabular-nums; }
 .fms-legend i.act { background: var(--chip-act); border-color: transparent; }
 .fms-legend i.wait { background: var(--chip-wait); border-color: transparent; }
