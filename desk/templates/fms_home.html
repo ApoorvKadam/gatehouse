@@ -7,7 +7,7 @@
 <p class="fms-greet">Here is what is happening at {{ f.name }} this morning.</p>
 {% set rented = rows|sum(attribute='rented') %}{% set units = rows|sum(attribute='units') %}
 <dl class="fms-kpis">
-  <div><dt>Units rented</dt><dd>{{ (100 * rented / units)|round|int }}%<span>{{ rented }} of {{ units }}</span></dd></div>
+  <div><dt>Unit occupancy</dt><dd>{{ (100 * rented / units)|round|int }}%<span>{{ rented }} of {{ units }}</span></dd></div>
   <div><dt>Collected in {{ month.name.split(' ')[0] }}</dt><dd>{{ money(month.collected) }}<span>{{ money(month.rent + month.fees) }} billed</span></dd></div>
   <div><dt>Past due</dt><dd>{{ money(past|sum(attribute='past')) }}<span>{{ past|length }} tenants</span></dd></div>
   <div><dt>Messages this morning</dt><dd>{{ morning }}<span>{% if waiting %}{{ waiting }} not read yet{% else %}{{ closed }} closed by {{ agent }}{% endif %}</span></dd></div>
@@ -23,10 +23,10 @@
     </ul>
   </section>
   <section aria-labelledby="h-rows">
-    <h2 id="h-rows">Units rented by row</h2>
+    <h2 id="h-rows">Occupancy by building</h2>
     <div class="panel">
       {% for r in rows %}
-      <div class="fms-row"><span>Row {{ r.row }}</span><span class="fms-track" aria-hidden="true"><i style="width: {{ (100 * r.rented / r.units)|round(1) }}%"></i></span><span>{{ r.rented }} of {{ r.units }}</span></div>
+      <div class="fms-row"><span>Building {{ r.row }}</span><span class="fms-track" aria-hidden="true"><i style="width: {{ (100 * r.rented / r.units)|round(1) }}%"></i></span><span>{{ r.rented }} of {{ r.units }}</span></div>
       {% endfor %}
       <p class="fms-more"><a href="/units">All {{ units }} units</a></p>
     </div>
