@@ -45,7 +45,7 @@ HERE = Path(__file__).parent
 templates = Jinja2Templates(directory=HERE / "templates")
 templates.env.filters["readable"] = plain      # no provider or record id, state codes and times as words
 # the stylesheet's address changes with its content, so a browser never keeps an old copy after a deploy
-# the product's displayed name and its agent's, in one place; the address and the repository keep theirs. The agent has a
+# the product's displayed name and its agent's, in one place; the web address keeps its own. The agent has a
 # person's name, as staff name a colleague
 BRAND, AGENT = "Staddle", "Tilden"
 templates.env.globals["brand"] = BRAND

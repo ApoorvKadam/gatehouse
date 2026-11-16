@@ -69,7 +69,7 @@ A generated year of one facility runs through the same code: 120 units, 121 tena
 
 ## The earlier reconciliation desk
 
-Before Staddle kept its own books, the project, then called Gatehouse (the repository keeps that name), watched an FMS simulator that follows Cubby's public API and checked unfinished work against it. Its screens are off the preview now; its code and tests stay until the simulator is retired.
+Before Staddle kept its own books, the project, then called Gatehouse, watched an FMS simulator that follows Cubby's public API and checked unfinished work against it. Its screens are off the preview now; its code and tests stay until the simulator is retired.
 
 | | |
 |---|---|
@@ -94,7 +94,7 @@ docker compose up --build     # Staddle on :8000, the FMS simulator on its loopb
 With `DESK_PUBLIC_VIEW=1` and `DESK_DEMO_SEED=1` it serves the Overview and the FMS described above. The tests and the evaluation run in Docker, from the `test` target of the Dockerfile:
 
 ```bash
-docker build --target test -t gatehouse:test . && docker run --rm gatehouse:test
+docker build --target test -t staddle:test . && docker run --rm staddle:test
 ```
 
 ## More
