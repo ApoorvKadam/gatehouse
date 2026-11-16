@@ -1051,7 +1051,7 @@ footer .foot { display: grid; grid-template-columns: minmax(0, 2fr) repeat(3, mi
 .site-open { margin-left: auto; }
 body.fms { display: grid; grid-template-columns: 15.5rem minmax(0, 1fr); grid-template-rows: 1fr auto; min-height: 100vh; }
 .fms-rail { grid-row: 1 / span 2; position: sticky; top: 0; height: 100vh; overflow-y: auto; display: flex; flex-direction: column; gap: var(--s4);
-  padding: var(--s5) var(--s3) var(--s4); border-right: 1px solid var(--rule); background: var(--band); }
+  padding: var(--s5) var(--s3) var(--s4); border-right: 1px solid var(--rule); background: var(--band); scrollbar-color: var(--frame) transparent; }
 .fms-rail .brand { padding: 0 var(--s3); }
 .fms-rail nav { display: flex; flex-direction: column; gap: 2px; }
 .fms-group { margin: var(--s4) var(--s3) var(--s1); font-size: var(--t-xs); font-weight: 600; color: var(--ink-3); }
@@ -1149,7 +1149,6 @@ body.fms > main { min-width: 0; }
 .fms-section > p + .fms-scroll, .fms-search + p + .fms-scroll { margin-top: var(--s3); }
 .fms { accent-color: var(--blue); }
 .fms ::selection { background: var(--select); color: var(--ink); }
-.fms-rail { scrollbar-color: var(--frame) transparent; }
 .fms-table tbody tr:last-child td { border-bottom: 0; }
 .fms-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .fms-table tbody tr:hover { background: var(--hover); box-shadow: none; }
