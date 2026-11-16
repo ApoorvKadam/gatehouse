@@ -1,0 +1,44 @@
+{% extends "fms.html" %}
+{% block page %}{{ p.name }}{% endblock %}
+{% block body %}
+<p class="crumbs"><a href="/tenants">Tenants</a></p>
+<header class="head fms-record-head">
+  <h1>{{ p.name }}</h1>
+  <p class="fms-chips">{% for text, tone in f.chips(p) %}<span class="chip {{ tone }}">{{ text }}</span> {% endfor %}<span class="muted">{{ p.phone }}</span></p>
+</header>
+<dl class="fms-facts fms-wide">
+  <div><dt>Balance</dt><dd>{{ money(p.owed) }}</dd></div>
+  <div><dt>Past due</dt><dd>{{ money(p.past) }}</dd></div>
+  <div><dt>Credit held</dt><dd>{{ money(p.credit) }}</dd></div>
+</dl>
+
+<section class="fms-section" aria-labelledby="h-rentals">
+  <h2 id="h-rentals">Rentals</h2>
+  <div class="fms-scroll" tabindex="0" role="region" aria-labelledby="h-rentals"><table class="fms-table">
+    <thead><tr><th>Unit</th><th>Started</th><th>Ended</th><th>Fees in the signed schedule</th><th class="num">Rent a month</th><th class="num">Open on this unit</th></tr></thead>
+    <tbody>{% for r in rentals %}<tr><td>{{ r.unit }}</td><td>{{ r.start }}</td><td>{{ r.ended or '' }}</td><td>{{ r.schedule|capitalize }}</td><td class="num">{{ r.rent }}</td><td class="num">{{ r.owed }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+
+{% if disputes %}
+<section class="fms-section" aria-labelledby="h-disputes">
+  <h2 id="h-disputes">Open disputes</h2>
+  {% for d in disputes %}<p>{{ d.amount }} {{ d.fee }}: <q>{{ d.quote }}</q> {% if d.held %}<span class="chip wait">Collection paused until {{ d.review_by }}</span>{% endif %} <a href="/today#disputes">Decide it on Today</a></p>{% endfor %}
+</section>
+{% endif %}
+
+{% if cases %}
+<section class="fms-section" aria-labelledby="h-msgs">
+  <h2 id="h-msgs">Messages</h2>
+  {% for c in cases %}<article class="fms-line"><p><a href="/messages?case={{ c.n }}"><q>{{ c.text }}</q></a></p><p class="muted">{{ ('Handed to staff: ' ~ c.why) if c.handed else c.summary }}</p></article>{% endfor %}
+</section>
+{% endif %}
+
+<section class="fms-section" aria-labelledby="h-ledger">
+  <h2 id="h-ledger">Ledger</h2>
+  <div class="fms-scroll" tabindex="0" role="region" aria-labelledby="h-ledger"><table class="fms-table">
+    <thead><tr><th>Date</th><th>What</th><th>By</th><th class="num">Amount</th><th class="num">Balance</th></tr></thead>
+    <tbody>{% for r in ledger %}<tr><td>{{ r.on }}</td><td>{{ r.what }}</td><td class="muted">{{ r.by }}</td><td class="num">{{ r.amount }}</td><td class="num">{{ r.balance }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+{% endblock %}

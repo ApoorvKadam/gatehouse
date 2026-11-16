@@ -1,0 +1,103 @@
+{
+ "ran_at": "2026-11-15",
+ "labels": "5c145db6130e",
+ "comparison": {
+  "set": "40 tenant messages written by a separate model from the tenants' account facts alone, which had seen neither approach; labelled by the developer from the written rubric before any run; each approach ran once",
+  "arms": [
+   {
+    "arm": "Fixed-rule workflow",
+    "right": 23,
+    "cases": 40,
+    "critical": 1,
+    "to_staff": 25,
+    "cents_median": 0,
+    "missed": [
+     "x03",
+     "x04",
+     "x06",
+     "x07",
+     "x09",
+     "x10",
+     "x14",
+     "x15",
+     "x16",
+     "x19",
+     "x20",
+     "x22",
+     "x24",
+     "x28",
+     "x29",
+     "x30",
+     "x32"
+    ]
+   },
+   {
+    "arm": "Porter reads, code decides",
+    "right": 38,
+    "cases": 40,
+    "critical": 0,
+    "to_staff": 18,
+    "cents_median": 0.0258,
+    "missed": [
+     "x24",
+     "x28"
+    ]
+   },
+   {
+    "arm": "Porter reads and chooses",
+    "right": 34,
+    "cases": 40,
+    "critical": 1,
+    "to_staff": 17,
+    "cents_median": 0.0365,
+    "missed": [
+     "x03",
+     "x05",
+     "x06",
+     "x10",
+     "x19",
+     "x28"
+    ]
+   },
+   {
+    "arm": "Perfect reading, code decides (a check, not a product)",
+    "right": 40,
+    "cases": 40,
+    "critical": 0,
+    "to_staff": 14,
+    "cents_median": 0,
+    "missed": []
+   }
+  ],
+  "note": "The fixed-rule workflow was run again after a bug fix (a month name matched the same month a year earlier), which raised it from 22 to 23.",
+  "shipped_misses": [
+   {
+    "id": "x24",
+    "tenant": "Ben",
+    "text": "Yeah I paid on the 8th, I know. But things have been tight lately. Can you waive this one like you did in March?",
+    "did": "Passed it to staff.",
+    "expected": "explain the November late fee and keep it: rent came on the 8th, after the fee time, and the owner's rule allows one waiver a year, which he had in March."
+   },
+   {
+    "id": "x28",
+    "tenant": "Dev",
+    "text": "Hey just checking, I have two units with you and both payments went through. Can you tell me which charge belongs to which unit? Don't want any surprise late fees.",
+    "did": "Passed it to staff.",
+    "expected": "explain the two November rents, one for each of his units."
+   }
+  ]
+ },
+ "reading": {
+  "messages": 51,
+  "fully_right": 34,
+  "bar": 49,
+  "wrong_amounts": 0,
+  "disputes_missed": 0
+ },
+ "choosing": {
+  "cases": 24,
+  "code": 23,
+  "best_model": 23,
+  "decision": "No model chose better than code on the same reading, so code chooses the action."
+ }
+}

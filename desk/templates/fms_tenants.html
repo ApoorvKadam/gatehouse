@@ -1,0 +1,23 @@
+{% extends "fms.html" %}
+{% block page %}Tenants{% endblock %}
+{% block body %}
+<header class="head">
+  <h1>Tenants</h1>
+</header>
+<form class="fms-search" method="get" action="/tenants" role="search">
+  <label for="q">Find a tenant by name, phone or unit</label>
+  <input id="q" name="q" value="{{ q }}" maxlength="60">
+  <button class="button" type="submit">Find</button>
+  {% if q %}<a href="/tenants">Show all</a>{% endif %}
+</form>
+<p class="muted">{{ people|length }} tenant{{ 's' if people|length != 1 }}{{ ' match' if q }}.</p>
+<div class="fms-scroll" tabindex="0" role="region" aria-label="Table"><table class="fms-table">
+  <thead><tr><th>Name</th><th>Units</th><th>Phone</th><th>Status</th><th class="num">Balance</th></tr></thead>
+  <tbody>
+    {% for p in people %}
+    <tr><td><a href="/tenants/{{ p.slug }}">{{ p.name }}</a></td><td>{{ p.units|join(', ') }}</td><td class="muted">{{ p.phone }}</td>
+      <td>{% for text, tone in f.chips(p) %}<span class="chip {{ tone }}">{{ text }}</span> {% endfor %}</td><td class="num">{{ money(p.owed) }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table></div>
+{% endblock %}

@@ -1,18 +1,75 @@
 # Gatehouse
 
-Unfinished work in self-storage, checked against the FMS.
+A self-storage FMS where Porter, the agent inside it, works the front desk and code checks every change against the books.
 
 https://github.com/user-attachments/assets/67a0989c-5b1c-4498-85c2-c66cc36d178d
 
-The walkthrough, two and a half minutes with sound, recorded on the live preview. The music is "Closer" from Mixkit, used under Mixkit's free music licence.
+The walkthrough shows the earlier screens, from before Gatehouse kept its own books; the live preview shows the FMS described below. The music is "Closer" from Mixkit, used under Mixkit's free music licence.
 
 ## Why it exists
 
-Operators already run a facility management system (FMS), a payment processor, a gate system and reminder tools. The costly failures sit between them: work one system reports done that another never finished. A card is charged and the FMS never shows it. A tenant pays and is still locked out, or still listed for auction. A sale is cancelled in the FMS and still listed on an outside site.
+Operators run a facility management system (FMS), a payment processor, a gate system and reminder tools. The costly failures sit between them: work one system reports done that another never finished. A card is charged and the FMS never shows it. A tenant pays and is still locked out, or still listed for auction.
 
-Gatehouse finds that work, keeps the evidence, and closes an item only when the system of record shows the fact that proves it done. When the systems disagree, a person decides from the evidence. It is not an FMS, a reminder bot, a payment processor or legal advice.
+AI front desks for self-storage now answer tenants. In the products surveyed for this project (their public screens, help pages and operator reviews, November 2026), a shipped AI front desk hands a fee question to staff as a ticket, or is not allowed to change tenant data. Approval steps and dollar limits for AI appear only in demos and stated plans. None shows the rule an AI applied beside the books entry it wrote.
 
-## What it does
+Gatehouse is the FMS itself. It keeps the facility's books, Porter reads what tenants write, and code checks each claim against those books, decides, and writes the change through one gate. Staff see every message with what Porter read, the rule that decided and the entries it wrote; what needs a person waits for them on Today. Gatehouse is not a payment processor and does not give legal advice.
+
+## The FMS
+
+The preview opens on an Overview. The FMS is behind a sign-in; the demo name and password are printed on the sign-in page, and each visitor works on a copy of the facility of their own.
+
+- **Home.** The facility this morning: work waiting, units rented by row, the month's billing and collections, who is past due.
+- **Today.** This morning's tenant texts and a button to have Porter read them; disputes waiting for a decision; what was handed to staff; what Porter closed.
+- **Messages.** Each conversation with the tenant's words, what Porter read, what the books show, what was done, the books entries written and the reply. Try a tenant message sends one of your own through the same path. Test results shows how Porter was measured.
+- **Units** and **Tenants.** Who rents what at which rent, the account with its rentals and a ledger with a running balance.
+- **Billing and payments.** Each month's billing, payments with the day the card was charged and the day the facility learned of it, declined cards, and who is past due.
+- **Rules.** The fee schedule, the owner's waiver rule in words and in the exact form code checks, what Porter may do, and what only staff decide.
+
+Staff decide an open dispute on Today: remove a fee the tenant never signed for, which is a correction and does not use up a waiver, or keep it under review. Each decision goes through the same gate, with a note of what was checked.
+
+## Porter
+
+Porter reads a tenant's message into claims, each with the tenant's own words. Code checks each claim against the books and decides:
+- explain the charge;
+- reverse a charge posted twice;
+- remove a fee posted in error;
+- record a dispute, held when the fee is not in the tenant's signed papers;
+- waive a fee under the owner's rule;
+- hand it to staff, with the reason.
+
+Code writes the reply from what the gate recorded. Porter cannot change the books itself. Claude Haiku 5.5 does the reading.
+
+## How it was measured
+
+Porter was scored on 40 tenant messages written by a separate model that had seen neither approach, labelled by the developer from a written rubric before any run, each approach run once:
+
+| Approach | Right action | Serious errors | To staff |
+|---|---|---|---|
+| Porter reads, code decides | 38 of 40 | 0 | 18 |
+| A fixed-rule workflow, same books | 23 of 40 | 1 | 25 |
+
+A serious error is money moved that should not have been. Both of Porter's misses went to staff instead of being explained. Porter's reading, measured alone on 51 held-back messages, was fully right on 34 against a bar of 49 set beforehand, with no wrong amount accepted and no dispute missed. A model choosing the action did no better than code (23 of 24 against 23), so code chooses. Reading costs about 0.03 cents a message.
+
+## The books
+
+The `core` package keeps the facility's records:
+- an event log the database refuses to edit;
+- double-entry books in whole cents;
+- billing: rent on the 1st, and a late fee at midnight on the 6th;
+- payments that record which charges they paid, with the day they were made and the day the facility learned of them, and customer credit;
+- a gate that every change to money passes through.
+
+A generated year of one facility runs through the same code: 120 units, 121 tenants, 122 leases, 1,662 charges and 1,279 payments.
+
+## What is built and what is simulated
+
+- **Built:** the books, the gate, Porter's reading, the FMS screens, the staff decisions, the sign-in and the tests. The earlier reconciliation desk (below) is built too.
+- **Simulated:** the facility, its tenants and its money are generated. Replies are shown, never sent. Taking card payments, gate access, move-ins and lien notices come in later steps.
+- **Not shown yet:** no operator has used it.
+
+## The earlier reconciliation desk
+
+Before Gatehouse kept its own books, it watched an FMS simulator that follows Cubby's public API and checked unfinished work against it. Its screens are off the preview now; its code and tests stay until the simulator is retired.
 
 | | |
 |---|---|
@@ -21,23 +78,11 @@ Gatehouse finds that work, keeps the evidence, and closes an item only when the 
 | ![A Florida lien file](docs/screens/lien.png) **Lien files and sales.** Every Florida requirement with its basis and evidence. A paid unit still listed for auction gets one FMS task, and an outside listing needs its own proof. | ![A tenant's text with our agent's case notes](docs/screens/messages.png) **Messages.** Every text is matched to a tenant through the FMS. Our agent reads the case; the desk writes the reply from verified records. STOP always wins. |
 | ![Missed calls, with a voicemail read by our agent](docs/screens/calls-and-reminders.png) **Calls and reminders.** Every missed caller with a usable number gets one call back, asked for in the FMS. Our agent reads a voicemail, and staff see only what the caller stated, in the caller's own words. The same page shows which past-due tenants a collections text must not reach, and why. | ![The Overview](docs/screens/overview.png) **Overview.** What Gatehouse watches, with live counts from the desk's own records and the film. |
 
-**Rent changes.** Whether each increase the FMS holds can go ahead, was applied on its date, and was billed at the new rent in a full period. A notice is never shown as proven.
-
-**Evaluation.** Every build replays the failures against the running system: lost answers, late money, returned payments, wrong numbers, tasks marked done without the work. It counts each red line, such as a duplicate charge or a sale called cancelled without proof, and fails at one. Deliberately wrong builds are run too, to show each check catches what it is for.
-
-## Our agent
-
-Our agent does the reading: it looks up the tenant's records, writes the case notes and asks for actions. It also reads a missed caller's voicemail; the desk keeps a part only when the caller's own words for it are in the voicemail. Gatehouse decides, acts and reads the result back from the FMS. The agent cannot change the FMS, charge a card or send a text itself; every sentence a tenant receives is written by the desk from a verified record. On the preview, visitors run it live, inside a daily budget and a per-visitor allowance.
-
-## What is built and what is simulated
-
-- **Built:** the desk, its worker, every check above, the live agent runs and the evaluation.
-- **Simulated:** the FMS, with its gate codes and unit locks, the phone system's missed-call log and the outside auction site. The FMS simulator follows Cubby's public API documentation, including its awkward parts: a decline still answers 200, a pending payment must never be retried, and a text has no idempotency key.
-- **Not shown yet:** no operator has used it. All tenants, facilities and payments are synthetic.
+Every build still replays that desk's failures against the running system and fails at the first red line, such as a duplicate charge or a sale called cancelled without proof.
 
 ## Checks against a real FMS
 
-`fms_checks` asks whether an agent tells a tenant only what the FMS shows right now, judged against a real FMS test account (it works with Stora's public API), not the simulator. Two checks: a locked unit after the tenant says they paid, and how much notice a rent increase gave. The access check also runs live from the preview's Evaluation page: two sample agents answer about one locked and one open unit, and each answer is judged against a read of that unit taken after it. An outside agent can answer over HTTPS; none has yet. How it judges and how to plug in an agent: [docs/agent-checks.md](docs/agent-checks.md).
+`fms_checks` asks whether an agent tells a tenant only what the FMS shows right now, judged against a real FMS test account (it works with Stora's public API), not the simulator. Two checks: a locked unit after the tenant says they paid, and how much notice a rent increase gave. They run with `python -m fms_checks access` and `python -m fms_checks notice`. How it judges and how to plug in an agent: [docs/agent-checks.md](docs/agent-checks.md).
 
 ## Run it
 
@@ -46,7 +91,7 @@ cp .env.example .env          # set DESK_OPERATOR_TOKEN to a long random string
 docker compose up --build     # Gatehouse on :8000, the FMS simulator on its loopback
 ```
 
-The tests and the evaluation run in Docker, from the `test` target of the Dockerfile:
+With `DESK_PUBLIC_VIEW=1` and `DESK_DEMO_SEED=1` it serves the Overview and the FMS described above. The tests and the evaluation run in Docker, from the `test` target of the Dockerfile:
 
 ```bash
 docker build --target test -t gatehouse:test . && docker run --rm gatehouse:test
@@ -55,6 +100,6 @@ docker build --target test -t gatehouse:test . && docker run --rm gatehouse:test
 ## More
 
 - The live preview: [gatehouse-peug.onrender.com](https://gatehouse-peug.onrender.com), on synthetic data.
-- The [full write-up](docs/details.md): where it fits next to the vendors, each part in depth, the API, the Florida lien rules and the limits.
+- The [full write-up](docs/details.md) of the earlier desk: where it fits next to the vendors, each part in depth, the API, the Florida lien rules and the limits.
 
 The FMS simulator is not an official Cubby integration, and `fms_checks` is not an official Stora integration. Lien-law reference data is from the [Stitch Storage dataset](https://stitchstorage.com/self-storage-lien-laws/data), CC BY 4.0. Gatehouse does not give legal advice, process real payments or authorize property sales.

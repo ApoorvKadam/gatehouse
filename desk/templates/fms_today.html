@@ -1,0 +1,109 @@
+{% extends "fms.html" %}
+{% block page %}Today{% endblock %}
+{% block body %}
+<header class="head">
+  <h1>Today</h1>
+</header>
+
+<section class="fms-section" aria-labelledby="h-morning">
+  <div class="fms-bar">
+    <h2 id="h-morning">This morning's messages</h2>
+    {% if waiting %}<button id="read-all" class="button primary" type="button">Have {{ agent }} read {{ 'them' if waiting|length > 1 else 'it' }}</button>{% endif %}
+  </div>
+  {% if waiting %}
+  <p class="muted">{{ waiting|length }} text{{ 's' if waiting|length != 1 }} came in overnight. Nothing has read {{ 'them' if waiting|length > 1 else 'it' }} yet.{% if not live %} {{ agent }} is switched off on this copy, so each one goes to staff.{% endif %}</p>
+  <p id="read-status" class="fms-status" role="status" aria-live="polite"></p>
+  <ol class="fms-msgs" id="waiting">
+    {% for t in waiting %}
+    <li data-role="{{ t.role }}" data-shift="{{ t.shift }}" data-name="{{ t.who.name }}"><a href="/tenants/{{ t.who.slug }}">{{ t.who.name }}</a> <span class="muted">unit{{ 's' if t.units|length > 1 }} {{ t.units|join(' and ') }}</span><q>{{ t.text }}</q></li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  <p class="muted">Every message from this morning has been read. <a href="/messages">See what was done with each</a>.</p>
+  {% endif %}
+</section>
+
+<section class="fms-section" id="disputes" aria-labelledby="h-disputes">
+  <h2 id="h-disputes">Disputes waiting for a decision</h2>
+  {% for d in disputes %}
+  <article class="fms-card">
+    <p class="fms-card-head"><a href="/tenants/{{ d.who.slug }}">{{ d.who.name }}</a> <span class="muted">unit {{ d.unit }}</span> {% if d.held %}<span class="chip wait">Collection paused until the review by {{ d.review_by }}</span>{% else %}<span class="chip plain">Review by {{ d.review_by }}</span>{% endif %}</p>
+    <q>{{ d.quote }}</q>
+    <dl class="fms-facts">
+      <div><dt>The charge</dt><dd>{{ d.amount }} {{ d.fee }}, posted {{ d.posted }}{{ ' by hand' if d.by_hand }}</dd></div>
+      <div><dt>Signed schedule ({{ d.signed }})</dt><dd>{{ d.schedule|capitalize }}</dd></div>
+      <div><dt>Owed now</dt><dd>{{ d.owed_now }}</dd></div>
+      {% if not d.in_schedule %}<div><dt>Owed after removing it</dt><dd>{{ d.owed_after }}</dd></div>{% endif %}
+    </dl>
+    <form method="post" action="/disputes/decide" class="fms-decide">
+      <input type="hidden" name="dispute" value="{{ d.id }}">
+      <label for="reason-{{ loop.index }}">What you checked</label>
+      <input id="reason-{{ loop.index }}" name="reason" required minlength="3" maxlength="300" placeholder="For example: her signed lease has no admin fee">
+      {% if not d.in_schedule %}<button class="button primary" name="action" value="remove_disputed_fee" type="submit">Remove the fee</button>{% endif %}
+      <button class="button" name="action" value="keep_under_review" type="submit">Keep under review</button>
+    </form>
+    {% if d.in_schedule %}<p class="muted">The fee is in the schedule this tenant signed, so it cannot be removed as a correction.</p>{% else %}<p class="muted">The fee is not in the schedule this tenant signed. Removing it is a correction: it reverses the charge and does not use up a waiver.</p>{% endif %}
+  </article>
+  {% else %}
+  <p class="muted">No open disputes.</p>
+  {% endfor %}
+</section>
+
+{% set handed = cases|selectattr('handed')|list %}
+<section class="fms-section" aria-labelledby="h-handed">
+  <h2 id="h-handed">Handed to staff</h2>
+  {% for c in handed %}
+  <article class="fms-line">
+    <p>{% if c.who %}<a href="/tenants/{{ c.who.slug }}">{{ c.who.name }}</a>{% else %}A number that matches no tenant{% endif %} <q>{{ c.text }}</q></p>
+    <p class="muted">{{ c.why|upfirst }}{{ '' if c.why.endswith('.') else '.' }} <a href="/messages?case={{ c.n }}">Open the message</a></p>
+  </article>
+  {% else %}
+  <p class="muted">Nothing is waiting for staff.</p>
+  {% endfor %}
+</section>
+
+{% set closed = cases|rejectattr('handed')|list %}
+{% if closed %}
+<section class="fms-section" aria-labelledby="h-closed">
+  <h2 id="h-closed">Closed by {{ agent }}</h2>
+  <ul class="fms-closed">
+    {% for c in closed %}<li><a href="/messages?case={{ c.n }}">{{ c.who.name if c.who else 'Unknown number' }}</a> <span>{{ c.summary }}{% if c.waits %} The dispute waits for you above.{% endif %}</span></li>{% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if decisions %}
+<section class="fms-section" id="decided" aria-labelledby="h-decided">
+  <h2 id="h-decided">Decided by staff</h2>
+  <ul class="fms-closed">
+    {% for d in decisions %}<li><a href="/tenants/{{ d.who.slug }}">{{ d.who.name }}</a> <span>{% if not d.allowed %}Not done: {{ d.check }}. Nothing in the books changed.{% elif d.removed %}{{ d.words }}: {{ d.fee }}. {{ d.check|upfirst }}. Books updated; the tenant is not told from here.{% else %}{{ d.words }}: {{ d.fee }}. {{ d.check|upfirst }}. Nothing in the books changed.{% endif %} Your note: {{ d.reason }}.</span></li>{% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if waiting %}
+<script>
+(function () {
+  var button = document.getElementById("read-all"), status = document.getElementById("read-status");
+  var items = Array.prototype.slice.call(document.querySelectorAll("#waiting li"));
+  function fail(r) { return r.json().then(function (b) { throw new Error(b && typeof b.detail === "string" ? b.detail : "Something went wrong. Try again."); }, function () { throw new Error("Something went wrong. Try again."); }); }
+  var run = Math.random().toString(16).slice(2, 14);
+  button.addEventListener("click", function () {
+    button.disabled = true;
+    items.reduce(function (p, li, i) {
+      return p.then(function () {
+        if (li.classList.contains("closed") || li.classList.contains("to-staff")) return;
+        status.textContent = "{{ agent }} is reading " + li.dataset.name + "'s message, " + (i + 1) + " of " + items.length + ".";
+        li.classList.add("reading");
+        return fetch("/api/fms/messages", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tenant: li.dataset.role, text: li.querySelector("q").textContent, shift: li.dataset.shift, run: run }) })
+          .then(function (r) { return r.ok ? r.json() : fail(r); })
+          .then(function (c) { li.classList.remove("reading"); li.classList.add(c.handed ? "to-staff" : "closed"); });
+      });
+    }, Promise.resolve()).then(function () { status.textContent = "All read. Loading the results."; location.reload(); })
+      .catch(function (e) { status.textContent = e.message; button.disabled = false; });
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

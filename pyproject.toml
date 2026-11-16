@@ -21,10 +21,11 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["desk*", "fmssim*", "fms_checks*"]
+include = ["desk*", "fmssim*", "fms_checks*", "core*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
 [tool.setuptools.package-data]
 desk = ["reference/*.csv", "templates/*.html", "static/*", "reading_set.json"]
+core = ["graded/*.json", "graded/*.md"]

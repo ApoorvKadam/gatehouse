@@ -44,6 +44,8 @@ def site_opening(text: str) -> str:
 HERE = Path(__file__).parent
 templates = Jinja2Templates(directory=HERE / "templates")
 templates.env.filters["readable"] = plain      # no provider or record id, state codes and times as words
+# the stylesheet's address changes with its content, so a browser never keeps an old copy after a deploy
+templates.env.globals["css_version"] = __import__("hashlib").sha256((HERE / "static" / "gatehouse.css").read_bytes()).hexdigest()[:10]
 templates.env.filters["words"] = words         # one FMS status code as words: IN_PROGRESS reads "in progress"
 templates.env.filters["upfirst"] = lambda text: text[:1].upper() + text[1:] if text else text   # capitalize lowers the rest: "the FMS" became "the fms"
 
@@ -806,6 +808,8 @@ def router(pages: Pages) -> APIRouter:
     @r.get("/evaluation", response_class=HTMLResponse)
     def evaluation(request: Request):
         report = evaluation_report()
+        first = Path(__file__).parent / "static" / "first_shift.json"
+        front_desk = json.loads(first.read_text()) if first.exists() else None
         view = evaluation_view(report) if report is not None else {}
         checked = pages.guard is not None and pages.guard.on
         check = {"sitekey": pages.guard.sitekey, "verified": pages.guard.valid(request.cookies.get(spend.COOKIE)) is not None} if pages.live and checked else None
@@ -813,7 +817,7 @@ def router(pages: Pages) -> APIRouter:
             return templates.TemplateResponse(request, "evaluation.html", {
                 "report": report, **view, "nav": "evaluation", "facilities": pages.facilities(s), "local": local,
                 "live_check_on": pages.live_check, "live_message": live_check.MESSAGE, "live_check": live_check.view(live_check.latest(s)) if pages.live_check else None,
-                "live": pages.live, "check": check})
+                "live": pages.live, "check": check, "front_desk": front_desk})
 
     @r.get("/operations", response_class=HTMLResponse)
     def operations(request: Request):
