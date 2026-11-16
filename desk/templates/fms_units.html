@@ -1,0 +1,22 @@
+{% extends "fms.html" %}
+{% block page %}Units{% endblock %}
+{% block body %}
+<header class="head">
+  <h1>Units</h1>
+</header>
+<p class="fms-summary">{% for r in occupancy %}Row {{ r.row }}: {{ r.rented }} of {{ r.units }} rented{{ '. ' if not loop.last else '.' }}{% endfor %}</p>
+{% for row, items in rows %}
+<section class="fms-section" aria-labelledby="h-row-{{ row }}">
+  <h2 id="h-row-{{ row }}">Row {{ row }}</h2>
+  <div class="fms-scroll" tabindex="0" role="region" aria-labelledby="h-row-{{ row }}"><table class="fms-table">
+    <thead><tr><th>Unit</th><th>Tenant</th><th>Rented since</th><th>Needs attention</th><th class="num">Rent a month</th></tr></thead>
+    <tbody>
+      {% for u in items %}
+      <tr><td>{{ u.unit }}</td><td>{% if u.who %}<a href="/tenants/{{ u.who.slug }}">{{ u.who.name }}</a>{% else %}<span class="muted">Vacant</span>{% endif %}</td>
+        <td class="muted">{{ u.since }}</td><td>{% if u.chip %}<span class="chip {{ u.chip[1] }}">{{ u.chip[0] }}</span>{% endif %}</td><td class="num">{{ u.rent }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+{% endfor %}
+{% endblock %}

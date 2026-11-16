@@ -1,0 +1,110 @@
+{% extends "fms.html" %}
+{% block page %}Messages{% endblock %}
+{% block body %}
+<header class="head">
+  <h1>Messages</h1>
+</header>
+<nav class="fms-sub" aria-label="Messages">
+  <a href="/messages" {% if part == 'list' %}aria-current="page"{% endif %}>Conversations</a>
+  <a href="/messages/try" {% if part == 'try' %}aria-current="page"{% endif %}>Try a tenant message</a>
+  <a href="/messages/tests" {% if part == 'tests' %}aria-current="page"{% endif %}>Test results</a>
+</nav>
+
+{% if part == 'list' %}
+<div class="fms-split">
+  <ol class="fms-convs" aria-label="Conversations">
+    {% for c in cases %}
+    <li {% if picked and c.n == picked.n %}class="picked"{% endif %}><a href="/messages?case={{ c.n }}" {% if picked and c.n == picked.n %}aria-current="true"{% endif %}><b>{{ c.who.name if c.who else 'Unknown number' }}</b>
+      {% if c.handed %}<span class="chip act">Waiting for staff</span>{% elif c.waits %}<span class="chip wait">Answered, dispute open</span>{% else %}<span class="chip done">Closed</span>{% endif %}<span class="fms-snip">{{ c.text }}</span></a></li>
+    {% endfor %}
+    {% for t in waiting %}
+    <li class="fms-unread"><a href="/today"><b>{{ t.who.name }}</b> <span class="chip plain">Not read yet</span><span class="fms-snip">{{ t.text }}</span></a></li>
+    {% endfor %}
+  </ol>
+  {% if picked %}
+  <article class="fms-case" aria-label="The message">
+    <p class="fms-card-head">{% if picked.who %}<a href="/tenants/{{ picked.who.slug }}">{{ picked.who.name }}</a> <span class="muted">unit{{ 's' if picked.who.units|length > 1 }} {{ picked.who.units|join(' and ') }}</span>{% else %}A number that matches no tenant{% endif %}</p>
+    <q class="fms-quote">{{ picked.text }}</q>
+    <h3>What {{ agent }} read</h3>
+    <ul>
+      {% for c in picked.claims %}<li>{% if c.about %}About the {{ c.about }}: the tenant{% else %}The tenant{% endif %} {{ c.what }}, in their words: <mark>{{ c.quote }}</mark></li>
+      {% else %}<li>{{ 'Nothing: ' ~ agent ~ ' is off on this copy.' if picked.off else 'No claim about a charge.' }}</li>{% endfor %}
+    </ul>
+    {% if picked.outcomes %}
+    <h3>What the records show and what was done</h3>
+    {% for o in picked.outcomes %}
+    <div class="fms-outcome"><p>{{ o.says }}</p><p><span class="chip {{ 'act' if o.action == 'hand_to_staff' or not o.allowed else 'done' }}">{{ o.words }}</span> {% if o.check and o.action != 'hand_to_staff' %}<span class="muted">The rules: {{ o.check }}.</span>{% endif %}</p></div>
+    {% endfor %}
+    {% endif %}
+    {% for a in picked.asked %}<p class="muted">Also asked for, and refused: {{ a.check }}.</p>{% endfor %}
+    {% if picked.handed and not picked.outcomes %}<p class="fms-handed">Handed to staff: {{ picked.handed }}.</p>{% endif %}
+    {% if picked.entries %}
+    <h3>Books entries written</h3>
+    <div class="fms-scroll" tabindex="0" role="region" aria-label="Table"><table class="fms-table"><thead><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr></thead>
+      <tbody>{% for e in picked.entries %}<tr><td>{{ e.account }}</td><td class="num">{{ e.debit }}</td><td class="num">{{ e.credit }}</td></tr>{% endfor %}</tbody></table></div>
+    {% endif %}
+    <h3>Reply, written by code from the records</h3>
+    <p class="fms-reply">{{ picked.reply }}</p>
+    <p class="muted">Shown here, not sent. {% if picked.off %}{{ agent }} is off on this copy.{% else %}Reading it cost {{ picked.cents }} cents.{% endif %}</p>
+  </article>
+  {% else %}
+  <div class="fms-case empty"><p>No message has been read on this copy yet. <a href="/today">Have {{ agent }} read this morning's messages</a>, or <a href="/messages/try">write one as a tenant</a>.</p></div>
+  {% endif %}
+</div>
+
+{% elif part == 'try' %}
+<section class="fms-section fms-try" aria-labelledby="h-try">
+  <h2 id="h-try">Try a tenant message</h2>
+  <p class="muted">Write as one of these tenants. The message goes the way a real text would: {{ agent }} reads it, code checks every claim against that tenant's books and decides, and the result lands in Conversations and on Today.{% if not live %} {{ agent }} is switched off on this copy, so the message goes to staff.{% endif %}</p>
+  <form id="try">
+    <label for="who">Tenant</label>
+    <select id="who">{% for t in tenants %}<option value="{{ t.role }}" data-text="{{ t.text }}">{{ t.name }}, unit{{ 's' if t.units|length > 1 }} {{ t.units|join(' and ') }}</option>{% endfor %}</select>
+    <label for="words">Message</label>
+    <textarea id="words" maxlength="600" rows="4" required>{{ tenants[0].text }}</textarea>
+    <button class="button primary" type="submit">Send as the tenant</button>
+    <p id="try-status" class="fms-status" role="status" aria-live="polite"></p>
+  </form>
+</section>
+<script>
+(function () {
+  var who = document.getElementById("who"), words = document.getElementById("words"), status = document.getElementById("try-status");
+  who.addEventListener("change", function () { words.value = who.selectedOptions[0].dataset.text; });
+  document.getElementById("try").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var button = this.querySelector("button"); button.disabled = true;
+    status.textContent = "{{ agent }} is reading the message.";
+    fetch("/api/fms/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenant: who.value, text: words.value }) })
+      .then(function (r) { return r.ok ? r.json() : r.json().then(function (b) { throw new Error(b && typeof b.detail === "string" ? b.detail : "Something went wrong. Try again."); }); })
+      .then(function () { location.href = "/messages"; })
+      .catch(function (err) { status.textContent = err.message; button.disabled = false; });
+  });
+})();
+</script>
+
+{% else %}
+{% set cmp = score.comparison %}
+<section class="fms-section" aria-labelledby="h-tests">
+  <h2 id="h-tests">{{ agent }} against a fixed-rule workflow</h2>
+  <p class="muted">{{ cmp.set|upfirst }}. A right answer is the labelled action; a critical error is money moved that should not have been.</p>
+  <div class="fms-arms">
+    {% for a in cmp.arms %}
+    <div class="fms-arm"><span>{{ a.arm }}</span><span class="fms-track" aria-hidden="true"><i style="width: {{ (100 * a.right / a.cases)|round(1) }}%"></i></span>
+      <b>{{ a.right }} of {{ a.cases }} right</b><span class="muted">{{ a.critical }} critical, {{ a.to_staff }} to staff{% if a.cents_median %}, {{ '%.3f'|format(a.cents_median) }} cents a message{% endif %}</span></div>
+    {% endfor %}
+  </div>
+  <p class="muted">{{ cmp.note }}</p>
+  <h3>The two messages {{ agent }} missed</h3>
+  {% for m in cmp.shipped_misses %}
+  <article class="fms-line"><p>{{ m.tenant }} <q>{{ m.text }}</q></p><p class="muted">{{ m.did }} The labelled answer: {{ m.expected }}</p></article>
+  {% endfor %}
+</section>
+<section class="fms-section" aria-labelledby="h-reading">
+  <h2 id="h-reading">The reading test missed its bar</h2>
+  <p>On {{ score.reading.messages }} held-back messages, {{ agent }}'s reading was fully right on {{ score.reading.fully_right }}. The bar, set before the run, was {{ score.reading.bar }}. It accepted {{ score.reading.wrong_amounts }} wrong amounts and missed {{ score.reading.disputes_missed }} disputes; most misses name a different kind of claim, which the set above shows rarely changes what is done.</p>
+</section>
+<section class="fms-section" aria-labelledby="h-choosing">
+  <h2 id="h-choosing">Who chooses the action</h2>
+  <p>On {{ score.choosing.cases }} cases with the same reading, code chose right on {{ score.choosing.code }} and the best model on {{ score.choosing.best_model }}. {{ score.choosing.decision }}</p>
+</section>
+{% endif %}
+{% endblock %}

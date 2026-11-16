@@ -18,7 +18,7 @@ from .conftest import FULL_KEY, ORLANDO
 def preview(fms_url, adapter=None, **kw):
     settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=12.0,
                         reconcile_every_seconds=60, operator_token="op-token", staff_token="staff-token",
-                        public_view=True, demo_seed=True, **kw)
+                        public_view=True, old_screens=True, demo_seed=True, **kw)
     return create_app(settings, adapter or CubbyAdapter(fms_url, FULL_KEY, 5.0), start_worker=False)
 
 

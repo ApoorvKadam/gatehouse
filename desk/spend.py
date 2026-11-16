@@ -5,6 +5,8 @@ The count lives in the desk's own database, so a restart of the preview starts i
 private. The guard in front of a public link belongs in a service that a restart cannot reset."""
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import hmac
 import re
 import secrets
@@ -59,10 +61,16 @@ def running(session: Session, exclude: int | None = None) -> int:
     return session.scalar(query.where(AgentRun.id != exclude) if exclude is not None else query) or 0
 
 
+# other places that spend from the same day's budget, by name: each answers what it has spent since a moment (the Front desk
+# page keeps its calls in the core's own database, desk/front_desk.py)
+SOURCES: dict[str, Callable[[datetime], float]] = {}
+
+
 def spent_today(session: Session, now: datetime | None = None, exclude: int | None = None) -> float:
-    """What today's runs cost: the finished ones as they were counted, and for each run still going the most it could still cost."""
+    """What today's runs cost: the finished ones as they were counted, for each run still going the most it could still cost, and
+    what the other sources (SOURCES) have spent today."""
     done = session.scalar(select(func.coalesce(func.sum(AgentRun.cost_usd), 0.0)).where(AgentRun.started_at >= day_start(now), AgentRun.status != "running"))
-    return float(done) + running(session, exclude) * WORST_RUN_USD
+    return float(done) + running(session, exclude) * WORST_RUN_USD + sum(source(day_start(now)) for source in SOURCES.values())
 
 
 def cases_today(session: Session, visitor: str, now: datetime | None = None, exclude: int | None = None) -> int:

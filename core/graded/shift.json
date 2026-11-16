@@ -1,0 +1,183 @@
+{
+ "note": "The morning shift on the Front desk page: eight messages from eight different tenants. s1 to s4 are the four stories in the plan, written and labelled on 2026-11-15 before any model run. s5 to s8 are the first message of Wes, Hugo, Dev and Faye in the outside set (core/graded/outside.json), a rule written down before either arm ran on that set; their labels are the outside set's. Run many times while the page is built, so never used to choose anything.",
+ "items": [
+  {
+   "id": "s1",
+   "role": "maria",
+   "text": "I paid on the 3rd and still got a late fee. What's going on?",
+   "claims": [
+    {
+     "kind": "paid_on_time",
+     "charge": "late_fee 2026-11",
+     "quote": "I paid on the 3rd",
+     "date": "2026-11-03",
+     "date_quote": "the 3rd",
+     "act": [
+      "explain_charge"
+     ],
+     "critical": [
+      "waive_fee"
+     ]
+    }
+   ],
+   "flags": []
+  },
+  {
+   "id": "s2",
+   "role": "james",
+   "text": "You charged me twice for the November late fee.",
+   "claims": [
+    {
+     "kind": "charged_twice",
+     "charge": [
+      "late_fee 2026-11",
+      "late_fee 2026-11 #2"
+     ],
+     "quote": "You charged me twice for the November late fee.",
+     "act": [
+      "reverse_duplicate"
+     ],
+     "critical": []
+    }
+   ],
+   "flags": []
+  },
+  {
+   "id": "s3",
+   "role": "priya",
+   "text": "I never agreed to this $25 admin fee.",
+   "claims": [
+    {
+     "kind": "never_agreed",
+     "charge": "admin_fee",
+     "quote": "I never agreed to this $25 admin fee.",
+     "cents": 2500,
+     "amount_quote": "$25",
+     "act": [
+      "open_dispute"
+     ],
+     "critical": [
+      "explain_charge"
+     ]
+    }
+   ],
+   "flags": []
+  },
+  {
+   "id": "s4",
+   "role": "tom",
+   "text": "Please waive my September and October late fees, that's $40. I'm paying the rest today.",
+   "claims": [
+    {
+     "kind": "wants_waiver",
+     "charge": "late_fee 2026-09",
+     "quote": "Please waive my September and October late fees",
+     "cents": 4000,
+     "amount_quote": "$40",
+     "act": [
+      "waive_fee"
+     ],
+     "critical": []
+    },
+    {
+     "kind": "wants_waiver",
+     "charge": "late_fee 2026-10",
+     "quote": "Please waive my September and October late fees",
+     "cents": 4000,
+     "amount_quote": "$40",
+     "act": [
+      "explain_charge"
+     ],
+     "critical": [
+      "waive_fee"
+     ]
+    }
+   ],
+   "flags": []
+  },
+  {
+   "id": "s5",
+   "role": "wes",
+   "text": "Hey, I see a $20 late fee. My card didn't go through the first time but I fixed it. Can you help me out?",
+   "claims": [
+    {
+     "kind": "wants_waiver",
+     "charge": "late_fee 2026-11",
+     "quote": "Can you help me out?",
+     "act": [
+      "waive_fee",
+      "explain_charge"
+     ],
+     "critical": [],
+     "cents": 2000,
+     "amount_quote": "$20"
+    }
+   ],
+   "flags": [],
+   "from": "x03"
+  },
+  {
+   "id": "s6",
+   "role": "hugo",
+   "text": "My bank shows the payment completed Nov 5. Your account says it came through Nov 7 and now there's a late fee. Which date are you using?",
+   "claims": [
+    {
+     "kind": "paid_on_time",
+     "charge": "late_fee 2026-11",
+     "quote": "My bank shows the payment completed Nov 5.",
+     "act": [
+      "correct_fee_posted_in_error"
+     ],
+     "critical": [],
+     "date": "2026-11-05",
+     "date_quote": "Nov 5"
+    }
+   ],
+   "flags": [],
+   "from": "x15"
+  },
+  {
+   "id": "s7",
+   "role": "dev",
+   "text": "Statement shows $90 and $155 for November. Did I get charged rent twice by mistake?",
+   "claims": [
+    {
+     "kind": "charged_twice",
+     "charge": [
+      "rent 2026-11",
+      "rent 2026-11 @1"
+     ],
+     "quote": "Did I get charged rent twice by mistake?",
+     "act": [
+      "explain_charge"
+     ],
+     "critical": [
+      "reverse_duplicate"
+     ]
+    }
+   ],
+   "flags": [],
+   "from": "x27"
+  },
+  {
+   "id": "s8",
+   "role": "faye",
+   "text": "UM why did you take $110 from my card twice on November 2?? I only have one monthly payment.",
+   "claims": [
+    {
+     "kind": "payment_issue",
+     "charge": null,
+     "quote": "why did you take $110 from my card twice on November 2??",
+     "act": [
+      "hand_to_staff"
+     ],
+     "critical": [],
+     "cents": 11000,
+     "amount_quote": "$110"
+    }
+   ],
+   "flags": [],
+   "from": "x25"
+  }
+ ]
+}

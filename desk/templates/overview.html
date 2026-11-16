@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block bodyclass %}page-front{% endblock %}
+{% block title %}Gatehouse: a self-storage FMS where Porter works the front desk and code checks every change{% endblock %}
+{% block header %}{% include "site_top.html" %}{% endblock %}
+{% set cmp = score.comparison %}{% set ours = cmp.arms[1] %}{% set fixed = cmp.arms[0] %}
+{% block main %}
+<section class="lt-hero">
+  <div class="wrap">
+    <div class="lt-hero-grid">
+      <div class="lt-hero-text">
+        <div class="spot hero-spot" data-reveal>{% set guard_size = 156 %}{% set guard_pose = "" %}{% include "guard.html" %}<p class="spot-say say-pass">Nothing changes on a tenant's account on anyone's word. Not even Porter's.</p></div>
+        <h1>Porter works the front desk. <span>Code checks every change.</span></h1>
+        <p>Gatehouse is a self-storage FMS: units, tenants, leases, billing, payments and disputes, on its own books. <b>Porter</b>, the agent inside it, <b>reads what tenants write</b>. Code <b>checks each claim against the books</b>, decides, and writes the change. Staff see every message with what Porter read, the rule that decided and the entry it wrote, and what needs a person waits for them on Today.</p>
+        <div class="actions">
+          <a class="button primary" href="{{ '/home' if signed_in else '/sign-in' }}">Open the demo FMS {% include "icons/arrow-right.svg" %}</a>
+        </div>
+      </div>
+      <figure class="film lt-film">
+        <video id="film" controls preload="metadata" playsinline poster="{{ url_for('static', path='film/gatehouse-walkthrough.jpg') }}?v=20261112" aria-label="A walkthrough of Gatehouse's earlier screens">
+          <source src="{{ url_for('static', path='film/gatehouse-walkthrough.mp4') }}?v=20261112" type="video/mp4">
+        </video>
+        <figcaption class="muted">The walkthrough shows the earlier screens. The FMS behind the sign-in is the current one.</figcaption>
+      </figure>
+    </div>
+    <p class="ov-result" data-reveal>On {{ ours.cases }} tenant messages written by a separate model and labelled before any run, Porter with code deciding handled <b>{{ ours.right }}</b> right with <b>{{ ours.critical }}</b> critical errors, at a median {{ ours.cents_median|round(3) }} cents a message. A fixed-rule workflow handled {{ fixed.right }}.</p>
+  </div>
+</section>
+
+<section class="feature">
+  <div class="wrap ov-cols">
+    <div data-reveal>
+      <h2>Where it differs</h2>
+      <p class="tagline">The agent's work lands on the books, with its rule beside it.</p>
+    </div>
+    <div data-reveal>
+      <p>In the storage FMS and AI products we surveyed from their public pages (November 2026), a shipped AI front desk hands a fee question to staff as a ticket, or is not allowed to change tenant data. Approval steps and dollar limits for AI appear only in demos and stated plans. None shows the rule an AI applied beside the books entry it wrote.</p>
+      <p>Gatehouse is the FMS, so Porter's work is settled on the facility's own books. A fee posted twice is reversed, a fee posted in error is removed, and a dispute pauses collection. Each one shows what Porter read, what the books showed, the rule that allowed it and the entries it wrote.</p>
+    </div>
+  </div>
+</section>
+
+<section class="feature ov-band">
+  <div class="wrap ov-cols">
+    <div data-reveal>
+      <h2>One message, end to end</h2>
+      <p class="tagline">“You charged me twice for the November late fee.”</p>
+    </div>
+    <ol class="ov-steps" data-stagger>
+      <li><b>Porter reads it</b><span>One claim: the November late fee appears twice. It quotes the tenant's own words and names no amount it did not see.</span></li>
+      <li><b>Code checks the books</b><span>Two late fees for November rent on unit B238: one posted by billing on Nov 6, one posted again by hand on Nov 10.</span></li>
+      <li><b>The gate acts</b><span>The second copy is reversed in one balanced entry: fee income down $20.00, owed by the tenant down $20.00. A second press changes nothing.</span></li>
+      <li><b>Code writes the reply</b><span>“You are right: the $20.00 late fee was posted twice for the same thing. The second one has been reversed.”</span></li>
+    </ol>
+  </div>
+</section>
+
+<section class="feature">
+  <div class="wrap ov-cols">
+    <div data-reveal>
+      <h2>When it cannot finish</h2>
+      <p class="tagline">It stops, says why, and puts the work in front of a person.</p>
+    </div>
+    <div class="ov-pair" data-stagger>
+      <article><b>A card charged twice</b><p>Faye says her card was charged twice on November 2. The books do not hold the card processor's records, so Porter hands it to staff with that reason. Nothing on her account changes.</p></article>
+      <article><b>A fee she never signed for</b><p>Priya disputes a $25 admin fee. It is not in the schedule she signed, so the dispute is recorded and collection pauses. The office manager removes the fee or keeps it under review, on Today.</p></article>
+    </div>
+  </div>
+</section>
+
+<section class="feature ov-band">
+  <div class="wrap ov-cols">
+    <div data-reveal>
+      <h2>A facility with a year of books</h2>
+      <p class="tagline">Porter works on a year of records, not a chat window.</p>
+    </div>
+    <div data-reveal>
+      <p>{{ facts.units }} units, {{ facts.rented }} rented. {{ facts.tenants }} tenants on {{ facts.leases }} leases. A year of {{ "{:,}".format(facts.charges) }} charges, {{ "{:,}".format(facts.payments) }} payments and {{ facts.declined }} declined cards. This morning {{ facts.past_due }} tenants are past due for {{ money(facts.past_due_cents) }}.</p>
+      <p>Every change is an event in an append-only store with balanced entries. A payment keeps the day the card was charged and the day the facility learned of it, so a late fee posted before the facility knew can be found and removed.</p>
+      <p class="muted">Made up and said so: the facility, its tenants and the money are generated. Replies are shown, never sent. Taking card payments, gate access, move-ins and lien notices come in later steps, each tested the same way before it is shown.</p>
+    </div>
+  </div>
+</section>
+
+<section class="lt-close">
+  <div class="wrap lt-close-grid">
+    <div>
+    <h2>Sign in as the office manager and work the morning.</h2>
+    <div class="actions">
+      <a class="button lt-light" href="{{ '/home' if signed_in else '/sign-in' }}">Open the demo FMS {% include "icons/arrow-right.svg" %}</a>
+    </div>
+    </div>
+    <div class="lt-guard">{% set guard_size = 220 %}{% set guard_pose = "" %}{% include "guard.html" %}<p>Press the guard. It has been watching your pointer the whole way down.</p></div>
+  </div>
+</section>
+{% endblock %}
+{% block footer %}{% include "site_foot.html" %}{% endblock %}

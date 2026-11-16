@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Sign in | Gatehouse{% endblock %}
+{% block header %}{% include "site_top.html" %}{% endblock %}
+{% block main %}
+<div class="wrap sign-in">
+  <section class="sign-in-card" aria-labelledby="sign-in-title">
+    <h1 id="sign-in-title">Sign in to the demo FMS</h1>
+    <p class="muted">Northstar Storage, a made-up facility with a year of books.</p>
+    <p class="demo-login">Demo login <span>Name <code>{{ demo[0] }}</code></span> <span>Password <code>{{ demo[1] }}</code></span></p>
+    {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+    <form method="post" action="/sign-in">
+      <label for="name">Name</label>
+      <input id="name" name="name" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="next" required value="{{ name or '' }}">
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" enterkeyhint="done" required>
+      {% if check %}<div class="cf-turnstile" data-sitekey="{{ check.sitekey }}" data-action="visit"></div>{% endif %}
+      <button class="button primary" type="submit">Sign in {% include "icons/arrow-right.svg" %}</button>
+    </form>
+    <p class="muted">You sign in as the office manager of your own copy of the facility. What you do there stays on your copy for a day.</p>
+  </section>
+</div>
+{% if check %}<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>{% endif %}
+{% endblock %}
+{% block footer %}{% include "site_foot.html" %}{% endblock %}

@@ -1,0 +1,46 @@
+{% extends "fms.html" %}
+{% block page %}Billing and payments{% endblock %}
+{% block body %}
+<header class="head">
+  <h1>Billing and payments</h1>
+</header>
+<form class="fms-search" method="get" action="/billing">
+  <label for="month">Month</label>
+  <select id="month" name="month" onchange="this.form.submit()">{% for key, name in months %}<option value="{{ key }}" {% if key == month.key %}selected{% endif %}>{{ name }}</option>{% endfor %}</select>
+  <button class="button no-js-only" type="submit">Show</button>
+</form>
+<dl class="fms-facts fms-wide">
+  <div><dt>Rent billed</dt><dd>{{ money(month.rent) }}</dd></div>
+  <div><dt>Fees billed</dt><dd>{{ money(month.fees) }}</dd></div>
+  <div><dt>Collected</dt><dd>{{ money(month.collected) }}</dd></div>
+  <div><dt>Removed or waived</dt><dd>{{ money(month.removed) }}</dd></div>
+  <div><dt>Still open</dt><dd>{{ money(month.open) }}</dd></div>
+</dl>
+
+<section class="fms-section" id="past-due" aria-labelledby="h-past">
+  <h2 id="h-past">Past due</h2>
+  <p class="muted">{{ past|length }} tenants owe {{ money(past|sum(attribute='past')) }} in charges past their due date. A fee whose collection is paused by a dispute is left out.</p>
+  <div class="fms-scroll" tabindex="0" role="region" aria-labelledby="h-past"><table class="fms-table">
+    <thead><tr><th>Tenant</th><th>Units</th><th>Oldest unpaid</th><th class="num">Days late</th><th class="num">Past due</th></tr></thead>
+    <tbody>{% for r in past %}<tr><td><a href="/tenants/{{ r.slug }}">{{ r.name }}</a></td><td>{{ r.units|join(', ') }}</td><td>{{ r.oldest }}</td><td class="num">{{ r.days }}</td><td class="num">{{ money(r.past) }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+
+<section class="fms-section" aria-labelledby="h-pays">
+  <h2 id="h-pays">Payments in {{ month.name }}</h2>
+  <p class="muted">{{ month.payments|length }} payments{% if month.returned %}, {{ month.returned }} returned by the bank{% endif %}. A payment is dated when the card was charged; when the facility learned of it later, both dates are shown.</p>
+  <div class="fms-scroll" tabindex="0" role="region" aria-labelledby="h-pays"><table class="fms-table">
+    <thead><tr><th>Date</th><th>Tenant</th><th>Paid toward</th><th>Note</th><th class="num">Amount</th></tr></thead>
+    <tbody>{% for p in month.payments %}<tr><td>{{ p.on }}</td><td><a href="/tenants/{{ p.who.slug }}">{{ p.who.name }}</a></td><td>{{ p.to }}</td>
+      <td>{% if p.returned %}<span class="chip act">Returned by the bank</span>{% elif p.learned %}<span class="muted">Learned {{ p.learned }}</span>{% endif %}</td><td class="num">{{ p.amount }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+
+{% if month.declined %}
+<section class="fms-section" aria-labelledby="h-declined">
+  <h2 id="h-declined">Cards declined in {{ month.name }}</h2>
+  <ul class="fms-closed">{% for x in month.declined %}<li><a href="/tenants/{{ x.who.slug }}">{{ x.who.name }}</a> <span>{{ x.amount }} on {{ x.on }}</span></li>{% endfor %}</ul>
+</section>
+{% endif %}
+<p class="muted">{% if f.balanced %}Every books entry balances: {{ money(f.debits) }} in debits and the same in credits, across the year.{% else %}The books do not balance. This is a fault, and it is shown, not hidden.{% endif %}</p>
+{% endblock %}

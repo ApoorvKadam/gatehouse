@@ -148,7 +148,7 @@ def test_a_database_with_the_old_rule_says_the_check_is_off(tmp_path):
 def test_the_route_runs_once_per_visitor_allowance_and_is_off_without_set_up(fms_url, sim):
     def app(**more):
         settings = Settings(database_url="sqlite:///:memory:", fms_base_url=fms_url, fms_api_key=FULL_KEY, fms_timeout_seconds=5.0,
-                            reconcile_every_seconds=60, operator_token=TOKEN, public_view=True, demo_seed=True, public_investigate=True,
+                            reconcile_every_seconds=60, operator_token=TOKEN, public_view=True, old_screens=True, demo_seed=True, public_investigate=True,
                             visitor_cases_per_day=1, **more)
         return create_app(settings, start_worker=False, chat_client=Model(),
                           live_reader=Reader({"unit_locked": RESTRICTED, "unit_open": OPEN}) if more else None)

@@ -1,0 +1,37 @@
+{% extends "fms.html" %}
+{% block page %}Rules{% endblock %}
+{% block body %}
+<header class="head">
+  <h1>Rules</h1>
+</header>
+<div class="fms-grid">
+  <section class="panel" aria-labelledby="h-fees">
+    <h2 id="h-fees">Fees and schedule</h2>
+    <dl class="fms-defs">
+      <div><dt>Rent</dt><dd>Billed at midnight on the 1st of each month</dd></div>
+      <div><dt>Late fee</dt><dd>{{ late_fee }}, at midnight starting the 6th, when part of that month's rent is still unpaid</dd></div>
+      <div><dt>Admin fee</dt><dd>{{ admin_fee }}, once at move-in, only when it is in the schedule the tenant signed</dd></div>
+      <div><dt>A dispute</dt><dd>Reviewed by the office manager within {{ review_days }} days; a fee the tenant never signed for is not collected meanwhile</dd></div>
+    </dl>
+  </section>
+  {% if waiver %}
+  <section class="panel" aria-labelledby="h-owner">
+    <h2 id="h-owner">The owner's rule</h2>
+    <blockquote class="fms-rule">{{ waiver.sentence }}</blockquote>
+    <p class="muted">The exact form code checks before any waiver is written:</p>
+    <dl class="fms-defs">{% for k, v in typed %}<div><dt>{{ k|upfirst }}</dt><dd>{{ v }}</dd></div>{% endfor %}</dl>
+  </section>
+  {% endif %}
+  <section class="panel" aria-labelledby="h-agent">
+    <h2 id="h-agent">What {{ agent }} may do</h2>
+    <p class="muted">{{ agent }} is the agent inside Gatehouse. It reads each message. Code checks every claim against the books and picks the action; nothing is written unless the checks allow it.</p>
+    <ul class="fms-may">{% for text, moves in actions %}<li><span>{{ text }}</span>{% if moves %}<span class="chip plain">Changes money</span>{% endif %}</li>{% endfor %}</ul>
+    <p class="muted">Rent is never waived. A fee under dispute, a lease that has ended, and anything the tenant asks for that the rules do not allow go to staff.</p>
+  </section>
+  <section class="panel" aria-labelledby="h-staff">
+    <h2 id="h-staff">What only staff decide</h2>
+    <ul class="fms-may">{% for text in staff %}<li><span>{{ text }}</span></li>{% endfor %}</ul>
+    <p class="muted">Removing a fee the tenant never signed for is a correction, not a waiver, so it does not use up the owner's yearly waiver.</p>
+  </section>
+</div>
+{% endblock %}
