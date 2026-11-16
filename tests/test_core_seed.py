@@ -1,12 +1,16 @@
 """The generated year: built only through billing commands, identical every time, balanced, and carrying each planted situation."""
 import random
+import re
 from datetime import date, timedelta
 
 import pytest
 
 from core.billing import Ledger, Refused
 from core.books import ADMIN_FEE, LATE_FEE, at_local, fold, lines
-from core.seed import NOW, build
+from core.case import FIXED, handle
+from core.cases import load
+from core.reader import dates
+from core.seed import NOW, Year, build
 from core.store import Store
 
 
@@ -138,3 +142,39 @@ def test_random_histories_always_balance():
         for lease in leases:
             assert led.books.receivable(lease) >= 0
         assert all(v >= 0 for v in led.books.credit.values()), seed
+
+
+def morning(year, day):
+    """What the rule-based workflow does with each morning message on this year: the action, whether the gate allowed it, and
+    the charge it touched as its kind and its month counted from the story month."""
+    store = Store()
+    with store.write():
+        store.append("base", year.led.pending)
+    out = {}
+    for item in load("shift")["items"]:
+        r = handle(store, f"visitor:{item['id']}", item["id"], year.cast[item["role"]]["phone"], year.words(item["text"]), FIXED, at_local(day, 10))
+        books = store.books(f"visitor:{item['id']}")
+        out[item["id"]] = [(o.action, o.decision.allowed, *((ch.kind, (ch.due.year - year.story.year) * 12 + ch.due.month - year.story.month)
+                            if (ch := books.charges.get(o.claim.charge or "")) else ())) for o in r.outcomes]
+    return out
+
+
+def test_the_year_follows_any_day_and_the_morning_reads_the_same(year):
+    """The live FMS builds the year up to midnight of the real day (2026-11-16, his order: the date is today's and changes every
+    day). On any day the planted situations sit in the story month, the cast keeps its units, nothing is dated after midnight,
+    each date a morning message names falls in the story month, and the rule-based workflow does what it does on the fixed day."""
+    items = load("shift")["items"]
+    assert all(year.words(i["text"]) == i["text"] for i in items)          # the fixed day reads the messages as written
+    early = Year(today=date(2026, 12, 5))                                  # the story is November's; a day that names its month keeps it
+    assert early.words("I paid the 8th of November and the 3rd.") == "I paid the 8th of November and November 3rd."
+    units = {r: [year.led.books.leases[x].unit for x in c["leases"]] for r, c in year.cast.items()}
+    fixed = morning(year, NOW.date())
+    for day in (date(2026, 12, 1), date(2026, 12, 6), date(2026, 12, 11), date(2027, 1, 4), date(2027, 3, 1), date(2028, 2, 29)):
+        y = build(today=day, cutoff=at_local(day))
+        assert max(e.at for e in y.led.pending) <= at_local(day), day
+        assert {r: [y.led.books.leases[x].unit for x in c["leases"]] for r, c in y.cast.items()} == units, day
+        for i in items:
+            assert all((d.year, d.month) == (y.story.year, y.story.month) and d <= day for d, _ in dates(y.words(i["text"]), day)), (day, i["id"])
+            if day.day < 11 and "a late fee" in i["text"].replace("$20 ", ""):      # two late fees from the 6th: the message names its month
+                assert re.search(r"late fee for [A-Z][a-z]+", y.words(i["text"])), (day, i["id"])
+        assert morning(y, day) == fixed, day

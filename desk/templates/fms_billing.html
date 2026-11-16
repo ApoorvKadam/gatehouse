@@ -12,7 +12,7 @@
 <dl class="fms-facts fms-wide">
   <div><dt>Rent billed</dt><dd>{{ money(month.rent) }}</dd></div>
   <div><dt>Fees billed</dt><dd>{{ money(month.fees) }}</dd></div>
-  <div><dt>Collected</dt><dd>{{ money(month.collected) }}</dd></div>
+  <div><dt>Paid</dt><dd>{{ money(month.paid) }}</dd></div>
   <div><dt>Removed or waived</dt><dd>{{ money(month.removed) }}</dd></div>
   <div><dt>Still open</dt><dd>{{ money(month.open) }}</dd></div>
 </dl>
@@ -28,7 +28,7 @@
 
 <section class="fms-section" aria-labelledby="h-pays">
   <h2 id="h-pays">Payments in {{ month.name }}</h2>
-  <p class="muted">{{ month.payments|length }} payments{% if month.returned %}, {{ month.returned }} returned by the bank{% endif %}. A payment is dated when the card was charged; when the facility learned of it later, both dates are shown.</p>
+  <p class="muted">{{ month.payments|length }} payments, {{ money(month.collected) }} received{% if month.returned %}, {{ month.returned }} returned by the bank{% endif %}. A payment is dated when the card was charged; when the facility learned of it later, both dates are shown.</p>
   <div class="fms-scroll" tabindex="0" role="region" aria-labelledby="h-pays"><table class="fms-table">
     <thead><tr><th>Date</th><th>Tenant</th><th>Units</th><th>Paid toward</th><th>Note</th><th class="num">Amount</th></tr></thead>
     <tbody>{% for p in month.payments %}<tr><td>{{ p.on }}</td><td><a href="/tenants/{{ p.who.slug }}">{{ p.who.name }}</a></td><td>{{ p.who.units|join(', ') }}</td><td>{{ p.to }}</td>

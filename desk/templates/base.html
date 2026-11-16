@@ -6,7 +6,7 @@
 <title>{% block title %}Gatehouse{% endblock %}</title>
 <link rel="preload" href="{{ url_for('static', path='geist.woff2') }}" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="{{ url_for('static', path='source-serif-4.woff2') }}" as="font" type="font/woff2" crossorigin>
-<link rel="icon" type="image/svg+xml" href="{{ url_for('static', path='favicon.svg') }}">
+<link rel="icon" type="image/svg+xml" href="{{ url_for('static', path='favicon.svg') }}?v={{ css_version }}">
 <link rel="stylesheet" href="{{ url_for('static', path='gatehouse.css') }}?v={{ css_version }}">
 <script>document.documentElement.classList.add("js")</script>
 </head>
@@ -81,10 +81,8 @@
     g.addEventListener("click", function () {
       feel(["heart", "sparkle", "delighted", "wink"][Math.floor(Math.random() * 4)], 700);
       if (!still && g.animate) g.querySelector(".guard-body").animate([
-        { transform: "scale(1, 1)" }, { transform: "scale(1.1, .86)", offset: .18 }, { transform: "scale(.95, 1.08)", offset: .45 },
-        { transform: "scale(1.03, .97)", offset: .72 }, { transform: "scale(1, 1)" }], { duration: 420 });
+        { transform: "scale(1, 1)" }, { transform: "scale(1.02, .985)", offset: .3 }, { transform: "scale(1, 1)" }], { duration: 320 });
     });
-    if (!still && !pose) (function blink() { setTimeout(function () { if (!g.classList.contains("reacting")) feel("blink", 160); blink(); }, 3500 + Math.random() * 4000); })();
   });
 })();
 </script>

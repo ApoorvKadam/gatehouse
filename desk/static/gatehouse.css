@@ -120,9 +120,9 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 ::selection { background: var(--select); color: var(--ink); }
-a { color: var(--blue); text-decoration: none; }
+a { color: var(--link, var(--blue)); text-decoration: none; }
 a:hover { text-decoration: underline; text-underline-offset: 3px; }
-:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 2px; }
+:focus-visible { outline: 2px solid var(--focus, var(--blue)); outline-offset: 2px; border-radius: 2px; }
 h1, h2, h3 { margin: 0; text-wrap: balance; color: var(--ink); }
 p { margin: 0; }
 .wrap { max-width: var(--wrap); margin: 0 auto; padding: 0 clamp(20px, 3vw, 48px); }
@@ -691,17 +691,22 @@ html { scrollbar-color: var(--frame) var(--paper); }
 /* ------------------------------------------------------------ the Overview
    cream ground, one blue, a tight sans for headings, mono captions, white product frames */
 body {
-  --paper: #fcf6ed; --band: #f6eee2; --bar: #fcf6ed; --hover: #f8f0e4;
-  --ink: #1b1917; --ink-2: #4c4743; --ink-3: #6f6a65; --rule: #ebe2d4; --frame: #e2d7c6;
-  --blue: #00669d; --card: #ffffff; --lt-card: #f4ecdf; --lt-blue-ink: #ffffff;
+  /* Staddle's colours: green-black and aged brass on a warm ground; --blue is the one accent, kept as its name */
+  --paper: #f6f2e8; --band: #ebe8dc; --bar: #f6f2e8; --hover: #e6e9df;
+  --ink: #28312d; --ink-2: #46534d; --ink-3: #56645d; --rule: #d8ddd1; --frame: #b9c4b6;
+  --blue: #18302b; --card: #ffffff; --lt-card: #ebe8dc; --lt-blue-ink: #ffffff;
+  --link: #125c50; --focus: #126b57; --select: #dcebdc;
+  --line-2: #1d6f58;     /* the hero's second line in the brand's green, so the line reads in two colours */
   --shadow: 0 1px 2px rgba(27,25,23,.04), 0 10px 30px rgba(27,25,23,.06);
   background: var(--paper);
 }
 @media (prefers-color-scheme: dark) {
   body {
-    --paper: #141312; --band: #1a1917; --bar: #141312; --hover: #1f1e1b;
-    --ink: #f1ebe2; --ink-2: #c9c2b8; --ink-3: #a29b92; --rule: #2a2825; --frame: #34312d;
-    --blue: #5fb0e0; --card: #1c1b19; --lt-card: #1f1d1a; --lt-blue-ink: #0b1a24;
+    --paper: #111a17; --band: #17241f; --bar: #111a17; --hover: #273930;
+    --ink: #f0f1e9; --ink-2: #cdd7cd; --ink-3: #abb9af; --rule: #33473d; --frame: #536356;
+    --blue: #b99a64; --card: #1a2923; --lt-card: #17241f; --lt-blue-ink: #111a17;
+    --link: #a5d8c2; --focus: #dbbe85; --select: #355744;
+    --line-2: #8fcfb2;
   }
 }
 .page-front main { padding-top: 0; }
@@ -735,9 +740,10 @@ body {
 
 .lt-close { background: var(--blue); color: #fff; padding: clamp(64px, 8vw, 112px) 0; }
 .lt-close h2 { color: #fff; font-family: var(--display); font-weight: 500; font-size: clamp(2.25rem, 4vw, 3.75rem); line-height: 1.08; letter-spacing: -0.02em; max-width: 14em; }
-@media (prefers-color-scheme: dark) { .lt-close, .lt-close h2 { color: var(--lt-blue-ink); } }
+/* the closing band stays green in dark mode too, a step lighter than the page, with light text: brass is for the mark and buttons */
+@media (prefers-color-scheme: dark) { .lt-close { background: #1d3a32; } .lt-close, .lt-close h2 { color: var(--ink); } }
 .lt-close .actions { margin-top: var(--s6); }
-.lt-close .lt-light { background: #fff; color: #10324a; border-color: #fff; }
+.lt-close .lt-light { background: #fff; color: #18302b; border-color: #fff; }
 .lt-close .lt-ghost { color: inherit; border-color: color-mix(in srgb, currentColor 45%, transparent); }
 .page-front main:has(.lt-close) { padding-bottom: 0; }
 
@@ -1098,7 +1104,8 @@ body.fms > main { min-width: 0; }
 .fms-bar { display: flex; align-items: baseline; gap: var(--s4); flex-wrap: wrap; }
 .fms-bar h2 { margin-right: auto; }
 .fms-list { margin: 0; padding-left: 1.1rem; display: grid; gap: var(--s2); }
-.fms-row { display: grid; grid-template-columns: 4.5rem minmax(0, 1fr) 6rem; gap: var(--s3); align-items: center; margin-bottom: var(--s2); }
+.fms-row { display: grid; grid-template-columns: 6.5rem minmax(0, 1fr) 6rem; gap: var(--s3); align-items: center; margin-bottom: var(--s2); }
+.fms-row > span:first-child { white-space: nowrap; }
 .fms-row span:last-child { text-align: right; }
 .fms-track { display: block; height: 10px; border-radius: 5px; background: color-mix(in srgb, var(--ink) 8%, var(--paper)); overflow: hidden; }
 .fms-track i { display: block; height: 100%; border-radius: 5px; background: var(--blue); transform-origin: left; animation: fms-grow 900ms var(--spring) both; }
@@ -1106,7 +1113,7 @@ body.fms > main { min-width: 0; }
 .fms-facts { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: var(--s3) var(--s5); }
 .fms-facts dt { font-size: var(--t-sm); color: var(--ink-3); }
 .fms-facts dd { margin: 2px 0 0; font-weight: 600; }
-.fms-wide { grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr)); padding: var(--s4) var(--s5); border: 1px solid var(--frame); border-radius: 10px; background: var(--paper); }
+.fms-wide { grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr)); text-align: center; padding: var(--s4) var(--s5); border: 1px solid var(--frame); border-radius: 10px; background: var(--paper); }
 .fms-big { font-family: var(--display); font-size: var(--t-h2); line-height: 1.2; margin-bottom: var(--s2); }
 .fms-status { min-height: 1.6em; font-weight: 600; color: var(--blue); margin: var(--s2) 0; }
 .fms-msgs { list-style: none; margin: var(--s3) 0 0; padding: 0; display: grid; gap: var(--s2); }
@@ -1130,7 +1137,7 @@ body.fms > main { min-width: 0; }
 .fms-sub { display: flex; gap: var(--s2); flex-wrap: wrap; margin-bottom: var(--s5); }
 .fms-sub a { padding: 6px 14px; border-radius: 999px; border: 1px solid var(--frame); color: var(--ink-2); font-size: var(--t-sm); font-weight: 600; }
 .fms-sub a[aria-current="page"] { background: var(--ink); border-color: var(--ink); color: var(--paper); }
-.fms-split { display: grid; grid-template-columns: minmax(16rem, 26rem) minmax(0, 1fr); gap: var(--s5); align-items: start; }
+.fms-split { display: grid; grid-template-columns: minmax(16rem, 26rem) minmax(0, 1fr); gap: var(--s5); align-items: stretch; }
 .fms-convs { list-style: none; margin: 0; padding: 0; border: 1px solid var(--frame); border-radius: 10px; background: var(--paper); overflow: hidden; }
 .fms-convs li + li { border-top: 1px solid var(--rule); }
 .fms-convs a { display: flex; flex-wrap: wrap; align-items: center; gap: 4px var(--s2); padding: var(--s3) var(--s4); color: var(--ink); }
@@ -1147,15 +1154,15 @@ body.fms > main { min-width: 0; }
 .fms-reply { white-space: pre-line; padding: var(--s3) var(--s4); border-radius: 8px; background: var(--band); }
 .fms-scroll { overflow-x: auto; border: 1px solid var(--frame); border-radius: 10px; background: var(--paper); }
 .fms-scroll:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
-.fms-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: var(--t-body); }
-.fms-table th { text-align: left; font-weight: 600; font-size: var(--t-body); color: var(--ink-2); padding: var(--s3) var(--s4); background: var(--bar); border-bottom: 1px solid var(--frame); white-space: nowrap; }
-.fms-table td { padding: 9px var(--s4); border-bottom: 1px solid var(--rule); vertical-align: top; white-space: nowrap; }
+.fms-table { width: auto; border-collapse: separate; border-spacing: 0; font-size: var(--t-body); }
+.fms-table th { text-align: center; font-weight: 600; font-size: var(--t-body); color: var(--ink-2); padding: var(--s3) calc(var(--s4) + var(--extra, 0px) / 2); background: var(--bar); border-bottom: 1px solid var(--frame); white-space: nowrap; }
+.fms-table td { padding: 9px calc(var(--s4) + var(--extra, 0px) / 2); text-align: center; border-bottom: 1px solid var(--rule); vertical-align: top; white-space: nowrap; }
 .fms-section > p + .fms-scroll, .fms-search + p + .fms-scroll { margin-top: var(--s3); }
 .fms { accent-color: var(--blue); }
 .fms ::selection { background: var(--select); color: var(--ink); }
 .fms-table tbody tr:last-child td { border-bottom: 0; }
-.fms-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.fms-table .num + td:not(.num), .fms-table .num + th:not(.num) { padding-left: var(--s7); }
+.fms-table .num { text-align: center; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fms-stack { display: inline-flex; flex-direction: column; align-items: center; gap: 4px; }
 .fms-table tbody tr:hover { background: var(--hover); box-shadow: none; }
 .fms-try form { display: grid; gap: var(--s2); max-width: 48rem; }
 .fms-try label { font-size: var(--t-sm); color: var(--ink-2); margin-top: var(--s2); }
@@ -1186,18 +1193,18 @@ body.fms > main { min-width: 0; }
 
 /* sign-in: the demo pair printed above the boxes, so nobody has to guess it */
 .sign-in { padding-block: clamp(48px, 8vw, 120px); display: grid; justify-items: center; }
-.sign-in-card { width: min(100%, 34rem); padding: var(--s6); border: 1px solid var(--frame); border-radius: 14px; background: var(--paper); box-shadow: var(--shadow); }
+.sign-in-card { width: min(100%, 30rem); text-align: center; text-wrap: balance; padding: var(--s6); border: 1px solid var(--frame); border-radius: 14px; background: var(--paper); box-shadow: var(--shadow); }
 .sign-in-card h1 { font-family: var(--display); font-weight: 500; font-size: clamp(1.875rem, 2.4vw, 2.375rem); letter-spacing: -0.02em; }
-.sign-in-card form { display: grid; gap: var(--s2); margin: var(--s4) 0; }
+.sign-in-card form { display: grid; gap: var(--s2); margin: var(--s4) 0; text-align: left; }
 .sign-in-card label { font-size: var(--t-sm); color: var(--ink-2); margin-top: var(--s2); }
-.sign-in-card button { justify-self: start; margin-top: var(--s3); padding: 9px 16px; font-size: var(--t-body); }
-.demo-login { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); align-items: baseline; margin-top: var(--s5); padding: var(--s3) var(--s4); border-radius: 8px; background: color-mix(in srgb, var(--blue) 8%, var(--paper)); font-weight: 600; }
+.sign-in-card button { justify-self: stretch; justify-content: center; margin-top: var(--s3); padding: 11px 16px; font-size: var(--t-body); }
+.demo-login { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--s2) var(--s4); align-items: baseline; margin-top: var(--s5); padding: var(--s3) var(--s4); border-radius: 8px; background: color-mix(in srgb, var(--blue) 8%, var(--paper)); font-weight: 600; }
 .demo-login span { font-weight: 400; color: var(--ink-2); }
 .demo-login code { font-family: "Geist Mono", ui-monospace, monospace; font-weight: 600; color: var(--ink); margin-left: 4px; }
 .form-error { margin-top: var(--s4); padding: var(--s3) var(--s4); border-radius: 8px; background: var(--chip-act); color: var(--chip-act-ink); font-weight: 600; }
 
 /* the Overview of the FMS: one result in a sentence with its method, one message end to end, what happens when it cannot finish */
-.ov-result { margin-top: var(--s7); padding-top: var(--s5); border-top: 1px solid var(--rule); font-size: var(--t-lg); color: var(--ink-2); max-width: 70rem; }
+.ov-result { margin-top: var(--s7); padding-top: var(--s5); border-top: 1px solid var(--rule); font-size: var(--t-lg); color: var(--ink-2); max-width: 70rem; text-wrap: balance; }
 .ov-result b { color: var(--ink); }
 .ov-result a { margin-left: var(--s2); font-weight: 600; }
 .ov-band { background: var(--band); }
@@ -1218,7 +1225,7 @@ html { font-size: 93.75%; }
 /* Home, as an FMS opens: the facility's key figures in one strip, then what needs a person, then units by row */
 .fms-greet { color: var(--ink-2); margin: calc(-1 * var(--s3)) 0 var(--s5); }
 .fms-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--frame); border-radius: 10px; background: var(--paper); margin-bottom: var(--s5); }
-.fms-kpis > div { padding: var(--s4) var(--s5); }
+.fms-kpis > div { padding: var(--s4) var(--s5); text-align: center; }
 .fms-kpis > div + div { border-left: 1px solid var(--rule); }
 .fms-kpis dt { font-size: var(--t-sm); color: var(--ink-3); }
 .fms-kpis dd { margin: var(--s1) 0 0; font-size: 1.5rem; font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -1230,7 +1237,14 @@ html { font-size: 93.75%; }
 .fms-actions .icon { width: 18px; height: 18px; color: var(--ink-3); flex: none; }
 .fms-actions b { font-variant-numeric: tabular-nums; }
 .fms-actions a span:last-child { margin-left: auto; color: var(--ink-3); }
-.fms-home { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: var(--s5); align-items: start; }
+.fms-home { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: var(--s5); align-items: stretch; }
+/* boxes side by side are the same height: each column's box fills it, the list's rows share the height, the panel keeps its link at the foot */
+.fms-home > section { display: flex; flex-direction: column; }
+.fms-home > section > .fms-actions, .fms-home > section > .panel { flex: 1; display: flex; flex-direction: column; }
+.fms-home > section > .panel .fms-row { flex: 1; margin-bottom: 0; }       /* the rows share the box's height evenly, like the list beside it */
+.fms-home + .muted { margin-top: var(--s3); }
+.fms-home .fms-actions li { flex: 1; display: flex; }
+.fms-home .fms-actions li a { flex: 1; }
 .fms-home h2 { font-family: var(--display); font-weight: 500; font-size: 1.375rem; margin-bottom: var(--s3); }
 @media (max-width: 60rem) { .fms-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .fms-kpis > div:nth-child(3) { border-left: 0; } .fms-home { grid-template-columns: 1fr; } }
 
@@ -1239,11 +1253,14 @@ html { font-size: 93.75%; }
 .ov-spot { justify-content: center; margin: 0 auto var(--s3); }
 .ov-hero h1 { font-family: var(--display); font-weight: 500; font-size: clamp(2.25rem, 4.2vw, 4rem); line-height: 1.08; letter-spacing: -0.02em; color: var(--ink); }
 .ov-hero h1 span { display: block; white-space: nowrap; }
-.ov-hero h1 .ov-blue { color: var(--blue); }
+.ov-hero h1 .ov-blue { color: var(--line-2, var(--blue)); }
 .ov-lede { max-width: 40rem; margin: var(--s4) auto 0; font-size: 1.125rem; line-height: 1.5; color: var(--ink-2); text-wrap: pretty; }
 .ov-actions { justify-content: center; margin-top: var(--s5); }
 .ov-actions .icon { width: 16px; height: 16px; }
-.ov-shot { margin: clamp(32px, 4vw, 56px) auto 0; max-width: 72rem; border: 1px solid var(--frame); border-radius: 14px; overflow: hidden; background: var(--paper); box-shadow: 0 2px 6px rgba(27,25,23,.05), 0 24px 60px rgba(27,25,23,.10); }
+/* the product picture sits on a darker matte with a clear edge and a deep shadow, so it reads as a picture, not as more page */
+.ov-shot { margin: clamp(32px, 4vw, 56px) auto 0; max-width: 74rem; padding: 10px; border-radius: 18px; background: color-mix(in srgb, var(--ink) 9%, var(--paper)); border: 1px solid color-mix(in srgb, var(--ink) 18%, var(--paper)); box-shadow: 0 4px 10px rgba(27,25,23,.08), 0 30px 80px rgba(27,25,23,.20); }
+.ov-shot picture, .ov-shot img { border-radius: 10px; }
+.ov-shot img { box-shadow: 0 0 0 1px color-mix(in srgb, var(--ink) 14%, transparent); }
 .ov-shot img { display: block; width: 100%; height: auto; }
 .ov .ov-result { margin: var(--s5) auto 0; max-width: 52rem; border-top: 0; padding-top: 0; font-size: 1rem; text-wrap: pretty; }
 .ov h2 { text-wrap: balance; }
@@ -1296,3 +1313,8 @@ html { font-size: 93.75%; }
 .fms-legend b { font-variant-numeric: tabular-nums; }
 .fms-legend i.act { background: var(--chip-act); border-color: transparent; }
 .fms-legend i.wait { background: var(--chip-wait); border-color: transparent; }
+
+/* the Staddle mark: a level slab held on two staddle stones, with the gap that keeps the store dry */
+.brand .brand-mark { width: 34px; height: 34px; flex: none; }
+/* a tenant's name in a table is a link: underlined, so it reads as one beside the text */
+.fms-table td a { text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 3px; }
