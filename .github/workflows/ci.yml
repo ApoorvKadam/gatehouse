@@ -6,10 +6,14 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      # the same clock and report the test image has (Dockerfile): every due date and late fee counts in New York time
+      TZ: America/New_York
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
+      - run: python -m desk.evaluate --out desk/static/evaluation.json
       - run: pytest -q
