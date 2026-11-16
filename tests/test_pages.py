@@ -153,6 +153,23 @@ def test_a_class_is_styled_by_one_rule_of_its_own():
     assert sorted({sel for sel in own if own.count(sel) > 1}) == []
 
 
+def test_figures_are_centred_and_boxes_side_by_side_match():
+    """His rule, said twice on 2026-11-16 ("it applies to all the tabs or anywhere it is relevant"): every block of figures is
+    centred, and boxes that sit side by side are the same height. A new figure block or side-by-side layout joins these lists."""
+    from pathlib import Path
+
+    css = re.sub(r"/\*.*?\*/", "", (Path(__file__).parent.parent / "desk" / "static" / "gatehouse.css").read_text(), flags=re.S)
+
+    def body(selector: str) -> str:
+        found = re.search(r"(?m)^" + re.escape(selector) + r"\s*\{([^}]*)\}", css)
+        assert found, selector
+        return found.group(1)
+    for figures in (".fms-kpis > div", ".fms-wide"):                 # Home's four figures; Billing's and a tenant's summary
+        assert "text-align: center" in body(figures), figures
+    for side_by_side in (".fms-home", ".fms-split", ".fms-grid"):     # Home's two boxes; Messages' list and message; Rules' cards
+        assert "align-items: stretch" in body(side_by_side), side_by_side
+
+
 EVIDENCE_PAGES = ("/payments/", "/accounts/", "/sales/", "/access/")
 
 

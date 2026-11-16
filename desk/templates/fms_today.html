@@ -5,24 +5,6 @@
   <h1>Today</h1>
 </header>
 
-<section class="fms-section" aria-labelledby="h-morning">
-  <div class="fms-bar">
-    <h2 id="h-morning">This morning's messages</h2>
-    {% if waiting %}<button id="read-all" class="button primary" type="button">Have {{ agent }} read {{ 'them' if waiting|length > 1 else 'it' }}</button>{% endif %}
-  </div>
-  {% if waiting %}
-  <p class="muted">{{ waiting|length }} text{{ 's' if waiting|length != 1 }} came in overnight. Nothing has read {{ 'them' if waiting|length > 1 else 'it' }} yet.{% if not live %} {{ agent }} is switched off on this copy, so each one goes to staff.{% endif %}</p>
-  <p id="read-status" class="fms-status" role="status" aria-live="polite"></p>
-  <ol class="fms-msgs" id="waiting">
-    {% for t in waiting %}
-    <li data-role="{{ t.role }}" data-shift="{{ t.shift }}" data-name="{{ t.who.name }}"><a href="/tenants/{{ t.who.slug }}">{{ t.who.name }}</a> <span class="muted">unit{{ 's' if t.units|length > 1 }} {{ t.units|join(' and ') }}</span><q>{{ t.text }}</q></li>
-    {% endfor %}
-  </ol>
-  {% else %}
-  <p class="muted">Every message from this morning has been read. <a href="/messages">See what was done with each</a>.</p>
-  {% endif %}
-</section>
-
 <section class="fms-section" id="disputes" aria-labelledby="h-disputes">
   <h2 id="h-disputes">Disputes waiting for a decision</h2>
   {% for d in disputes %}
@@ -30,6 +12,7 @@
     <p class="fms-card-head"><a href="/tenants/{{ d.who.slug }}">{{ d.who.name }}</a> <span class="muted">unit {{ d.unit }}</span> {% if d.held %}<span class="chip wait">Collection paused until the review by {{ d.review_by }}</span>{% else %}<span class="chip plain">Review by {{ d.review_by }}</span>{% endif %}</p>
     <q>{{ d.quote }}</q>
     <dl class="fms-facts">
+      <div><dt>Recorded</dt><dd>{{ d.recorded|upfirst }}</dd></div>
       <div><dt>The charge</dt><dd>{{ d.amount }} {{ d.fee }}, posted {{ d.posted }}{{ ' by hand' if d.by_hand }}</dd></div>
       <div><dt>Signed schedule ({{ d.signed }})</dt><dd>{{ d.schedule|capitalize }}</dd></div>
       <div><dt>Owed now</dt><dd>{{ d.owed_now }}</dd></div>
@@ -62,16 +45,6 @@
   {% endfor %}
 </section>
 
-{% set closed = cases|rejectattr('handed')|list %}
-{% if closed %}
-<section class="fms-section" aria-labelledby="h-closed">
-  <h2 id="h-closed">Closed by {{ agent }}</h2>
-  <ul class="fms-closed">
-    {% for c in closed %}<li><a href="/messages?case={{ c.n }}">{{ c.who.name if c.who else 'Unknown number' }}</a> <span>{{ c.summary }}{% if c.waits %} The dispute waits for you above.{% endif %}</span></li>{% endfor %}
-  </ul>
-</section>
-{% endif %}
-
 {% if decisions %}
 <section class="fms-section" id="decided" aria-labelledby="h-decided">
   <h2 id="h-decided">Decided by staff</h2>
@@ -81,36 +54,10 @@
 </section>
 {% endif %}
 
-{% if waiting %}
-<script>
-(function () {
-  var button = document.getElementById("read-all"), status = document.getElementById("read-status");
-  var items = Array.prototype.slice.call(document.querySelectorAll("#waiting li"));
-  function fail(r) { return r.json().then(function (b) { throw new Error(b && typeof b.detail === "string" ? b.detail : "Something went wrong. Try again."); }, function () { throw new Error("Something went wrong. Try again."); }); }
-  function readRun(fresh) { var r = sessionStorage.getItem("gh-run"); if (fresh || !r) { r = "r" + Date.now().toString(16); sessionStorage.setItem("gh-run", r); } return r; }
-  button.addEventListener("click", function () {
-    var run = readRun(false);
-    button.disabled = true;
-    items.reduce(function (p, li, i) {
-      return p.then(function () {
-        if (li.classList.contains("closed") || li.classList.contains("to-staff")) return;
-        status.textContent = "{{ agent }} is reading " + li.dataset.name + "'s message, " + (i + 1) + " of " + items.length + ".";
-        li.classList.add("reading");
-        return fetch("/api/fms/messages", { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ tenant: li.dataset.role, text: li.querySelector("q").textContent, shift: li.dataset.shift, run: run }) })
-          .then(function (r) {
-            if (r.status !== 409) return r;
-            run = readRun(true);         // that run already read this message on an earlier copy: read it under a fresh one
-            return fetch("/api/fms/messages", { method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ tenant: li.dataset.role, text: li.querySelector("q").textContent, shift: li.dataset.shift, run: run }) });
-          })
-          .then(function (r) { return r.ok ? r.json() : fail(r); })
-          .then(function (c) { li.classList.remove("reading"); li.classList.add(c.handed ? "to-staff" : "closed"); });
-      });
-    }, Promise.resolve()).then(function () { status.textContent = "All read. Loading the results."; location.reload(); })
-      .catch(function (e) { status.textContent = e.message; button.disabled = false; });
-  });
-})();
-</script>
-{% endif %}
+{% set closed = cases|rejectattr('handed')|list|length %}{% set unread = waiting|length %}
+<section class="fms-section" aria-labelledby="h-closed">
+  <h2 id="h-closed">Closed by {{ agent }}</h2>
+  <p class="muted">{% if closed %}{{ agent }} closed {{ closed }} message{{ 's' if closed != 1 }} on this copy.{% else %}{{ agent }} has not closed a message on this copy yet.{% endif %}
+    {% if unread %}{{ unread }} from this morning {{ 'are' if unread != 1 else 'is' }} not read yet: <a href="/messages">read {{ 'them' if unread != 1 else 'it' }} in Messages</a>.{% else %}<a href="/messages">See what was done with each in Messages</a>.{% endif %}</p>
+</section>
 {% endblock %}

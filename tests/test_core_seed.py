@@ -1,4 +1,5 @@
 """The generated year: built only through billing commands, identical every time, balanced, and carrying each planted situation."""
+import hashlib
 import random
 import re
 from datetime import date, timedelta
@@ -6,12 +7,15 @@ from datetime import date, timedelta
 import pytest
 
 from core.billing import Ledger, Refused
-from core.books import ADMIN_FEE, LATE_FEE, at_local, fold, lines
+from core.books import ADMIN_FEE, LATE_FEE, at_local, fold, lines, local
 from core.case import FIXED, handle
 from core.cases import load
 from core.reader import dates
 from core.seed import NOW, Year, build
 from core.store import Store
+
+
+FIXED_YEAR = "be4c9da7613b0a719e94359b729532461629ad2ca098e5c3fe838b302911d527"
 
 
 @pytest.fixture(scope="module")
@@ -25,6 +29,37 @@ def snapshot(events):
 
 def test_the_year_is_identical_every_time(year):
     assert snapshot(year.led.pending) == snapshot(build().led.pending)
+
+
+def test_the_fixed_year_stays_byte_identical(year):
+    """The graded sets and their labels rest on these books: the live copy's extras (the dispute from last week) never reach them."""
+    events = year.led.pending
+    assert len(events) == 3241 and hashlib.sha256(repr(snapshot(events)).encode()).hexdigest() == FIXED_YEAR
+
+
+def test_the_live_copy_opens_with_one_dispute_from_last_week_on_every_day(year):
+    """The live day starts with one fee dispute from last week already open. On every day of two month turns (and a leap
+    February) it is open, held, four days from review, paid around, never past due, and it changes nothing the cast does."""
+    units = {r: [year.led.books.leases[x].unit for x in c["leases"]] for r, c in year.cast.items()}
+    fixed = morning(year, NOW.date())
+    start = date(2026, 11, 25)
+    for n in range(130):
+        day = start + timedelta(days=n) if n < 70 else date(2028, 1, 20) + timedelta(days=n - 70)
+        y = build(today=day, cutoff=at_local(day), standing=True)
+        b, now = y.led.books, at_local(day)
+        nora = y.cast["nora"]
+        lease = nora["leases"][0]
+        open_ = [d for d in b.disputes.values() if d.outcome is None]
+        assert len(open_) == 1 and open_[0].tenant == nora["tenant"], day
+        fee = b.charges[open_[0].charge]
+        assert fee.kind == ADMIN_FEE and fee.open_cents == 2500 and b.held(fee.id) and ADMIN_FEE not in b.leases[lease].schedule, day
+        assert open_[0].review_by == day + timedelta(days=4) and local(fee.posted_at).date() == day - timedelta(days=6), day
+        assert b.past_due(nora["tenant"], now) == 0 and not b.credit.get(nora["tenant"]), day
+        assert not [c for c in b.tenant_charges(nora["tenant"]) if c.kind == LATE_FEE], day
+        assert {r: [b.leases[x].unit for x in c["leases"]] for r, c in y.cast.items() if r != "nora"} == units, day
+        assert max(e.at for e in y.led.pending) <= now, day
+        if n % 13 == 0:
+            assert morning(y, day) == fixed, day
 
 
 def test_the_year_is_big_enough_and_every_event_balances(year):

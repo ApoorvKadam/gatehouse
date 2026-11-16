@@ -13,7 +13,7 @@
       <input id="name" name="name" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="next" required value="{{ name or demo[0] }}">
       <label for="password">Password</label>
       <input id="password" name="password" type="password" autocomplete="current-password" enterkeyhint="done" required value="{{ demo[1] }}">
-      {% if check %}<div class="cf-turnstile" data-size="flexible" data-sitekey="{{ check.sitekey }}" data-action="visit" data-callback="gatehouseReady" data-expired-callback="gatehouseWait" data-error-callback="gatehouseReady"></div>{% endif %}
+      {% if check %}<div class="cf-turnstile" data-theme="light" data-size="flexible" data-sitekey="{{ check.sitekey }}" data-action="visit" data-callback="gatehouseReady" data-expired-callback="gatehouseWait" data-error-callback="gatehouseReady"></div>{% endif %}
       <button id="sign-in-button" class="button primary" type="submit">Sign in {% include "icons/arrow-right.svg" %}</button>
     </form>
     <p class="muted">Each visitor gets a private copy of the facility for a day.</p>
