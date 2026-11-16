@@ -16,7 +16,7 @@ Gatehouse is the FMS itself. It keeps the facility's books, Porter reads what te
 
 ## The FMS
 
-The preview opens on an Overview. The FMS is behind a sign-in; the demo name and password are printed on the sign-in page, and each visitor works on a copy of the facility of their own.
+The preview opens on an Overview. The FMS is behind a sign-in that comes filled in with a demo login, and each visitor works on a copy of the facility of their own.
 
 - **Home.** The facility this morning: work waiting, units rented by row, the month's billing and collections, who is past due.
 - **Today.** This morning's tenant texts and a button to have Porter read them; disputes waiting for a decision; what was handed to staff; what Porter closed.
