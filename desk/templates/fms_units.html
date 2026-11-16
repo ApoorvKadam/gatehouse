@@ -6,7 +6,7 @@
 </header>
 {% set counts = namespace(occupied=0, past=0, dispute=0, vacant=0) %}{% for row, items in rows %}{% for u in items %}{% if not u.who %}{% set counts.vacant = counts.vacant + 1 %}{% elif u.chip and u.chip[1] == 'act' %}{% set counts.past = counts.past + 1 %}{% elif u.chip and u.chip[1] == 'wait' %}{% set counts.dispute = counts.dispute + 1 %}{% else %}{% set counts.occupied = counts.occupied + 1 %}{% endif %}{% endfor %}{% endfor %}
 <p class="fms-summary">Unit occupancy {{ ((100 * (counts.occupied + counts.past + counts.dispute)) / (counts.occupied + counts.past + counts.dispute + counts.vacant))|round|int }}%: {{ counts.occupied + counts.past + counts.dispute }} of {{ counts.occupied + counts.past + counts.dispute + counts.vacant }} units occupied.</p>
-<p class="fms-legend"><span><i class="occ"></i>Occupied <b>{{ counts.occupied }}</b></span><span><i class="act"></i>Past due <b>{{ counts.past }}</b></span><span><i class="wait"></i>Fee in dispute <b>{{ counts.dispute }}</b></span><span><i class="vac"></i>Vacant <b>{{ counts.vacant }}</b></span></p>
+<p class="fms-legend"><span><i class="occ"></i>Current <b>{{ counts.occupied }}</b></span><span><i class="act"></i>Past due <b>{{ counts.past }}</b></span><span><i class="wait"></i>Fee in dispute <b>{{ counts.dispute }}</b></span><span><i class="vac"></i>Vacant <b>{{ counts.vacant }}</b></span></p>
 <div class="fms-map" aria-label="Site map">
   {% for row, items in rows %}
   <section class="fms-map-row" aria-labelledby="m-row-{{ row }}">

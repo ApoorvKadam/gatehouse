@@ -1,10 +1,10 @@
-# Gatehouse
+# Staddle
 
-A self-storage FMS where Porter, the agent inside it, works the front desk and code checks every change against the books.
+A self-storage FMS where Tilden, the agent inside it, works the front desk and code checks every change against the books.
 
 https://github.com/user-attachments/assets/67a0989c-5b1c-4498-85c2-c66cc36d178d
 
-The walkthrough shows the earlier screens, from before Gatehouse kept its own books; the live preview shows the FMS described below. The music is "Closer" from Mixkit, used under Mixkit's free music licence.
+The walkthrough shows the earlier screens, from before Staddle kept its own books; the live preview shows the FMS described below. The music is "Closer" from Mixkit, used under Mixkit's free music licence.
 
 ## Why it exists
 
@@ -12,24 +12,24 @@ Operators run a facility management system (FMS), a payment processor, a gate sy
 
 AI front desks for self-storage now answer tenants. In the products surveyed for this project (their public screens, help pages and operator reviews, November 2026), a shipped AI front desk hands a fee question to staff as a ticket, or is not allowed to change tenant data. Approval steps and dollar limits for AI appear only in demos and stated plans. None shows the rule an AI applied beside the books entry it wrote.
 
-Gatehouse is the FMS itself. It keeps the facility's books, Porter reads what tenants write, and code checks each claim against those books, decides, and writes the change through one gate. Staff see every message with what Porter read, the rule that decided and the entries it wrote; what needs a person waits for them on Today. Gatehouse is not a payment processor and does not give legal advice.
+Staddle is the FMS itself. It keeps the facility's books, Tilden reads what tenants write, and code checks each claim against those books, decides, and writes the change through one gate. Staff see every message with what Tilden read, the rule that decided and the entries it wrote; what needs a person waits for them on Today. Staddle is not a payment processor and does not give legal advice.
 
 ## The FMS
 
 The preview opens on an Overview. The FMS is behind a sign-in that comes filled in with a demo login, and each visitor works on a copy of the facility of their own.
 
 - **Home.** The facility this morning: work waiting, units rented by row, the month's billing and collections, who is past due.
-- **Today.** This morning's tenant texts and a button to have Porter read them; disputes waiting for a decision; what was handed to staff; what Porter closed.
-- **Messages.** Each conversation with the tenant's words, what Porter read, what the books show, what was done, the books entries written and the reply. Try a tenant message sends one of your own through the same path. Test results shows how Porter was measured.
+- **Today.** This morning's tenant texts and a button to have Tilden read them; disputes waiting for a decision; what was handed to staff; what Tilden closed.
+- **Messages.** Each conversation with the tenant's words, what Tilden read, what the books show, what was done, the books entries written and the reply. Try a tenant message sends one of your own through the same path. Test results shows how Tilden was measured.
 - **Units** and **Tenants.** Who rents what at which rent, the account with its rentals and a ledger with a running balance.
 - **Billing and payments.** Each month's billing, payments with the day the card was charged and the day the facility learned of it, declined cards, and who is past due.
-- **Rules.** The fee schedule, the owner's waiver rule in words and in the exact form code checks, what Porter may do, and what only staff decide.
+- **Rules.** The fee schedule, the owner's waiver rule in words and in the exact form code checks, what Tilden may do, and what only staff decide.
 
 Staff decide an open dispute on Today: remove a fee the tenant never signed for, which is a correction and does not use up a waiver, or keep it under review. Each decision goes through the same gate, with a note of what was checked.
 
-## Porter
+## Tilden
 
-Porter reads a tenant's message into claims, each with the tenant's own words. Code checks each claim against the books and decides:
+Tilden reads a tenant's message into claims, each with the tenant's own words. Code checks each claim against the books and decides:
 - explain the charge;
 - reverse a charge posted twice;
 - remove a fee posted in error;
@@ -37,18 +37,18 @@ Porter reads a tenant's message into claims, each with the tenant's own words. C
 - waive a fee under the owner's rule;
 - hand it to staff, with the reason.
 
-Code writes the reply from what the gate recorded. Porter cannot change the books itself. Claude Haiku 5.5 does the reading.
+Code writes the reply from what the gate recorded. Tilden cannot change the books itself. Claude Haiku 5.5 does the reading.
 
 ## How it was measured
 
-Porter was scored on 40 tenant messages written by a separate model that had seen neither approach, labelled by the developer from a written rubric before any run, each approach run once:
+Tilden was scored on 40 tenant messages written by a separate model that had seen neither approach, labelled by the developer from a written rubric before any run, each approach run once:
 
 | Approach | Right action | Serious errors | To staff |
 |---|---|---|---|
-| Porter reads, code decides | 38 of 40 | 0 | 18 |
+| Tilden reads, code decides | 38 of 40 | 0 | 18 |
 | A fixed-rule workflow, same books | 23 of 40 | 1 | 25 |
 
-A serious error is money moved that should not have been. Both of Porter's misses went to staff instead of being explained. Porter's reading, measured alone on 51 held-back messages, was fully right on 34 against a bar of 49 set beforehand, with no wrong amount accepted and no dispute missed. A model choosing the action did no better than code (23 of 24 against 23), so code chooses. Reading costs about 0.03 cents a message.
+A serious error is money moved that should not have been. Both of Tilden's misses went to staff instead of being explained. Tilden's reading, measured alone on 51 held-back messages, was fully right on 34 against a bar of 49 set beforehand, with no wrong amount accepted and no dispute missed. A model choosing the action did no better than code (23 of 24 against 23), so code chooses. Reading costs about 0.03 cents a message.
 
 ## The books
 
@@ -63,13 +63,13 @@ A generated year of one facility runs through the same code: 120 units, 121 tena
 
 ## What is built and what is simulated
 
-- **Built:** the books, the gate, Porter's reading, the FMS screens, the staff decisions, the sign-in and the tests. The earlier reconciliation desk (below) is built too.
+- **Built:** the books, the gate, Tilden's reading, the FMS screens, the staff decisions, the sign-in and the tests. The earlier reconciliation desk (below) is built too.
 - **Simulated:** the facility, its tenants and its money are generated. Replies are shown, never sent. Taking card payments, gate access, move-ins and lien notices come in later steps.
 - **Not shown yet:** no operator has used it.
 
 ## The earlier reconciliation desk
 
-Before Gatehouse kept its own books, it watched an FMS simulator that follows Cubby's public API and checked unfinished work against it. Its screens are off the preview now; its code and tests stay until the simulator is retired.
+Before Staddle kept its own books, the project, then called Gatehouse (the repository keeps that name), watched an FMS simulator that follows Cubby's public API and checked unfinished work against it. Its screens are off the preview now; its code and tests stay until the simulator is retired.
 
 | | |
 |---|---|
@@ -88,7 +88,7 @@ Every build still replays that desk's failures against the running system and fa
 
 ```bash
 cp .env.example .env          # set DESK_OPERATOR_TOKEN to a long random string
-docker compose up --build     # Gatehouse on :8000, the FMS simulator on its loopback
+docker compose up --build     # Staddle on :8000, the FMS simulator on its loopback
 ```
 
 With `DESK_PUBLIC_VIEW=1` and `DESK_DEMO_SEED=1` it serves the Overview and the FMS described above. The tests and the evaluation run in Docker, from the `test` target of the Dockerfile:
@@ -102,4 +102,4 @@ docker build --target test -t gatehouse:test . && docker run --rm gatehouse:test
 - The live preview: [gatehouse-peug.onrender.com](https://gatehouse-peug.onrender.com), on synthetic data.
 - The [full write-up](docs/details.md) of the earlier desk: where it fits next to the vendors, each part in depth, the API, the Florida lien rules and the limits.
 
-The FMS simulator is not an official Cubby integration, and `fms_checks` is not an official Stora integration. Lien-law reference data is from the [Stitch Storage dataset](https://stitchstorage.com/self-storage-lien-laws/data), CC BY 4.0. Gatehouse does not give legal advice, process real payments or authorize property sales.
+The FMS simulator is not an official Cubby integration, and `fms_checks` is not an official Stora integration. Lien-law reference data is from the [Stitch Storage dataset](https://stitchstorage.com/self-storage-lien-laws/data), CC BY 4.0. Staddle does not give legal advice, process real payments or authorize property sales.

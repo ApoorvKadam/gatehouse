@@ -1,4 +1,4 @@
-"""The agentic FMS: Northstar Storage's own books (core/) behind a sign-in, the work Porter (the agent inside it) did on them, and
+"""The agentic FMS: Northstar Storage's own books (core/) behind a sign-in, the work Tilden (the agent inside it) did on them, and
 what waits for a person. The Overview at / is the only public page. Every FMS page and every write needs a signed-in session, and each session
 works on its own copy of the books (its own stream), so one visitor's changes never reach the next. The demo name and password
 are printed on the sign-in page: the sign-in is real (a signed session cookie, refused when missing or forged), the person is not."""
@@ -19,14 +19,14 @@ from core.case import OFF
 from core.books import ADMIN_FEE_CENTS, LATE_FEE_CENTS, RENT, REVIEW_DAYS, lines, local, month_key
 from core.evidence import KIND_WORDS, day, money, month_words
 from core.gate import ACTIONS, STAFF_ACTIONS, Command, execute
-from core.seed import NOW, TODAY
+from core.seed import story_month
 
 from . import spend
+from .web import AGENT
 from .front_desk import ACTION_WORDS, CLAIM_WORDS, SHIFT, CaseIn, FrontDesk, account_words
 from .guard import LIFETIME, SLOW_DOWN, UNSET, Unreachable
 
-DEMO_NAME, DEMO_PASSWORD = "manager", "northstar"
-AGENT = "Porter"                 # the agent inside the FMS: in a gatehouse, the porter takes the messages and passes on what it cannot settle
+DEMO_NAME, DEMO_PASSWORD = "dana.reyes", "northstar"
 SESSION = "gh_session"
 STAFF = "staff:office_manager"
 # the menu in the groups an FMS is organised by; a module joins its group when it is built, never as a greyed-out item
@@ -43,6 +43,7 @@ MAY_DO = {"explain_charge": "Explain a charge from the records", "reverse_duplic
           "waive_fee": "Waive a late fee under the owner's rule", "hand_to_staff": "Hand a message to staff, with the reason"}
 STAFF_DO = {"remove_disputed_fee": "Remove a fee the tenant never signed for", "keep_under_review": "Keep a dispute under review until its date"}
 BY = {"billing": "Billing", "operator": AGENT, "fixed_workflow": "Fixed workflow"}
+JOB_WORDS = {"understand": "Reading", "operate": "Choosing"}
 WRONG = "That name and password do not match the demo login shown on this page."
 
 
@@ -59,9 +60,9 @@ def date_words(d: date) -> str:
     return f"{d:%a}, {d:%b} {d.day}, {d.year}"
 
 
-def dated(d: date) -> str:
-    """A day, with its year when it is not the facility's current year: a ledger runs back past January."""
-    return day(d) if d.year == TODAY.year else f"{day(d)}, {d.year}"
+def dated(d: date, year: int) -> str:
+    """A day, with its year when it is not this year: a ledger runs back past January."""
+    return day(d) if d.year == year else f"{day(d)}, {d.year}"
 
 
 def words(key: str, value) -> tuple[str, str]:
@@ -78,7 +79,7 @@ class Facility:
 
     def __init__(self, fd: FrontDesk, ident: str, everything: bool = False):
         self.b, self.own, self.balanced, self.debits, self.events = fd.view(ident, everything)
-        self.fd = fd
+        self.fd, self.today, self.now = fd, fd.day, fd.clock()
         b = self.b
         self.leases_of: dict[str, list] = {}
         for lease in sorted(b.leases.values(), key=lambda x: (x.ended is not None, x.unit)):
@@ -92,7 +93,7 @@ class Facility:
             ls = self.leases_of.get(t.id, [])
             active = [x for x in ls if x.ended is None]
             self.people[t.id] = {"id": t.id, "name": t.name, "phone": phone(t.phone), "slug": slug(t.name, ls[0].unit if ls else "none"),
-                                 "units": [x.unit for x in (active or ls)], "active": bool(active), "past": b.past_due(t.id, NOW),
+                                 "units": [x.unit for x in (active or ls)], "active": bool(active), "past": b.past_due(t.id, self.now),
                                  "owed": sum(b.receivable(x.id) for x in ls) - b.credit.get(t.id, 0), "credit": b.credit.get(t.id, 0),
                                  "dispute": any(d.tenant == t.id and d.outcome is None for d in b.disputes.values()),
                                  "since": f"{day(min(x.start for x in (active or ls)))}, {min(x.start for x in (active or ls)).year}" if ls else "",
@@ -151,6 +152,9 @@ class Facility:
                         # a message can be answered while the work it started still waits: a dispute stays open for staff
                         "waits": bool(who and who["dispute"] and any(o["action"] == "open_dispute" and o["allowed"] for o in outcomes)),
                         "cents": round(sum(c.get("cents", 0) for c in p.get("calls", [])), 4),
+                        # what each model call cost, as the Overview shows it (his message of 2026-11-16: show the reading cost in the FMS too)
+                        "calls": [{"job": JOB_WORDS.get(c["job"], "Model call"), "tokens_in": c["tokens_in"], "tokens_out": c["tokens_out"],
+                                   "cents": c["cents"], "seconds": c["ms"] / 1000, "ok": c["outcome"] == "ok"} for c in p.get("calls", [])],
                         "off": p["handed"] == OFF,
                         "shift": shift if any(i["id"] == shift for i in SHIFT) else None})
         return out[::-1]
@@ -210,25 +214,27 @@ class Facility:
             rows.append({"who": self.people[p.tenant], "amount": money(p.cents), "on": day(p.effective_at), "returned": p.returned,
                          "learned": day(p.known_at) if local(p.known_at).date() != local(p.effective_at).date() else None,
                          "to": " and ".join(kinds) + (" and credit" if p.credit_cents else "") if kinds else ("credit" if p.credit_cents else "")})
+        # the month's charges add up: every cent billed is paid, removed (reversed or waived) or still open
         return {"key": key, "name": f"{month_words(key)} {key[:4]}",
-                "rent": sum(c.cents for c in charges if c.kind == RENT and c.closed != "reversed"),
-                "fees": sum(c.cents for c in charges if c.kind != RENT and c.closed != "reversed"),
-                "removed": sum(c.cents for c in charges if c.closed),
+                "rent": sum(c.cents for c in charges if c.kind == RENT),
+                "fees": sum(c.cents for c in charges if c.kind != RENT),
+                "paid": sum(c.paid for c in charges),
+                "removed": sum(c.cents - c.paid for c in charges if c.closed),
                 "collected": sum(p.cents for p in pays if not p.returned),
                 "returned": sum(1 for p in pays if p.returned),
                 "declined": [{"who": self.people[x["tenant"]], "on": day(x["at"]), "amount": money(x["cents"])} for x in declined],
                 "open": sum(c.open_cents for c in charges), "payments": rows}
 
     def months(self) -> list[tuple[str, str]]:
-        keys = sorted({month_key(c.due) for c in self.b.charges.values() if c.due <= TODAY}, reverse=True)
+        keys = sorted({month_key(c.due) for c in self.b.charges.values() if c.due <= self.today}, reverse=True)
         return [(k, f"{month_words(k)} {k[:4]}") for k in keys]
 
     def past_due(self) -> list[dict]:
         rows = []
         for p in self.people.values():
             if p["past"]:
-                oldest = min((c.due for c in self.b.open_charges(p["id"]) if c.due < TODAY), default=TODAY)
-                rows.append({**p, "oldest": day(oldest), "days": (TODAY - oldest).days})
+                oldest = min((c.due for c in self.b.open_charges(p["id"]) if c.due < self.today), default=self.today)
+                rows.append({**p, "oldest": day(oldest), "days": (self.today - oldest).days})
         return sorted(rows, key=lambda r: (-r["days"], -r["past"]))
 
     def units(self) -> list[tuple[str, list[dict]]]:
@@ -258,14 +264,14 @@ class Facility:
         for e in self.events:
             p = e.payload
             if e.kind == "payment.declined" and p.get("tenant") == tenant:
-                rows.append({"on": dated(local(e.at).date()), "what": f"Card declined, {money(p['cents'])}", "by": "Card", "amount": "", "balance": money(balance)})
+                rows.append({"on": dated(local(e.at).date(), self.today.year), "what": f"Card declined, {money(p['cents'])}", "by": "Card", "amount": "", "balance": money(balance)})
                 continue
             delta = sum(c for a, c, _ in lines(e.kind, p) if a in accounts)
             if delta == 0:
                 continue
             balance += delta
             unit = f", unit {b.leases[p['lease']].unit}" if several and p.get("lease") in b.leases else ""
-            when = dated(local(e.at).date())
+            when = dated(local(e.at).date(), self.today.year)
             if e.kind == "charge.posted":
                 obligation = p.get("obligation") or ""
                 what = (f"{month_words(obligation.split(':')[2])} rent" if p["kind"] == RENT and obligation.count(":") == 2
@@ -273,7 +279,7 @@ class Facility:
                 by = "Staff" if (p.get("source") or "").startswith("staff") else "Billing"
             elif e.kind == "payment.received":
                 eff = p["effective_at"]
-                when = dated(date.fromisoformat(eff[:10]))
+                when = dated(date.fromisoformat(eff[:10]), self.today.year)
                 what = "Card payment" + (f", learned {day(e.at)}" if eff[:10] != local(e.at).date().isoformat() else "")
                 by = "Card"
             elif e.kind == "payment.returned":
@@ -333,7 +339,7 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
             raise HTTPException(403, "this request came from another site")
 
     def show(request: Request, name: str, nav: str, f: Facility, **ctx):
-        return templates.TemplateResponse(request, name, {"nav": nav, "menu": MENU, "agent": AGENT, "f": f, "today": date_words(TODAY), "live": live,
+        return templates.TemplateResponse(request, name, {"nav": nav, "menu": MENU, "agent": AGENT, "f": f, "today": date_words(f.today), "live": live,
                                                           "money": money, "day": day, **ctx})
 
     def check() -> dict | None:
@@ -342,7 +348,9 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
     # public ------------------------------------------------------------------------------------------------------------
     @app.get("/", include_in_schema=False)
     def overview(request: Request):
+        # the worked example names the month the FMS's own story sits in, so the two never disagree
         return templates.TemplateResponse(request, "overview.html", {"nav": "front", "facts": fd.facts(), "score": json.loads(SCORE.read_text()),
+                                                                     "month": f"{story_month(fd.today()):%B}",
                                                                      "money": money, "agent": AGENT, "signed_in": session(request) is not None})
 
     @app.get("/film", include_in_schema=False)
@@ -403,7 +411,7 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
         f = Facility(fd, need(request))
         cases = f.cases()
         morning = [c for c in cases if c["shift"]]
-        return show(request, "fms_home.html", "home", f, rows=f.occupancy(), month=f.month(month_key(TODAY)), past=f.past_due(),
+        return show(request, "fms_home.html", "home", f, rows=f.occupancy(), month=f.month(month_key(f.today)), past=f.past_due(),
                     waiting=len(f.waiting(cases)), handed=sum(1 for c in cases if c["handed"]), disputes=len(f.disputes()),
                     morning=len(SHIFT), closed=sum(1 for c in morning if not c["handed"]))
 
@@ -432,7 +440,8 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
     @app.get("/messages/tests", include_in_schema=False)
     def tests(request: Request):
         f = Facility(fd, need(request))
-        return show(request, "fms_messages.html", "messages", f, score=json.loads(SCORE.read_text()), part="tests")
+        score = json.loads(SCORE.read_text())
+        return show(request, "fms_messages.html", "messages", f, score=score, ran=date.fromisoformat(score["ran_at"]), part="tests")
 
     @app.get("/units", include_in_schema=False)
     def units(request: Request):
@@ -468,7 +477,7 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
     def billing(request: Request, month: str = ""):
         f = Facility(fd, need(request))
         months = f.months()
-        key = month if month in dict(months) else month_key(TODAY)
+        key = month if month in dict(months) else month_key(f.today)
         return show(request, "fms_billing.html", "billing", f, months=months, month=f.month(key), past=f.past_due())
 
     @app.get("/rules", include_in_schema=False)
@@ -479,7 +488,7 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
     # writes ------------------------------------------------------------------------------------------------------------
     @app.post("/api/fms/messages")
     def run_message(body: CaseIn, request: Request, ident: str = Depends(need)):
-        """A tenant's message through Porter on this session's copy: this morning's messages, or one typed in Try a tenant message."""
+        """A tenant's message through the agent on this session's copy: this morning's messages, or one typed in Try a tenant message."""
         same_site(request)
         if not live:
             return fd.run(ident, body, live)
@@ -509,6 +518,6 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
                 d = store.books(stream).disputes.get(dispute)
                 if d is None:
                     raise HTTPException(404, "There is no such dispute on this copy.")
-                execute(store, stream, Command(f"staff:{dispute}:{action}", action, d.tenant, STAFF, d.charge, reason=reason), NOW)
+                execute(store, stream, Command(f"staff:{dispute}:{action}", action, d.tenant, STAFF, d.charge, reason=reason), fd.clock())
         await run_in_threadpool(act)
         return RedirectResponse("/today#decided", status_code=303)

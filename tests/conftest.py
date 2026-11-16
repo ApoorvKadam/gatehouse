@@ -9,6 +9,7 @@ import httpx
 import pytest
 import uvicorn
 
+from desk import spend
 from desk.adapter.cubby import CubbyAdapter
 from desk.db import make_session_factory
 from fmssim.app import create_app
@@ -79,3 +80,13 @@ def session():
     factory = make_session_factory("sqlite:///:memory:")
     with factory() as s:
         yield s
+
+
+@pytest.fixture(autouse=True)
+def own_spend_sources():
+    """An FMS site registers what its front desk spent in a module-wide list; each test starts and ends with the list it had,
+    so one test's spending never counts in the next test's budget."""
+    saved = dict(spend.SOURCES)
+    yield
+    spend.SOURCES.clear()
+    spend.SOURCES.update(saved)

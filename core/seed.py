@@ -8,15 +8,22 @@ records marks a charge as planted. Every name, phone number and amount is made u
 from __future__ import annotations
 
 import random
+import re
 from datetime import date, datetime, timedelta
 
 from .billing import Ledger
 from .books import ADMIN_FEE, LATE_FEE, at_local
+from .evidence import month_words
 
 SEED = 20261114
-OPENED = date(2025, 11, 1)
-TODAY = date(2026, 11, 14)          # the facility clock in step 1
+TODAY = date(2026, 11, 14)          # the fixed day the tests and the graded sets are read against
 NOW = at_local(TODAY, 9, 0)
+STORY_DONE = 11                     # the planted situations run from the 2nd to the 10th of their month
+NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+# a month the written messages name: in full (not "may", which is also a verb), or short before a day ("Nov 5")
+MONTH_WORD = re.compile(r"\b(" + "|".join(n for n in NAMES if n != "May") + r"|(?:" + "|".join(n[:3] for n in NAMES) + r")(?=\.? \d))\b", re.I)
+BARE_DAY = re.compile(r"\bthe (\d{1,2})(st|nd|rd|th)\b(?! of)", re.I)       # "the 8th of November" already names it
+A_LATE_FEE = re.compile(r"\ba (\$\d+ )?late fee\b(?! for)", re.I)
 UNITS = [f"{row}{n}" for row, first in (("A", 101), ("B", 201), ("C", 301)) for n in range(first, first + 40)]
 RENTS = {"A": (8500, 12000), "B": (14000, 19000), "C": (21000, 26000)}
 FIRST = ["Ana", "Ben", "Carla", "Dev", "Elena", "Femi", "Grace", "Hugo", "Ines", "Jon", "Kemi", "Luis", "Mona", "Nate", "Olga", "Pablo",
@@ -42,11 +49,27 @@ def _d(month: str, day: int) -> date:
     return date(y, m, day)
 
 
+def add_months(d: date, n: int) -> date:
+    """The first of the month n months from d's month."""
+    y, m = divmod(d.year * 12 + d.month - 1 + n, 12)
+    return date(y, m + 1, 1)
+
+
+def story_month(today: date) -> date:
+    """The month the planted situations sit in: this month once its story days have passed, else the month before."""
+    return add_months(today, 0 if today.day >= STORY_DONE else -1)
+
+
 class Year:
     """Builds the year. `cast` maps a role name to its tenant, its leases and its unit."""
 
-    def __init__(self, seed: int = SEED):
+    def __init__(self, seed: int = SEED, today: date = TODAY, cutoff: datetime | None = None):
+        # everything up to the cutoff happens: 09:00 on the fixed day; the live FMS passes midnight, so nothing is ahead of the clock
+        self.today, self.now = today, cutoff or at_local(today, 9, 0)
+        self.story = story_month(today)                  # every date below is counted in months from this one
+        self.opened = add_months(self.story, -12)
         self.rnd = random.Random(seed)
+        self.later = random.Random(seed + 1)             # the month after the story, drawn apart so it never moves the year before
         self.led = Ledger()
         self.cast: dict[str, dict] = {}
         self.habit: dict[str, str] = {}          # tenant -> on_time, sometimes_late, chronic, scripted
@@ -102,20 +125,22 @@ class Year:
     # the year ---------------------------------------------------------------------------------------------------------
     def build(self) -> "Year":
         led = self.led
-        led.set_up(at_local(OPENED - timedelta(days=10)), "Northstar Storage", "Orlando, FL", UNITS)
-        led.adopt_rule(at_local(OPENED - timedelta(days=10), 9), "late_fee_waiver", 1, WAIVER_RULE, WAIVER_TYPED)
+        opened = self.opened
+        led.set_up(at_local(opened - timedelta(days=10)), "Northstar Storage", "Orlando, FL", UNITS)
+        led.adopt_rule(at_local(opened - timedelta(days=10), 9), "late_fee_waiver", 1, WAIVER_RULE, WAIVER_TYPED)
         for i in range(78):        # the first tenants move in over the first two weeks
-            day = OPENED + timedelta(days=i % 14)
+            day = opened + timedelta(days=i % 14)
             habit = self.rnd.choices(["on_time", "sometimes_late", "chronic"], [62, 28, 10])[0]
             self.at(at_local(day, 9 + i % 9, (i * 7) % 60), lambda h=habit, d=day, k=i: self.move_in(at_local(d, 9 + k % 9, (k * 7) % 60), h))
         self.plant()
-        for month in months_between(OPENED, TODAY):
-            self.plan_month(month)
-        day = OPENED - timedelta(days=10)
-        while day <= TODAY:
+        for month in months_between(opened, self.story):
+            self.plan_month(month, self.rnd)
+        self.plan_month(self.key(1), self.later)
+        day = opened - timedelta(days=10)
+        while day <= self.today:
             done: set[int] = set()
             while True:         # an action may plan more actions for the same day, so the day's list is re-read each time
-                todo = sorted((a for a in self.actions.get(day, []) if a[1] not in done and a[0] <= NOW), key=lambda a: (a[0], a[1]))
+                todo = sorted((a for a in self.actions.get(day, []) if a[1] not in done and a[0] <= self.now), key=lambda a: (a[0], a[1]))
                 if not todo:
                     break
                 when, n, fn = todo[0]
@@ -124,17 +149,17 @@ class Year:
             day += timedelta(days=1)
         return self
 
-    def plan_month(self, month: str) -> None:
+    def plan_month(self, month: str, rnd: random.Random) -> None:
         first = _d(month, 1)
-        if first > OPENED:
+        if first > self.opened:
             self.at(at_local(first), lambda m=month: self.led.post_rent(m))
             self.at(at_local(first, 0, 1), lambda m=month: self.schedule_payments(m))
-        if _d(month, 6) > OPENED:
+        if _d(month, 6) > self.opened:
             self.at(at_local(_d(month, 6)), lambda m=month: self.led.assess_late_fees(m))
-        if first > OPENED:
+        if first > self.opened:
             for k in range(2):               # new tenants
-                day = _d(month, 3 + self.rnd.randrange(24))
-                habit = self.rnd.choices(["on_time", "sometimes_late", "chronic"], [62, 28, 10])[0]
+                day = _d(month, 3 + rnd.randrange(24))
+                habit = rnd.choices(["on_time", "sometimes_late", "chronic"], [62, 28, 10])[0]
                 when = at_local(day, 10 + k * 3, 15)
                 self.at(when, lambda h=habit, w=when: self.free and self.move_in(w, h))
             self.at(at_local(_d(month, 24), 16), lambda m=month: self.move_out_one(m))
@@ -157,7 +182,7 @@ class Year:
             if self.rnd.random() < 0.04:     # a card that declines first, then goes through a day later
                 self.at(when, lambda t=t, w=when: self.balance(t) and self.led.decline(w, t, self.balance(t)))
                 when += timedelta(days=1)
-            if when <= NOW:
+            if when <= self.now:
                 self.at(when, lambda t=t, w=when, s=share: self.pay_balance(t, w, s))
 
     def move_out_one(self, month: str) -> None:
@@ -175,14 +200,16 @@ class Year:
 
     # the cast ---------------------------------------------------------------------------------------------------------
     def role(self, role: str, when: datetime, name: str, phone: str, *, row: str | None = None, schedule=None, rent: int | None = None,
-             on_time_until: str | None = "2026-11", skip: tuple[str, ...] = ()) -> None:
-        """A scripted tenant: moves in at `when` and pays the full balance on the 2nd of every month up to `on_time_until`,
-        except the months in `skip`, which its own script handles."""
+             on_time_until: str | None = None, skip: tuple[str, ...] = ()) -> None:
+        """A scripted tenant: moves in at `when` and pays the full balance on the 2nd of every month up to `on_time_until`
+        (the story month when not given), except the months in `skip`, which its own script handles."""
+        on_time_until = on_time_until or self.key(0)
+
         def go():
             t, lease = self.move_in(when, "scripted", name=name, phone=phone, row=row, schedule=schedule, rent=rent)
             self.led.receive_payment(t, self.balance(t), when + timedelta(minutes=10))
             self.cast[role] = {"tenant": t, "leases": [lease], "name": name, "phone": phone}
-            for month in months_between(when.date() + timedelta(days=1), TODAY):
+            for month in months_between(when.date() + timedelta(days=1), self.today):
                 if month in skip or (on_time_until and month > on_time_until) or _d(month, 2) <= when.date():
                     continue
                 self.at(at_local(_d(month, 2), 10, 30), lambda r=role, m=month: self.pay_balance(self.cast[r]["tenant"], at_local(_d(m, 2), 10, 30)))
@@ -191,6 +218,34 @@ class Year:
     def then(self, when: datetime, fn) -> None:
         self.at(when, fn)
 
+    def words(self, text: str) -> str:
+        """A message written for the fixed day, moved to this year: each month it names moves with the story month. When the story
+        month is not this month (the 1st to the 10th), a day or a late fee named without a month gets it ("the 3rd" would read
+        as this month's 3rd, and from the 6th the tenant also has this month's late fee), so the message says what it meant."""
+        shift = (self.story.year - TODAY.year) * 12 + self.story.month - TODAY.month
+
+        def month(m: re.Match) -> str:
+            word = m.group(0)
+            name = NAMES[(NAMES.index(next(n for n in NAMES if n[:3].lower() == word[:3].lower())) + shift) % 12]
+            name = name[:3] if len(word) == 3 else name
+            return name.lower() if word.islower() else name
+        out = MONTH_WORD.sub(month, text)
+        if (self.story.year, self.story.month) != (self.today.year, self.today.month):
+            name = NAMES[self.story.month - 1]
+            out = BARE_DAY.sub(lambda m: f"{name} {m.group(1)}{m.group(2)}", out)
+            out = A_LATE_FEE.sub(lambda m: f"a {m.group(1) or ''}late fee for {name}", out)
+        return out
+
+    def key(self, n: int) -> str:
+        """The month n months from the story month, as "2026-11"."""
+        return add_months(self.story, n).strftime("%Y-%m")
+
+    def m(self, n: int, day: int, hour: int = 10, minute: int = 0) -> datetime:
+        """A time in the month n months from the story month; day 0 is that month's last day."""
+        first = add_months(self.story, n)
+        d = add_months(first, 1) - timedelta(days=1) if day == 0 else first.replace(day=day)
+        return at_local(d, hour, minute)
+
     def t(self, role: str) -> str:
         return self.cast[role]["tenant"]
 
@@ -198,94 +253,95 @@ class Year:
         return self.cast[role]["leases"][i]
 
     def plant(self) -> None:
-        """Each planted situation sits in November, the facility's current month, so no later payment has paid it off."""
-        led, d = self.led, lambda y, m, day, h=10, mi=0: at_local(date(y, m, day), h, mi)
-        nov = "2026-11"
+        """Each planted situation sits in the story month (November on the fixed day), so no later payment has paid it off. Months
+        are counted from it: m(-3, 9) is the 9th three months before."""
+        led, m = self.led, self.m
+        nov = self.key(0)
 
         # maria: a declined try on Nov 3, the payment through on Nov 6 after the fee; late in August, so the yearly waiver
         # does not apply and the fee stands
-        self.role("maria", d(2025, 12, 3), "Maria Lopez", "+14075550111", row="A", rent=12000, skip=("2026-08", nov))
-        self.then(d(2026, 8, 9, 15), lambda: self.pay_balance(self.t("maria"), d(2026, 8, 9, 15)))
-        self.then(d(2026, 11, 3, 10, 15), lambda: led.decline(d(2026, 11, 3, 10, 15), self.t("maria"), 12000))
-        self.then(d(2026, 11, 6, 14, 20), lambda: led.receive_payment(self.t("maria"), 12000, d(2026, 11, 6, 14, 20)))
+        self.role("maria", m(-11, 3), "Maria Lopez", "+14075550111", row="A", rent=12000, skip=(self.key(-3), nov))
+        self.then(m(-3, 9, 15), lambda: self.pay_balance(self.t("maria"), m(-3, 9, 15)))
+        self.then(m(0, 3, 10, 15), lambda: led.decline(m(0, 3, 10, 15), self.t("maria"), 12000))
+        self.then(m(0, 6, 14, 20), lambda: led.receive_payment(self.t("maria"), 12000, m(0, 6, 14, 20)))
 
         # wes: the same days as maria, but on time for the six months before: the yearly waiver applies, a real choice
-        self.role("wes", d(2025, 11, 20), "Wes Young", "+14075550288", row="A", rent=11500, skip=(nov,))
-        self.then(d(2026, 11, 3, 19), lambda: led.decline(d(2026, 11, 3, 19), self.t("wes"), 11500))
-        self.then(d(2026, 11, 6, 8, 45), lambda: led.receive_payment(self.t("wes"), 11500, d(2026, 11, 6, 8, 45)))
+        self.role("wes", m(-12, 20), "Wes Young", "+14075550288", row="A", rent=11500, skip=(nov,))
+        self.then(m(0, 3, 19), lambda: led.decline(m(0, 3, 19), self.t("wes"), 11500))
+        self.then(m(0, 6, 8, 45), lambda: led.receive_payment(self.t("wes"), 11500, m(0, 6, 8, 45)))
 
         # james: November's late fee posted by billing, and the same fee posted again by hand on Nov 10
-        self.role("james", d(2026, 2, 10), "James Carter", "+14075550122", row="B", rent=16000, skip=(nov,))
-        self.then(d(2026, 11, 8, 12), lambda: led.receive_payment(self.t("james"), 16000, d(2026, 11, 8, 12)))
-        self.then(d(2026, 11, 10, 9, 40), lambda: led.charge_by_hand(d(2026, 11, 10, 9, 40), self.lease("james"), LATE_FEE, 2000,
-                                                                    f"late_fee:{self.lease('james')}:{nov}", note="late fee November"))
+        self.role("james", m(-9, 10), "James Carter", "+14075550122", row="B", rent=16000, skip=(nov,))
+        self.then(m(0, 8, 12), lambda: led.receive_payment(self.t("james"), 16000, m(0, 8, 12)))
+        self.then(m(0, 10, 9, 40), lambda: led.charge_by_hand(m(0, 10, 9, 40), self.lease("james"), LATE_FEE, 2000,
+                                                                    f"late_fee:{self.lease('james')}:{nov}", note=f"late fee {month_words(nov)}"))
 
         # priya: signed in June on a schedule without the admin fee; the front desk posted one by hand on Nov 10
-        self.role("priya", d(2026, 6, 15), "Priya Shah", "+14075550133", row="A", rent=9500, schedule=[LATE_FEE])
-        self.then(d(2026, 11, 10, 11), lambda: led.charge_by_hand(d(2026, 11, 10, 11), self.lease("priya"), ADMIN_FEE, 2500,
+        self.role("priya", m(-5, 15), "Priya Shah", "+14075550133", row="A", rent=9500, schedule=[LATE_FEE])
+        self.then(m(0, 10, 11), lambda: led.charge_by_hand(m(0, 10, 11), self.lease("priya"), ADMIN_FEE, 2500,
                                                                  f"admin_fee:{self.lease('priya')}", note="admin fee missed at move-in"))
 
         # tom: on time March to August, nothing paid since; September's fee is the one the yearly rule allows
-        self.role("tom", d(2025, 11, 5), "Tom Becker", "+14075550144", row="C", rent=22000, on_time_until="2026-08")
+        self.role("tom", m(-12, 5), "Tom Becker", "+14075550144", row="C", rent=22000, on_time_until=self.key(-3))
 
         # gus: nothing paid since August either, three equal late fees for three months, no waiver history
-        self.role("gus", d(2026, 1, 6), "Gus Walsh", "+14075550211", row="A", rent=8500, on_time_until="2026-08")
+        self.role("gus", m(-10, 6), "Gus Walsh", "+14075550211", row="A", rent=8500, on_time_until=self.key(-3))
 
         # ines: November's rent paid on Nov 3, and a late fee posted by hand on Nov 4 anyway
-        self.role("ines", d(2026, 1, 12), "Ines Moreno", "+14075550155", row="A", rent=10000, skip=(nov,))
-        self.then(d(2026, 11, 3, 9), lambda: self.pay_balance(self.t("ines"), d(2026, 11, 3, 9)))
-        self.then(d(2026, 11, 4, 16), lambda: led.charge_by_hand(d(2026, 11, 4, 16), self.lease("ines"), LATE_FEE, 2000,
+        self.role("ines", m(-10, 12), "Ines Moreno", "+14075550155", row="A", rent=10000, skip=(nov,))
+        self.then(m(0, 3, 9), lambda: self.pay_balance(self.t("ines"), m(0, 3, 9)))
+        self.then(m(0, 4, 16), lambda: led.charge_by_hand(m(0, 4, 16), self.lease("ines"), LATE_FEE, 2000,
                                                                 f"late_fee:{self.lease('ines')}:{nov}", note="late fee"))
 
         # hugo: confirmed by the processor on Nov 5, learned on Nov 7; billing posted the fee on what it knew
-        self.role("hugo", d(2026, 3, 20), "Hugo Brooks", "+14075550166", row="B", rent=15000, skip=(nov,))
-        self.then(d(2026, 11, 7, 9), lambda: led.receive_payment(self.t("hugo"), 15000, d(2026, 11, 5, 15), d(2026, 11, 7, 9)))
+        self.role("hugo", m(-8, 20), "Hugo Brooks", "+14075550166", row="B", rent=15000, skip=(nov,))
+        self.then(m(0, 7, 9), lambda: led.receive_payment(self.t("hugo"), 15000, m(0, 5, 15), m(0, 7, 9)))
 
         # cole: paid Nov 2, the payment came back Nov 9, so November's late fee posted then
-        self.role("cole", d(2026, 1, 25), "Cole Jensen", "+14075550199", row="B", rent=14500, skip=(nov,))
-        self.then(d(2026, 11, 2, 13), lambda: led.receive_payment(self.t("cole"), 14500, d(2026, 11, 2, 13)))
-        self.then(d(2026, 11, 9, 10), lambda: led.return_payment(d(2026, 11, 9, 10), max(p for p, x in led.books.payments.items() if x.tenant == self.t("cole"))))
+        self.role("cole", m(-10, 25), "Cole Jensen", "+14075550199", row="B", rent=14500, skip=(nov,))
+        self.then(m(0, 2, 13), lambda: led.receive_payment(self.t("cole"), 14500, m(0, 2, 13)))
+        self.then(m(0, 9, 10), lambda: led.return_payment(m(0, 9, 10), max(p for p, x in led.books.payments.items() if x.tenant == self.t("cole"))))
 
         # tara: paid part of November before the cutoff
-        self.role("tara", d(2026, 2, 17), "Tara Singh", "+14075550277", row="B", rent=18000, skip=(nov,))
-        self.then(d(2026, 11, 4, 18), lambda: led.receive_payment(self.t("tara"), 10000, d(2026, 11, 4, 18)))
+        self.role("tara", m(-9, 17), "Tara Singh", "+14075550277", row="B", rent=18000, skip=(nov,))
+        self.then(m(0, 4, 18), lambda: led.receive_payment(self.t("tara"), 10000, m(0, 4, 18)))
 
         # rosa: one late fee in November, on time for the six months before: the yearly waiver applies
-        self.role("rosa", d(2025, 12, 1), "Rosa Garcia", "+14075550222", row="B", rent=17000, skip=(nov,))
-        self.then(d(2026, 11, 8, 17), lambda: led.receive_payment(self.t("rosa"), 17000, d(2026, 11, 8, 17)))
+        self.role("rosa", m(-11, 1), "Rosa Garcia", "+14075550222", row="B", rent=17000, skip=(nov,))
+        self.then(m(0, 8, 17), lambda: led.receive_payment(self.t("rosa"), 17000, m(0, 8, 17)))
 
         # ben: a late fee waived in March; November's fee is open, so the yearly waiver is used
-        self.role("ben", d(2025, 11, 10), "Ben Hayes", "+14075550233", row="C", rent=21500, skip=("2026-03", nov))
-        self.then(d(2026, 3, 8, 10), lambda: led.receive_payment(self.t("ben"), 21500, d(2026, 3, 8, 10)))
-        self.then(d(2026, 3, 12, 14), lambda: led.waive(d(2026, 3, 12, 14), led.books.live(f"late_fee:{self.lease('ben')}:2026-03")[0].id,
+        self.role("ben", m(-12, 10), "Ben Hayes", "+14075550233", row="C", rent=21500, skip=(self.key(-8), nov))
+        self.then(m(-8, 8, 10), lambda: led.receive_payment(self.t("ben"), 21500, m(-8, 8, 10)))
+        self.then(m(-8, 12, 14), lambda: led.waive(m(-8, 12, 14), led.books.live(f"late_fee:{self.lease('ben')}:{self.key(-8)}")[0].id,
                                                         "yearly late fee waiver", "staff:office_manager"))
-        self.then(d(2026, 11, 8, 10), lambda: led.receive_payment(self.t("ben"), 21500, d(2026, 11, 8, 10)))
+        self.then(m(0, 8, 10), lambda: led.receive_payment(self.t("ben"), 21500, m(0, 8, 10)))
 
         # faye: two card payments on Nov 2; the second became credit
-        self.role("faye", d(2026, 2, 3), "Faye Turner", "+14075550200", row="A", rent=11000, skip=(nov,))
-        self.then(d(2026, 11, 2, 9, 1), lambda: led.receive_payment(self.t("faye"), 11000, d(2026, 11, 2, 9, 1)))
-        self.then(d(2026, 11, 2, 9, 3), lambda: led.receive_payment(self.t("faye"), 11000, d(2026, 11, 2, 9, 3)))
+        self.role("faye", m(-9, 3), "Faye Turner", "+14075550200", row="A", rent=11000, skip=(nov,))
+        self.then(m(0, 2, 9, 1), lambda: led.receive_payment(self.t("faye"), 11000, m(0, 2, 9, 1)))
+        self.then(m(0, 2, 9, 3), lambda: led.receive_payment(self.t("faye"), 11000, m(0, 2, 9, 3)))
 
         # dev: two units, two rents on the 1st, both paid
-        self.role("dev", d(2025, 11, 8), "Dev Patel", "+14075550177", row="A", rent=9000)
-        self.then(d(2026, 4, 2, 11), lambda: self.cast["dev"]["leases"].append(led.sign_lease(d(2026, 4, 2, 11), self.t("dev"), self.unit("B"), 15500, SCHEDULE)))
-        self.then(d(2026, 4, 2, 11, 10), lambda: self.pay_balance(self.t("dev"), d(2026, 4, 2, 11, 10)))
+        self.role("dev", m(-12, 8), "Dev Patel", "+14075550177", row="A", rent=9000)
+        self.then(m(-7, 2, 11), lambda: self.cast["dev"]["leases"].append(led.sign_lease(m(-7, 2, 11), self.t("dev"), self.unit("B"), 15500, SCHEDULE)))
+        self.then(m(-7, 2, 11, 10), lambda: self.pay_balance(self.t("dev"), m(-7, 2, 11, 10)))
 
         # yara: moved in Oct 20, a prorated October and a full November, both paid
-        self.role("yara", d(2026, 10, 20), "Yara Quinn", "+14075550188", row="C", rent=24000)
+        self.role("yara", m(-1, 20), "Yara Quinn", "+14075550188", row="C", rent=24000)
 
         # luis: signed for the admin fee at move-in and paid it
-        self.role("luis", d(2026, 9, 14), "Luis Ortiz", "+14075550266", row="C", rent=23000)
+        self.role("luis", m(-2, 14), "Luis Ortiz", "+14075550266", row="C", rent=23000)
 
         # olga: moved out on Sep 30 with September's late fee still owed
-        self.role("olga", d(2025, 11, 12), "Olga Rivera", "+14075550255", row="B", rent=14000, on_time_until="2026-08")
-        self.then(d(2026, 9, 25, 12), lambda: led.receive_payment(self.t("olga"), 14000, d(2026, 9, 25, 12)))
-        self.then(d(2026, 9, 30, 18), lambda: led.end_lease(d(2026, 9, 30, 18), self.lease("olga")))
+        self.role("olga", m(-12, 12), "Olga Rivera", "+14075550255", row="B", rent=14000, on_time_until=self.key(-3))
+        self.then(m(-2, 25, 12), lambda: led.receive_payment(self.t("olga"), 14000, m(-2, 25, 12)))
+        self.then(m(-2, 0, 18), lambda: led.end_lease(m(-2, 0, 18), self.lease("olga")))
 
         # kemi and femi: a family sharing one phone number
-        self.role("kemi", d(2026, 5, 4), "Kemi Usman", "+14075550244", row="A", rent=9500)
-        self.role("femi", d(2026, 5, 4, 11), "Femi Usman", "+14075550244", row="A", rent=9000)
+        self.role("kemi", m(-6, 4), "Kemi Usman", "+14075550244", row="A", rent=9500)
+        self.role("femi", m(-6, 4, 11), "Femi Usman", "+14075550244", row="A", rent=9000)
 
 
-def build(seed: int = SEED) -> Year:
-    return Year(seed).build()
+def build(seed: int = SEED, today: date = TODAY, cutoff: datetime | None = None) -> Year:
+    return Year(seed, today, cutoff).build()

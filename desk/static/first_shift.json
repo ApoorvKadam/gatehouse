@@ -32,7 +32,7 @@
     ]
    },
    {
-    "arm": "Porter reads, code decides",
+    "arm": "Tilden reads, code decides",
     "right": 38,
     "cases": 40,
     "critical": 0,
@@ -44,7 +44,7 @@
     ]
    },
    {
-    "arm": "Porter reads and chooses",
+    "arm": "Tilden reads and chooses",
     "right": 34,
     "cases": 40,
     "critical": 1,

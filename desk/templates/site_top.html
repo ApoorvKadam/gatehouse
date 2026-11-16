@@ -1,7 +1,7 @@
 <header class="top">
   <span class="scroll-line" aria-hidden="true"></span>
   <div class="wrap">
-    <a class="brand" href="/"><span class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>{{ brand }}</a>
+    <a class="brand" href="/">{% include "icons/staddle.svg" %}{{ brand }}</a>
     {% if nav != 'sign-in' %}<a class="button primary site-open" href="{{ '/home' if signed_in else '/sign-in' }}">Open the demo FMS {% include "icons/arrow-right.svg" %}</a>{% endif %}
   </div>
 </header>
