@@ -2,39 +2,35 @@
 {% block page %}Home{% endblock %}
 {% block body %}
 <header class="head">
-  <h1>Home</h1>
+  <h1>Good morning</h1>
 </header>
-<div class="fms-grid">
-  <section class="panel" aria-labelledby="h-work">
-    <h2 id="h-work">Work waiting</h2>
-    <ul class="fms-list">
-      <li><a href="/today">{% if waiting %}{{ waiting }} message{{ 's' if waiting != 1 }} from this morning not read yet{% else %}Every message from this morning has been read{% endif %}</a></li>
-      <li><a href="/today">{{ handed }} message{{ 's' if handed != 1 }} handed to staff</a></li>
-      <li><a href="/today#disputes">{{ disputes }} dispute{{ 's' if disputes != 1 }} waiting for a decision</a></li>
+<p class="fms-greet">Here is what is happening at {{ f.name }} this morning.</p>
+{% set rented = rows|sum(attribute='rented') %}{% set units = rows|sum(attribute='units') %}
+<dl class="fms-kpis">
+  <div><dt>Units rented</dt><dd>{{ (100 * rented / units)|round|int }}%<span>{{ rented }} of {{ units }}</span></dd></div>
+  <div><dt>Collected in {{ month.name.split(' ')[0] }}</dt><dd>{{ money(month.collected) }}<span>{{ money(month.rent + month.fees) }} billed</span></dd></div>
+  <div><dt>Past due</dt><dd>{{ money(past|sum(attribute='past')) }}<span>{{ past|length }} tenants</span></dd></div>
+  <div><dt>Messages this morning</dt><dd>{{ morning }}<span>{% if waiting %}{{ waiting }} not read yet{% else %}{{ closed }} closed by {{ agent }}{% endif %}</span></dd></div>
+</dl>
+<div class="fms-home">
+  <section aria-labelledby="h-needs">
+    <h2 id="h-needs">What needs you</h2>
+    <ul class="fms-actions">
+      <li><a href="/messages">{% include "icons/message-square.svg" %}<span>{% if waiting %}<b>{{ waiting }}</b> message{{ 's' if waiting != 1 }} from this morning to read{% else %}Every message from this morning is read{% endif %}</span><span>Messages</span></a></li>
+      <li><a href="/today">{% include "icons/hand.svg" %}<span><b>{{ handed }}</b> message{{ 's' if handed != 1 }} handed to staff</span><span>Today</span></a></li>
+      <li><a href="/today#disputes">{% include "icons/scale.svg" %}<span><b>{{ disputes }}</b> dispute{{ 's' if disputes != 1 }} waiting for a decision</span><span>Today</span></a></li>
+      <li><a href="/billing#past-due">{% include "icons/credit-card.svg" %}<span><b>{{ past|length }}</b> tenants past due</span><span>Billing</span></a></li>
     </ul>
   </section>
-  <section class="panel" aria-labelledby="h-units">
-    <h2 id="h-units">Units rented</h2>
-    {% for r in rows %}
-    <div class="fms-row"><span>Row {{ r.row }}</span><span class="fms-track" aria-hidden="true"><i style="width: {{ (100 * r.rented / r.units)|round(1) }}%"></i></span><span>{{ r.rented }} of {{ r.units }}</span></div>
-    {% endfor %}
-    <p class="fms-more"><a href="/units">All {{ rows|sum(attribute='units') }} units</a></p>
-  </section>
-  <section class="panel" aria-labelledby="h-month">
-    <h2 id="h-month">{{ month.name }} so far</h2>
-    <dl class="fms-facts">
-      <div><dt>Rent billed</dt><dd>{{ money(month.rent) }}</dd></div>
-      <div><dt>Fees billed</dt><dd>{{ money(month.fees) }}</dd></div>
-      <div><dt>Collected</dt><dd>{{ money(month.collected) }}</dd></div>
-      <div><dt>Still open from {{ month.name.split(' ')[0] }}</dt><dd>{{ money(month.open) }}</dd></div>
-    </dl>
-    <p class="fms-more"><a href="/billing">Billing and payments</a></p>
-  </section>
-  <section class="panel" aria-labelledby="h-past">
-    <h2 id="h-past">Past due</h2>
-    <p class="fms-big">{{ past|length }} tenants owe {{ money(past|sum(attribute='past')) }}</p>
-    <p class="muted">Charges past their due date, leaving out any fee whose collection is paused by a dispute. {% if f.balanced %}Every books entry balances: {{ money(f.debits) }} in debits, the same in credits.{% endif %}</p>
-    <p class="fms-more"><a href="/billing#past-due">Who owes what</a></p>
+  <section aria-labelledby="h-rows">
+    <h2 id="h-rows">Units rented by row</h2>
+    <div class="panel">
+      {% for r in rows %}
+      <div class="fms-row"><span>Row {{ r.row }}</span><span class="fms-track" aria-hidden="true"><i style="width: {{ (100 * r.rented / r.units)|round(1) }}%"></i></span><span>{{ r.rented }} of {{ r.units }}</span></div>
+      {% endfor %}
+      <p class="fms-more"><a href="/units">All {{ units }} units</a></p>
+    </div>
+    <p class="muted">{% if f.balanced %}Every books entry balances: {{ money(f.debits) }} in debits, the same in credits.{% endif %}</p>
   </section>
 </div>
 {% endblock %}

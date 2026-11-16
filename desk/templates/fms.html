@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}{% block page %}{% endblock %} | {{ f.name }} | Gatehouse{% endblock %}
+{% block title %}{% block page %}{% endblock %} | {{ f.name }} | {{ brand }}{% endblock %}
 {% block bodyclass %}fms{% endblock %}
 {% block header %}
 <header class="fms-rail">
-  <a class="brand" href="/home"><span class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>Gatehouse</a>
+  <a class="brand" href="/home"><span class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>{{ brand }}</a>
   <nav aria-label="FMS">
     {% for group, items in menu %}
     <p class="fms-group">{{ group }}</p>
@@ -18,13 +18,13 @@
 </header>
 {% endblock %}
 {% block main %}
-<div class="fms-topbar">
+<div class="fms-topbar"><div class="fms-topbar-in">
   <p class="fms-where"><b>{{ f.name }}</b> <span>{{ f.b.facility.city }}</span> <span class="fms-date" title="Every due date and late fee on these pages counts from this date">Facility date {{ today }}</span></p>
   <form class="fms-find" method="get" action="/tenants" role="search">
     <label for="find" class="visually-hidden">Find a tenant by name, phone or unit</label>
     {% include "icons/search.svg" %}<input id="find" name="q" maxlength="60" placeholder="Find a tenant by name, phone or unit">
   </form>
-</div>
+</div></div>
 <div class="fms-page">
 {% block body %}{% endblock %}
 </div>

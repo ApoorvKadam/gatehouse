@@ -83,6 +83,10 @@ class Facility:
         self.leases_of: dict[str, list] = {}
         for lease in sorted(b.leases.values(), key=lambda x: (x.ended is not None, x.unit)):
             self.leases_of.setdefault(lease.tenant, []).append(lease)
+        last_paid: dict[str, object] = {}
+        for p in b.payments.values():
+            if not p.returned and (p.tenant not in last_paid or p.effective_at > last_paid[p.tenant].effective_at):
+                last_paid[p.tenant] = p
         self.people: dict[str, dict] = {}
         for t in b.tenants.values():
             ls = self.leases_of.get(t.id, [])
@@ -90,7 +94,10 @@ class Facility:
             self.people[t.id] = {"id": t.id, "name": t.name, "phone": phone(t.phone), "slug": slug(t.name, ls[0].unit if ls else "none"),
                                  "units": [x.unit for x in (active or ls)], "active": bool(active), "past": b.past_due(t.id, NOW),
                                  "owed": sum(b.receivable(x.id) for x in ls) - b.credit.get(t.id, 0), "credit": b.credit.get(t.id, 0),
-                                 "dispute": any(d.tenant == t.id and d.outcome is None for d in b.disputes.values())}
+                                 "dispute": any(d.tenant == t.id and d.outcome is None for d in b.disputes.values()),
+                                 "since": f"{day(min(x.start for x in (active or ls)))}, {min(x.start for x in (active or ls)).year}" if ls else "",
+                                 "rent": sum(x.rent_cents for x in active),
+                                 "paid": (f"{money(last_paid[t.id].cents)} on {day(last_paid[t.id].effective_at)}" if t.id in last_paid else "")}
         self.by_slug = {p["slug"]: p for p in self.people.values()}
         self.role_of = {c["tenant"]: role for role, c in fd.cast.items()}
 
@@ -395,8 +402,10 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
     def home(request: Request):
         f = Facility(fd, need(request))
         cases = f.cases()
+        morning = [c for c in cases if c["shift"]]
         return show(request, "fms_home.html", "home", f, rows=f.occupancy(), month=f.month(month_key(TODAY)), past=f.past_due(),
-                    waiting=len(f.waiting(cases)), handed=sum(1 for c in cases if c["handed"]), disputes=len(f.disputes()))
+                    waiting=len(f.waiting(cases)), handed=sum(1 for c in cases if c["handed"]), disputes=len(f.disputes()),
+                    morning=len(SHIFT), closed=sum(1 for c in morning if not c["handed"]))
 
     @app.get("/today", include_in_schema=False)
     def today(request: Request):
@@ -405,11 +414,15 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
         return show(request, "fms_today.html", "today", f, cases=cases, waiting=f.waiting(cases), disputes=f.disputes(), decisions=f.decisions())
 
     @app.get("/messages", include_in_schema=False)
-    def messages(request: Request, case: int | None = None):
+    def messages(request: Request, case: int | None = None, unread: str | None = None):
         f = Facility(fd, need(request))
         cases = f.cases()
-        picked = next((c for c in cases if c["n"] == case), cases[0] if cases else None)
-        return show(request, "fms_messages.html", "messages", f, cases=cases, picked=picked, waiting=f.waiting(cases), part="list")
+        waiting = f.waiting(cases)
+        opened = next((t for t in waiting if t["shift"] == unread), None)
+        picked = None if opened else next((c for c in cases if c["n"] == case), cases[0] if cases else None)
+        if picked is None and opened is None and waiting:
+            opened = waiting[0]          # nothing read yet: open the first message, not an empty pane
+        return show(request, "fms_messages.html", "messages", f, cases=cases, picked=picked, opened=opened, waiting=waiting, part="list")
 
     @app.get("/messages/try", include_in_schema=False)
     def try_message(request: Request):
@@ -427,14 +440,19 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
         return show(request, "fms_units.html", "units", f, rows=f.units(), occupancy=f.occupancy())
 
     @app.get("/tenants", include_in_schema=False)
-    def tenants(request: Request, q: str = ""):
+    def tenants(request: Request, q: str = "", status: str = ""):
         f = Facility(fd, need(request))
         q = q.strip()[:60]
         digits = re.sub(r"\D", "", q)
-        people = sorted(f.people.values(), key=lambda p: p["name"])
+        everyone = sorted(f.people.values(), key=lambda p: p["name"])
+        kinds = {"renting": lambda p: p["active"], "past": lambda p: p["past"] > 0, "dispute": lambda p: p["dispute"],
+                 "credit": lambda p: p["credit"] > 0, "out": lambda p: not p["active"]}
+        counts = {k: sum(1 for p in everyone if test(p)) for k, test in kinds.items()}
+        people = [p for p in everyone if kinds[status](p)] if status in kinds else everyone
         if q:
             people = [p for p in people if q.lower() in p["name"].lower() or q.upper() in p["units"] or (len(digits) >= 3 and digits in re.sub(r"\D", "", p["phone"]))]
-        return show(request, "fms_tenants.html", "tenants", f, people=people, q=q)
+        return show(request, "fms_tenants.html", "tenants", f, people=people, q=q, status=status if status in kinds else "", counts=counts,
+                    total=len(everyone))
 
     @app.get("/tenants/{key}", include_in_schema=False)
     def tenant(request: Request, key: str):

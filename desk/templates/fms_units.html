@@ -5,6 +5,17 @@
   <h1>Units</h1>
 </header>
 <p class="fms-summary">{% for r in occupancy %}Row {{ r.row }}: {{ r.rented }} of {{ r.units }} rented{{ '. ' if not loop.last else '.' }}{% endfor %}</p>
+<p class="fms-legend"><span><i></i>Rented</span><span><i class="act"></i>Past due</span><span><i class="wait"></i>Fee in dispute</span><span><i class="vacant"></i>Vacant</span></p>
+<div class="fms-map" aria-label="Unit map">
+  {% for row, items in rows %}
+  <section class="fms-map-row" aria-labelledby="m-row-{{ row }}">
+    <h3 id="m-row-{{ row }}">Row {{ row }}</h3>
+    <ul class="fms-tiles">
+      {% for u in items %}<li>{% if u.who %}<a class="{{ u.chip[1] if u.chip else '' }}" href="/tenants/{{ u.who.slug }}" title="{{ u.unit }}: {{ u.who.name }}{{ ', ' ~ u.chip[0] if u.chip }}"><b>{{ u.unit }}</b><small>{{ u.who.name.split(' ')[-1] }}</small></a>{% else %}<span class="fms-vacant" title="{{ u.unit }}: vacant"><b>{{ u.unit }}</b><small>Vacant</small></span>{% endif %}</li>{% endfor %}
+    </ul>
+  </section>
+  {% endfor %}
+</div>
 {% for row, items in rows %}
 <section class="fms-section" aria-labelledby="h-row-{{ row }}">
   <h2 id="h-row-{{ row }}">Row {{ row }}</h2>

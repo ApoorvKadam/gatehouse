@@ -21,8 +21,8 @@
   <h2 id="h-past">Past due</h2>
   <p class="muted">{{ past|length }} tenants owe {{ money(past|sum(attribute='past')) }} in charges past their due date. A fee whose collection is paused by a dispute is left out.</p>
   <div class="fms-scroll" tabindex="0" role="region" aria-labelledby="h-past"><table class="fms-table">
-    <thead><tr><th>Tenant</th><th>Units</th><th>Oldest unpaid</th><th class="num">Days late</th><th class="num">Past due</th></tr></thead>
-    <tbody>{% for r in past %}<tr><td><a href="/tenants/{{ r.slug }}">{{ r.name }}</a></td><td>{{ r.units|join(', ') }}</td><td>{{ r.oldest }}</td><td class="num">{{ r.days }}</td><td class="num">{{ money(r.past) }}</td></tr>{% endfor %}</tbody>
+    <thead><tr><th>Tenant</th><th>Units</th><th class="num">Past due</th><th class="num">Days late</th><th>Oldest unpaid</th><th>Last payment</th><th>Phone</th></tr></thead>
+    <tbody>{% for r in past %}<tr><td><a href="/tenants/{{ r.slug }}">{{ r.name }}</a></td><td>{{ r.units|join(', ') }}</td><td class="num">{{ money(r.past) }}</td><td class="num">{{ r.days }}</td><td>{{ r.oldest }}</td><td class="muted">{{ r.paid }}</td><td class="muted">{{ r.phone }}</td></tr>{% endfor %}</tbody>
   </table></div>
 </section>
 
@@ -30,8 +30,8 @@
   <h2 id="h-pays">Payments in {{ month.name }}</h2>
   <p class="muted">{{ month.payments|length }} payments{% if month.returned %}, {{ month.returned }} returned by the bank{% endif %}. A payment is dated when the card was charged; when the facility learned of it later, both dates are shown.</p>
   <div class="fms-scroll" tabindex="0" role="region" aria-labelledby="h-pays"><table class="fms-table">
-    <thead><tr><th>Date</th><th>Tenant</th><th>Paid toward</th><th>Note</th><th class="num">Amount</th></tr></thead>
-    <tbody>{% for p in month.payments %}<tr><td>{{ p.on }}</td><td><a href="/tenants/{{ p.who.slug }}">{{ p.who.name }}</a></td><td>{{ p.to }}</td>
+    <thead><tr><th>Date</th><th>Tenant</th><th>Units</th><th>Paid toward</th><th>Note</th><th class="num">Amount</th></tr></thead>
+    <tbody>{% for p in month.payments %}<tr><td>{{ p.on }}</td><td><a href="/tenants/{{ p.who.slug }}">{{ p.who.name }}</a></td><td>{{ p.who.units|join(', ') }}</td><td>{{ p.to }}</td>
       <td>{% if p.returned %}<span class="chip act">Returned by the bank</span>{% elif p.learned %}<span class="muted">Learned {{ p.learned }}</span>{% endif %}</td><td class="num">{{ p.amount }}</td></tr>{% endfor %}</tbody>
   </table></div>
 </section>
