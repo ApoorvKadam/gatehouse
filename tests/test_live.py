@@ -64,7 +64,7 @@ def test_a_visitor_is_a_hash_of_where_the_request_came_from_and_never_the_addres
     assert spend.visitor_of(Request({"x-forwarded-for": "198.51.100.1, 10.1.1.1"})) == spend.visitor_of(Request({"x-forwarded-for": "198.51.100.1"}))
     assert spend.visitor_of(Request({}, host="192.0.2.5")) != spend.visitor_of(Request({}, host="192.0.2.6"))
     assert "203.0.113.7" not in behind_cloudflare and len(behind_cloudflare) == 16
-    assert behind_cloudflare != hashlib.sha256(b"gatehouse-visitor:203.0.113.7").hexdigest()[:16]      # not a hash anyone can compute from an address
+    assert behind_cloudflare != hashlib.sha256(b"staddle-visitor:203.0.113.7").hexdigest()[:16]      # not a hash anyone can compute from an address
     # a browser that holds the desk's cookie is told apart by it, not by its address, and a cookie that is not the desk's own shape is ignored
     token = spend.new_cookie()
     held = spend.visitor_of(Request({"cf-connecting-ip": "203.0.113.7"}, cookies={spend.COOKIE: token}))

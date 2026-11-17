@@ -25,7 +25,7 @@ DAY_ZONE = ZoneInfo("America/New_York")
 # read the visitors back. A restart gives every visitor a fresh value, which is what a restart does to the counts anyway.
 _VISITOR_KEY = secrets.token_bytes(16)
 # The name of the cookie that tells one browser from another, and how many texts a visitor may type as a tenant in a day.
-COOKIE = "gh_visitor"
+COOKIE = "staddle_visitor"
 TEXTS_PER_DAY = 10
 # A visitor can drop the cookie and start over, so the texts typed by all visitors together are capped as well.
 TEXTS_PER_DAY_ALL = 200

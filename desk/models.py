@@ -266,7 +266,7 @@ class LienEvaluation(Base):
 
 class AccessPolicy(Base):
     """A facility's lockout rule as an operator stated it, with who approved it and from when. Cubby documents no such
-    setting, so Gatehouse never infers it from the FMS; a facility without one gets a review item, not a verdict.
+    setting, so Staddle never infers it from the FMS; a facility without one gets a review item, not a verdict.
     gate_rule says what one gate code (shared by all of a customer's units) should do when only some of their units
     are past the rule: deny_if_any_unit_restricted or allow_if_any_unit_in_good_standing."""
 

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ kind_names[w.kind] }}, {{ label or ('unit ' ~ unit) }} | Gatehouse{% endblock %}
+{% block title %}{{ kind_names[w.kind] }}, {{ label or ('unit ' ~ unit) }} | Staddle{% endblock %}
 {% block main %}
 <div class="wrap">
 <p class="crumbs"><a href="/today?facility={{ facility.provider_id }}">Today at {{ facility.name }}</a> / Access</p>
@@ -23,21 +23,21 @@
       <dt>Approved by</dt><dd>{{ policy.approved_by }}, from {{ policy.effective_on.strftime('%b %-d, %Y') }}</dd>
       <dt>Version</dt><dd>{{ policy.version }}</dd>
     </dl>
-    <p class="note">Cubby documents no facility lockout setting, so this rule is an operator's statement recorded in Gatehouse, not read from the FMS.</p>
+    <p class="note">Cubby documents no facility lockout setting, so this rule is an operator's statement recorded in Staddle, not read from the FMS.</p>
     {% else %}
-    <p>No access rule is recorded for this facility. Gatehouse does not judge gate codes or overlocks here until one is.</p>
+    <p>No access rule is recorded for this facility. Staddle does not judge gate codes or overlocks here until one is.</p>
     {% endif %}
   </section>
 
   <section class="panel">
     <h2><span class="lane-dot lane-observed"></span>The FMS task for a person</h2>
     <dl class="kv">
-      <dt>Task</dt><dd>{% if w.task_state == 'created' %}An FMS task, {{ (w.task_status or 'OPEN')|words }}{% elif w.task_state == 'outcome_unknown' %}Outcome unknown: the request may have made a task; none with this item's marker is found yet{% elif w.task_state == 'sending' %}Being created{% elif w.task_state == 'rejected' %}Refused by the FMS{% else %}None: a person reviews this in Gatehouse{% endif %}</dd>
+      <dt>Task</dt><dd>{% if w.task_state == 'created' %}An FMS task, {{ (w.task_status or 'OPEN')|words }}{% elif w.task_state == 'outcome_unknown' %}Outcome unknown: the request may have made a task; none with this item's marker is found yet{% elif w.task_state == 'sending' %}Being created{% elif w.task_state == 'rejected' %}Refused by the FMS{% else %}None: a person reviews this in Staddle{% endif %}</dd>
       {% if w.task_marker %}<dt>Duplicate protection</dt><dd>Uncertain task requests are checked against the FMS, never blindly repeated.</dd>{% endif %}
       <dt>Closes when</dt><dd>{{ w.closing_evidence }}</dd>
       <dt>Who acts</dt><dd>{{ w.who_acts }}</dd>
     </dl>
-    <p class="note">Gatehouse never changes access itself. A task marked completed does not close this item; only a later complete FMS reading does. {{ physical }}</p>
+    <p class="note">Staddle never changes access itself. A task marked completed does not close this item; only a later complete FMS reading does. {{ physical }}</p>
   </section>
 </div>
 
@@ -61,7 +61,7 @@
     {% endfor %}
     </tbody>
   </table>
-  <p class="note">Gate codes and lock combinations are credentials; Gatehouse uses them only to ask the FMS and never shows them.</p>
+  <p class="note">Gate codes and lock combinations are credentials; Staddle uses them only to ask the FMS and never shows them.</p>
   {% else %}
   <p class="muted">This item is about the facility as a whole.</p>
   {% endif %}

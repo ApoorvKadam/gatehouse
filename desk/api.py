@@ -139,7 +139,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
     if settings.public_view:
         # anyone may read the preview, so it never opens a database that existed before this process: each start
         # gets a new one and builds the synthetic world in it (a configured database is left untouched)
-        preview_dir = tempfile.mkdtemp(prefix="gatehouse-preview-")
+        preview_dir = tempfile.mkdtemp(prefix="staddle-preview-")
         # the synthetic world's outside auction site is served by the same local simulator
         settings = dataclasses.replace(settings, database_url=f"sqlite:///{preview_dir}/desk.db",
                                        marketplace_url=settings.marketplace_url or settings.fms_base_url)
@@ -310,7 +310,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
     @old.get("/api/facilities/{facility_id}/rent-changes")
     def facility_rent_changes(facility_id: str, session: Session = Depends(db), _: str = Depends(viewer)):
         """Each rent change the operator scheduled or completed at a facility, as the worker last read it: whether the account can take it,
-        whether the FMS applied it, whether the first full bill after it is the new rent. Gatehouse changes no rent."""
+        whether the FMS applied it, whether the first full bill after it is the new rent. Staddle changes no rent."""
         check_facility(session, facility_id)
         facility = session.scalar(select(Facility).where(Facility.provider_id == facility_id))
         found = session.execute(select(Lease.provider_id, RentChangeCheck).join(RentChangeCheck, RentChangeCheck.lease_id == Lease.id)
@@ -320,7 +320,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
     @old.get("/api/facilities/{facility_id}/reminder-check")
     def facility_reminder_check(facility_id: str, session: Session = Depends(db), _: str = Depends(viewer)):
         """The check in front of a reminder tool: for each past-due lease, whether a collections text may go and why not, as the worker last read
-        it from the FMS. Gatehouse sends nothing; the tool that does can ask here first."""
+        it from the FMS. Staddle sends nothing; the tool that does can ask here first."""
         check_facility(session, facility_id)
         facility = session.scalar(select(Facility).where(Facility.provider_id == facility_id))
         rows = []
@@ -762,7 +762,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         # the public site: the Overview and the agentic FMS on the core's own books (core/), in a database of its own for this process
         from .fms import mount as mount_fms
         from .front_desk import FrontDesk
-        core_path = os.environ.get("CORE_DATABASE_PATH") or os.path.join(tempfile.mkdtemp(prefix="gatehouse-core-"), "core.db")
+        core_path = os.environ.get("CORE_DATABASE_PATH") or os.path.join(tempfile.mkdtemp(prefix="staddle-core-"), "core.db")
         front_desk = app.state.front_desk = FrontDesk(core_path, chat_client)
         mount_fms(app, front_desk, settings, guard, from_elsewhere, factory, live=chat_client is not None and settings.public_investigate)
         if start_worker:

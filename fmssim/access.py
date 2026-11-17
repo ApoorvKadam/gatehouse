@@ -3,7 +3,7 @@
 Validation is per endpoint, as Cubby documents it: Lock Search takes exactly one of organizationId or leaseId and
 answers 403 otherwise; Task Search takes exactly one scope; Tasks Create takes a customer or a unit, not both; a task
 moves OPEN -> COMPLETED or ARCHIVED and back only through OPEN. The /sim routes are what staff or devices would do in
-a real facility (attach or return a lock, complete a task) and the named faults; Gatehouse never calls them."""
+a real facility (attach or return a lock, complete a task) and the named faults; Staddle never calls them."""
 from __future__ import annotations
 
 from datetime import date

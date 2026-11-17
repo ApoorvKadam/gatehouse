@@ -1,6 +1,6 @@
 """The rent change check: the work around each rent change the operator already scheduled in the FMS.
 
-Gatehouse sets no price and schedules, changes or cancels nothing. The operator or its revenue tool decides an increase and the FMS holds it.
+Staddle sets no price and schedules, changes or cancels nothing. The operator or its revenue tool decides an increase and the FMS holds it.
 What nobody checks afterwards is whether the account can take it (a lien file, a balance, a payment arrangement), whether the FMS applied it
 on the day, and whether the first full bill after it is the new rent. The worker reads all of it once a pass and keeps one row per lease;
 the page, Today and the API read those rows and never ask the FMS.
@@ -108,9 +108,9 @@ def upcoming(f: RentFacts, when: date, acct: Account, today: date) -> dict:
     if acct.lien:
         holds.append(acct.lien)
     if f.facility_cycle not in PER_YEAR or f.lease_cycle not in PER_YEAR:
-        holds.append("The FMS sent a billing cycle Gatehouse cannot read, so the new rent cannot be checked against the bill.")
+        holds.append("The FMS sent a billing cycle Staddle cannot read, so the new rent cannot be checked against the bill.")
     if f.rent is None or f.scheduled_amount is None:
-        holds.append("The FMS sent the rent or the scheduled amount in a shape Gatehouse does not read.")
+        holds.append("The FMS sent the rent or the scheduled amount in a shape Staddle does not read.")
     if acct.arrangement:
         notes.append(acct.arrangement)          # first: it says why a balance is there, and what an increase now does to the plan
     if acct.owed > 0:

@@ -1,5 +1,5 @@
 [project]
-name = "gatehouse"
+name = "staddle"
 version = "0.1.0"
 description = "Operations reconciliation for self-storage, checked against the FMS"
 requires-python = ">=3.12"

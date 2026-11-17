@@ -3,7 +3,7 @@
 leads/search and leads/create follow Cubby's request and response shapes. leads/create takes no idempotency key, and with no
 customerId it makes a new customer. A lead becomes CONVERTED only when a lease is created for it; /sim/leads/convert stands in
 for that here. Missed calls are not in the FMS: they come from the phone system's own feed (/phone/v1/missed-calls), which
-this simulator also plays, labelled as such. The /sim routes are what a test or the seed does; Gatehouse never calls them."""
+this simulator also plays, labelled as such. The /sim routes are what a test or the seed does; Staddle never calls them."""
 from __future__ import annotations
 
 from datetime import datetime, timezone

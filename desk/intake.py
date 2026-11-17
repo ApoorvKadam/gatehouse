@@ -103,12 +103,12 @@ def compare(session: Session, leases: list[Lease], zone: str, found: dict) -> di
     claim = ("The receipt says " + ", ".join(said) + ".") if said else None
     units = {lease.unit_name.upper(): lease for lease in leases}
     if not leases:
-        verdict, lines = "no_tenant", ["The sender is not matched to a tenant here, so Gatehouse compares nothing."]
+        verdict, lines = "no_tenant", ["The sender is not matched to a tenant here, so Staddle compares nothing."]
     elif found["kind"] != "card_receipt":
         verdict, lines = "not_a_receipt", ["It is not a payment receipt, so there is nothing to compare with the FMS."]
     elif found["unit"] and found["unit"] not in units:
         verdict = "not_theirs"
-        lines = [claim, f"Unit {found['unit']} is not one of this tenant's units, so Gatehouse uses nothing from this receipt."]
+        lines = [claim, f"Unit {found['unit']} is not one of this tenant's units, so Staddle uses nothing from this receipt."]
     elif found["amount_cents"] is None:
         verdict, lines = "no_match", [claim or "No amount can be read on it.", "Without an amount there is nothing to compare with the FMS."]
     else:
@@ -126,5 +126,5 @@ def compare(session: Session, leases: list[Lease], zone: str, found: dict) -> di
             lines = [claim, f"No payment the FMS reports for this tenant is {money(found['amount_cents'])}. A person checks with the card processor "
                             "before anyone tells the tenant it arrived."]
     if found["carries_instructions"]:
-        lines.append("The file has text addressed to whoever reads it. Gatehouse takes no instruction from a file.")
+        lines.append("The file has text addressed to whoever reads it. Staddle takes no instruction from a file.")
     return {"verdict": verdict, "lines": [plain(line, zone=zone) for line in lines if line]}

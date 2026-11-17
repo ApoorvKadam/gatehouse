@@ -1,7 +1,7 @@
-# The same single container the hosted preview runs: the FMS simulator on loopback, Gatehouse and its worker on :8000.
+# The same single container the hosted preview runs: the FMS simulator on loopback, Staddle and its worker on :8000.
 services:
-  gatehouse:
-    image: gatehouse:local
+  staddle:
+    image: staddle:local
     build: .
     env_file: .env
     environment:

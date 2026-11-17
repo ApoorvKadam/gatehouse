@@ -1,15 +1,15 @@
 {% extends "base.html" %}
-{% block title %}Calls and reminders, {{ facility.name }} | Gatehouse{% endblock %}
+{% block title %}Calls and reminders, {{ facility.name }} | Staddle{% endblock %}
 {% block main %}
 <div class="wrap">
   <div class="head">
     <div class="head-title"><h1>Calls and reminders at {{ facility.name }}</h1><p class="tagline">Who the front desk must call, and who it must not text.</p></div>
   </div>
-  <p class="lede">Return missed calls, record what happened, and check which reminders must be held. Gatehouse makes no call and sends no text.</p>
+  <p class="lede">Return missed calls, record what happened, and check which reminders must be held. Staddle makes no call and sends no text.</p>
 
   <section class="contact-part" id="calls">
     <div class="part-head"><h2>{% include "icons/phone.svg" %}Missed calls</h2>{% if call_rows %}<p>{{ waiting }} {{ 'caller waits' if waiting == 1 else 'callers wait' }} for a call back</p>{% endif %}</div>
-    <p class="part-lede">Your phone system logs the calls nobody answered. Gatehouse looks each caller up in the FMS, asks staff to call back through one FMS task per caller, and counts a lead as won only when the FMS shows it converted. It creates no lead or customer from a caller ID: a missed call is neither confirmed details nor consent.</p>
+    <p class="part-lede">Your phone system logs the calls nobody answered. Staddle looks each caller up in the FMS, asks staff to call back through one FMS task per caller, and counts a lead as won only when the FMS shows it converted. It creates no lead or customer from a caller ID: a missed call is neither confirmed details nor consent.</p>
   {% if call_rows %}
     <div class="worklist check calls">
       <table>
@@ -54,7 +54,7 @@
       </table>
     </div>
     <p class="small muted">The calls come from the phone system's own log, not the FMS; in this preview both are simulated.</p>
-    {% if check and not check.verified %}<div class="cf-turnstile" data-sitekey="{{ check.sitekey }}" data-action="visit" data-appearance="interaction-only" data-callback="gatehouseChecked" data-error-callback="gatehouseCheckFailed"></div>{% endif %}
+    {% if check and not check.verified %}<div class="cf-turnstile" data-sitekey="{{ check.sitekey }}" data-action="visit" data-appearance="interaction-only" data-callback="staddleChecked" data-error-callback="staddleCheckFailed"></div>{% endif %}
     {% else %}
     <p class="empty">No missed call is waiting at this facility.</p>
     {% endif %}

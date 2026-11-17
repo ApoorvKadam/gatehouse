@@ -166,7 +166,7 @@ class LeaseBehavior(Base):
 class AccessRule(Base):
     """The simulated FMS's own delinquency automation for one facility: after this many days overdue it disables the
     customer's gate code and marks the lease as needing an overlock. Cubby documents no such setting; real systems
-    have one, and Gatehouse never reads this table (it holds its own, operator-attested rule)."""
+    have one, and Staddle never reads this table (it holds its own, operator-attested rule)."""
 
     __tablename__ = "access_rules"
     facility_id: Mapped[str] = mapped_column(ForeignKey("facilities.facility_id"), primary_key=True)
@@ -271,7 +271,7 @@ class AuctionedLease(Base):
 
 class AuctionApiCall(Base):
     """Every request to an auctions endpoint that can change a sale, written before it is checked, so a refused call
-    is on record too. The evaluation counts Gatehouse's red line from this, not from what Gatehouse says it sent."""
+    is on record too. The evaluation counts Staddle's red line from this, not from what Staddle says it sent."""
 
     __tablename__ = "auction_api_calls"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -335,7 +335,7 @@ class MissedCall(Base):
 
 class TextMessage(Base):
     """One text on a facility's Cubby number, in or out, as the simulator's own record of what the carrier carried.
-    Not something a real FMS shows: the desk never reads it, and the preview shows it only next to what Gatehouse
+    Not something a real FMS shows: the desk never reads it, and the preview shows it only next to what Staddle
     concluded. An inbound text is also what Cubby turns into its SMS Received webhook."""
 
     __tablename__ = "text_messages"

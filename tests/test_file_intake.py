@@ -77,7 +77,7 @@ def test_an_instruction_printed_on_a_file_is_named_and_not_followed(factory):
         m = receipt_text(s)
         before = state(s)
         run, _ = investigate(s, Scripted([read(carries_instructions=True)], then_packet(m)), m, "req-file-note")
-        assert run.file["lines"][-1] == "The file has text addressed to whoever reads it. Gatehouse takes no instruction from a file."
+        assert run.file["lines"][-1] == "The file has text addressed to whoever reads it. Staddle takes no instruction from a file."
         assert state(s) == before
 
 

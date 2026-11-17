@@ -192,7 +192,7 @@ def test_a_failed_read_closes_nothing_and_says_so(fms_url, sim, adapter):
         assert all(before[i.id] == "open" for i in items(s) if i.id in before)
 
 
-def test_gatehouse_never_cancels_a_sale_itself(fms_url, sim, adapter):
+def test_staddle_never_cancels_a_sale_itself(fms_url, sim, adapter):
     world(adapter, fms_url)
     entries = httpx.get(f"{fms_url}/sim/auctions/truth", params={"facilityId": ORLANDO}).json()["data"]["entries"]
     assert entries and all(e["status"] == "LISTED" and e["changedBy"] != "api" for e in entries)

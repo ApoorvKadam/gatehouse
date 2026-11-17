@@ -97,7 +97,7 @@ def test_dana_is_investigated_and_the_desk_checks_the_packet_itself(factory):
         assert started and run.status == "done" and run.turns == 2 and run.error is None
         assert (run.input_tokens, run.output_tokens) == (1800, 120)
         assert run.cost_usd == pytest.approx((1800 * 0.10 + 120 * 0.50) / 1_000_000)
-        # Gatehouse's own check, whatever Claude said: the sale item the packet cites is open, about Dana's unit, and read lately
+        # Staddle's own check, whatever Claude said: the sale item the packet cites is open, about Dana's unit, and read lately
         item = dana_facts(s)["sale"]
         assert run.verified["checked"] and run.verified["sale_listed_nothing_owed"] and run.verified["work_item_id"] == item.id
         assert run.verified["lease_id"] == DANA_LEASE and run.verified["as_of"] and run.verified["payment_found"] is True

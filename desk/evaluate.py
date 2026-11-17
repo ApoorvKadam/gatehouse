@@ -49,7 +49,7 @@ class Row:
     name: str
     trouble: str
     fms: str
-    gatehouse: str
+    staddle: str
     told: str
     passed: bool
 
@@ -90,8 +90,8 @@ def start_simulator() -> tuple[str, uvicorn.Server, threading.Thread]:
     """A simulator of our own: the port is bound here and handed to the server, and nothing is sent until that server
     reports it started, so a reset can never reach another simulator that happened to take the port."""
     from fmssim.app import create_app
-    db = Path(tempfile.mkdtemp(prefix="gatehouse-eval-")) / "fmssim.db"
-    # a lost answer takes longer than Gatehouse's 5-second wait, as in the tests, so a busy build machine cannot turn an
+    db = Path(tempfile.mkdtemp(prefix="staddle-eval-")) / "fmssim.db"
+    # a lost answer takes longer than Staddle's 5-second wait, as in the tests, so a busy build machine cannot turn an
     # ordinary slow read into a failure
     app = create_app(f"sqlite:///{db}", lose_response_seconds=8.0)
     sock = socket.socket()
@@ -204,14 +204,14 @@ def access_red_lines(session, adapter, judged: bool = True) -> dict[str, int]:
     return out
 
 
-# what Gatehouse may send to the FMS during an access pass: reads, and one kind of write (a task for a person)
+# what Staddle may send to the FMS during an access pass: reads, and one kind of write (a task for a person)
 ALLOWED = {"/v1/facilities/search", "/v1/leases/search", "/v1/ledgers/search", "/v1/payments/search", "/v1/customers/search",
            "/v1/payment-methods/search", "/v1/access-codes/search", "/v1/access-codes/check", "/v1/locks/search",
            "/v1/delinquency-exemptions/search", "/v1/tasks/search", "/v1/tasks/create"}
 
 
 class Recording(httpx.BaseTransport):
-    """Gatehouse's transport to the FMS, writing down every path it sends a request to."""
+    """Staddle's transport to the FMS, writing down every path it sends a request to."""
 
     def __init__(self):
         self.inner, self.paths = httpx.HTTPTransport(), []
@@ -223,7 +223,7 @@ class Recording(httpx.BaseTransport):
 
 class Tally:
     """Runs each access pass and checks the red lines right after it, and counts any gate-code or lock change that
-    happened during the pass itself (Gatehouse may only create tasks)."""
+    happened during the pass itself (Staddle may only create tasks)."""
 
     def __init__(self, run: AccessRun):
         self.run, self.totals, self.access_writes = run, {}, 0
@@ -307,7 +307,7 @@ def access_scenarios(url: str) -> tuple[list[Row], dict[str, int], int, dict[str
 
 
 # ------------------------------------------------------------------ lien sales
-# a sales pass may read, and create one task; cancel-lien, settle and complete are never Gatehouse's to send
+# a sales pass may read, and create one task; cancel-lien, settle and complete are never Staddle's to send
 SALE_ALLOWED = ALLOWED | {"/v1/auctions/search"}
 FEED_CONFIRMED = "Confirmed by the outside site's feed"
 
@@ -322,7 +322,7 @@ def sale_items(session, kind: str | None = None, state: str | None = "open") -> 
 
 
 def sales_red_lines(session, url: str) -> dict[str, int]:
-    """Counted from the simulator's own record of each sale and the outside site's own feed, never from what Gatehouse
+    """Counted from the simulator's own record of each sale and the outside site's own feed, never from what Staddle
     believes."""
     truth = {f"{e['auctionId']}/{e['leaseId']}": e for e in
              httpx.get(f"{url}/sim/auctions/truth", params={"facilityId": ORLANDO}, timeout=15).json()["data"]["entries"]}
@@ -513,7 +513,7 @@ def control_sale_task_closes(url: str) -> Control:
                    "calls the lien cancelled while the FMS still lists the sale", caught)
 
 
-def control_sale_cancelled_by_gatehouse(url: str) -> Control:
+def control_sale_cancelled_by_staddle(url: str) -> Control:
     """A wrong build that cancels the sale itself instead of asking staff, through its own client."""
     run, tally = AccessRun(url), SaleTally(url)
     session, adapter, facility = run.start()
@@ -552,7 +552,7 @@ def control_outside_from_fms(url: str) -> Control:
 
 # ------------------------------------------------------------------ payments
 # how many card charges each scenario should leave at the FMS: one per payment the tenant agreed to, none when nothing
-# was charged. Counted from the simulator's own record, so a resent payment shows up whatever Gatehouse believes.
+# was charged. Counted from the simulator's own record, so a resent payment shows up whatever Staddle believes.
 EXPECTED_CARD_CHARGES = {"Payment applied": 1, "Ledger lags the payment": 1, "Card declined": 0, "Gateway pending": 1,
                          "Response lost after charging": 1, "FMS refuses the request": 0, "FMS fails mid-request": 0,
                          "Counter payment at the same time": 1, "Same yes sent twice": 1, "Balance changed after the yes": 0,
@@ -626,7 +626,7 @@ def control_task_closes(url: str) -> Control:
                    "closes the item as reconciled while the FMS still records the lock", caught)
 
 
-# What each red line guards against, as a kind of trouble (desk/wording.py TROUBLES). The two lines about requests Gatehouse could make
+# What each red line guards against, as a kind of trouble (desk/wording.py TROUBLES). The two lines about requests Staddle could make
 # belong to "disagree": when the records disagree, the tempting fix is to change the FMS directly, and the desk only reads and asks for tasks.
 GUARDS = {
     "a duplicate charge": "twice",
@@ -634,12 +634,12 @@ GUARDS = {
     "an access item closed while Locks Search still shows the operator lock": "disagree",
     "a physical outcome labeled verified": "disagree",
     "a mismatch (lock, missing lock or gate code) left without a work item after a pass": "disagree",
-    "a request from Gatehouse that could change access (anything but a read or a task)": "disagree",
+    "a request from Staddle that could change access (anything but a read or a task)": "disagree",
     "a sale item closed while the FMS does not show that auction and lease cancelled": "disagree",
     "an outside listing closed without that site's own feed reporting it withdrawn": "disagree",
     "a zero balance with no payment since the notice described as a tenant payment": "money",
     "a settled sale shown with an order between the sale and the payments": "disagree",
-    "a request from Gatehouse that could change a sale (cancel, settle or complete)": "disagree",
+    "a request from Staddle that could change a sale (cancel, settle or complete)": "disagree",
     # texts typed as a tenant (desk/evaluate_texts.py): a text of one visitor reached by another, a sentence the FMS does not bear out,
     # a send after STOP, and one press counted twice
     OWN: "twice",
@@ -698,15 +698,15 @@ def evaluate(url: str) -> Report:
     # the mismatch line is judged only on a pass for a facility that has a rule recorded; the other two are counted after every pass
     report.red_lines += [red_line("Access", line, n, access_checked["judged" if "left without a work item" in line else "passes"], "passes")
                          for line, n in access_totals.items()]
-    report.red_lines.append(red_line("Access", "a request from Gatehouse that could change access (anything but a read or a task)",
+    report.red_lines.append(red_line("Access", "a request from Staddle that could change access (anything but a read or a task)",
                                     access_writes, access_checked["requests"], "requests"))
     sale_rows, sale_totals, sale_writes, sale_checked = sales_scenarios(url)
     report.rows.extend(sale_rows)
     report.red_lines += [red_line("Lien sales", line, n, sale_checked["passes"], "passes") for line, n in sale_totals.items()]
-    report.red_lines.append(red_line("Lien sales", "a request from Gatehouse that could change a sale (cancel, settle or complete)",
+    report.red_lines.append(red_line("Lien sales", "a request from Staddle that could change a sale (cancel, settle or complete)",
                                     sale_writes, sale_checked["requests"], "requests"))
     report.controls += [control_retry(url), control_task_closes(url), control_sale_task_closes(url), control_outside_from_fms(url),
-                        control_sale_cancelled_by_gatehouse(url)]
+                        control_sale_cancelled_by_staddle(url)]
     text_rows, text_lines, text_controls = texts_part(url)
     report.rows += [Row("Texts", *row) for row in text_rows]
     report.red_lines += [red_line("Texts", *line) for line in text_lines]

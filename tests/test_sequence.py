@@ -109,7 +109,7 @@ def test_the_first_sentence_keeps_a_step_to_one_thing():
 def test_a_step_that_is_hidden_stays_hidden():
     """`.step` sets its own display, which would show the waiting step (hidden until a run starts) on every page; the style must say so."""
     from pathlib import Path
-    css = (Path(__file__).parent.parent / "desk" / "static" / "gatehouse.css").read_text()
+    css = (Path(__file__).parent.parent / "desk" / "static" / "staddle.css").read_text()
     assert ".step[hidden] { display: none; }" in css
 
 
