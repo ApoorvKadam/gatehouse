@@ -36,7 +36,7 @@ class Result:
 
 class Run:
     def __init__(self, fms_url: str, key: str = "sim_org_northstar_full", timeout: float = 1.0):
-        # how long Gatehouse waits for the FMS; it must stay below the simulator's delay for a lost answer
+        # how long Staddle waits for the FMS; it must stay below the simulator's delay for a lost answer
         self.fms_url, self.key, self.timeout = fms_url, key, timeout
 
     def sim(self, path: str, body: dict | None = None) -> dict:

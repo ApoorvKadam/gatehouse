@@ -1,6 +1,6 @@
 """The operator screens of the hosted preview: Today, an account's record, a payment under review and a lien file.
 
-Every page reads Gatehouse's own records and the simulator trace saved when the world was built. No page calls the
+Every page reads Staddle's own records and the simulator trace saved when the world was built. No page calls the
 FMS or writes anything, so a visitor can read freely without moving the world."""
 from __future__ import annotations
 
@@ -50,13 +50,13 @@ templates.env.filters["readable"] = plain      # no provider or record id, state
 BRAND, AGENT = "Staddle", "Tilden"
 templates.env.globals["brand"] = BRAND
 templates.env.globals["agent"] = AGENT
-templates.env.globals["css_version"] = __import__("hashlib").sha256((HERE / "static" / "gatehouse.css").read_bytes()).hexdigest()[:10]
+templates.env.globals["css_version"] = __import__("hashlib").sha256((HERE / "static" / "staddle.css").read_bytes()).hexdigest()[:10]
 templates.env.filters["words"] = words         # one FMS status code as words: IN_PROGRESS reads "in progress"
 templates.env.filters["upfirst"] = lambda text: text[:1].upper() + text[1:] if text else text   # capitalize lowers the rest: "the FMS" became "the fms"
 
 # The four kinds of entry an account's record keeps apart. Every event kind lands in exactly one of them.
 FMS, OBSERVED, CONCLUDED, DECIDED = "fms", "observed", "concluded", "decided"
-LANES = [(FMS, "The FMS said"), (OBSERVED, "Gatehouse observed"), (CONCLUDED, "Gatehouse concluded"), (DECIDED, "A person decided")]
+LANES = [(FMS, "The FMS said"), (OBSERVED, "Staddle observed"), (CONCLUDED, "Staddle concluded"), (DECIDED, "A person decided")]
 LANE_OF = {
     "case opened": FMS, "payment taken outside the desk": FMS, "payment declined": FMS,
     "payment status changed after success": FMS,
@@ -70,17 +70,17 @@ LANE_OF = {
 # payments that still hold the lease, and what each is waiting for
 IN_FLIGHT = {"SUBMITTING": "being sent to the FMS", "PENDING_AT_FMS": "pending at the FMS",
              "AWAITING_APPLICATION": "accepted by the FMS but not yet on the ledger",
-             "OUTCOME_UNKNOWN": "not confirmed yet, and Gatehouse is checking the FMS"}
+             "OUTCOME_UNKNOWN": "not confirmed yet, and Staddle is checking the FMS"}
 # what a lien file's latest state means on Today: rank, head, what proves it done, who acts. A file stays on the list
-# until a person's decision is recorded, which Gatehouse cannot record yet, so these items do not close on their own.
+# until a person's decision is recorded, which Staddle cannot record yet, so these items do not close on their own.
 LIEN_ITEMS = {
     "Account changed: re-review": (1, "Lien file out of date", "A person reviews the file against the account as it is now and decides what happens to the sale.", "Collections lead"),
     "FMS reports paid": (1, "Lien file: the FMS reported the account paid", "A person confirms the sale is cancelled everywhere it was listed.", "Collections lead"),
     "FMS data unavailable": (2, "Lien file cannot be checked", "Once the FMS answers, a person has the file evaluated again.", "Collections lead"),
     "Evidence incomplete": (2, "Lien file incomplete", "Every requirement has a record, with its document where one is needed.", "Front desk"),
     "Waiting for a timing threshold": (3, "Lien file waiting on a date", "After the date, a person has the file evaluated again.", "Collections lead"),
-    "Counsel review required": (3, "Counsel review required", "Counsel's decision is recorded on the file. Gatehouse cannot record one yet.", "Counsel"),
-    "Review packet assembled": (3, "Lien packet ready for review", "A person reviews the packet. Sale authorization is outside Gatehouse.", "Collections lead"),
+    "Counsel review required": (3, "Counsel review required", "Counsel's decision is recorded on the file. Staddle cannot record one yet.", "Counsel"),
+    "Review packet assembled": (3, "Lien packet ready for review", "A person reviews the packet. Sale authorization is outside Staddle.", "Collections lead"),
 }
 # a payment the FMS later reversed or put in dispute, and what closes it
 REVERSED = {
@@ -156,7 +156,7 @@ def evaluation_view(report: dict) -> dict:
     for n, row in enumerate(report["rows"], 1):
         key = row.get("trouble") if row.get("trouble") in TROUBLES else None
         scenarios.setdefault(row["module"], []).append({**row, "id": f"scn-{n}", "key": key, "kind": TROUBLES.get(key or "", ""),
-                                                        "fms": plain(row["fms"]), "gatehouse": plain(row["gatehouse"]), "told": plain(row["told"])})
+                                                        "fms": plain(row["fms"]), "staddle": plain(row["staddle"]), "told": plain(row["told"])})
     red_lines: dict[str, list[dict]] = {}
     for n, line in enumerate(report["red_lines"], 1):
         key = line.get("trouble") if line.get("trouble") in TROUBLES else None
@@ -175,7 +175,7 @@ def evaluation_view(report: dict) -> dict:
     def scenario_mark(r: dict) -> dict:
         result = "Passed" if r["passed"] else "Failed"
         tip = {"name": r["name"], "key": r["key"], "kind": r["kind"], "ok": r["passed"], "result": result,
-               "lines": [["The FMS did", r["fms"]], ["Gatehouse did", r["gatehouse"]], ["Who hears what", r["told"]]]}
+               "lines": [["The FMS did", r["fms"]], ["Staddle did", r["staddle"]], ["Who hears what", r["told"]]]}
         return _mark(r["id"], r["passed"], f"{r['name']}: {result.lower()}" + (f". {r['kind']}" if r["kind"] else ""), tip, key=r["key"])
 
     def line_mark(part: str, line: dict) -> dict:
@@ -279,9 +279,9 @@ def describe(e: CaseEvent, commands: dict[int, PaymentCommand], evidence: dict[i
     elif kind == "payment confirmed":
         title, text = "Payment confirmed", f"{money(d.get('amount'))}, applied on the FMS ledger."
     elif kind == "payment status changed after success":
-        title, text = "Payment came back", f"The FMS now reports {words(d.get('fms_status'))} for a payment Gatehouse had confirmed."
+        title, text = "Payment came back", f"The FMS now reports {words(d.get('fms_status'))} for a payment Staddle had confirmed."
     elif kind == "payment taken outside the desk":
-        title, text = "Payment made outside Gatehouse", f"{money(d.get('amount'))}, recorded in the FMS."
+        title, text = "Payment made outside Staddle", f"{money(d.get('amount'))}, recorded in the FMS."
     elif kind == "payment needs staff":
         title, text = "Held for a person", d.get("reason") or (cmd.provider_reason if cmd else "")
     elif kind == "lien file evaluated":
@@ -385,10 +385,10 @@ class Pages:
                 if cmd.state == "NEEDS_STAFF":
                     found = True
                     if cmd.provider_payment_id is None:
-                        what = (f"A {money(cmd.amount)} payment agreed {how}. The FMS did not confirm the outcome, so Gatehouse "
+                        what = (f"A {money(cmd.amount)} payment agreed {how}. The FMS did not confirm the outcome, so Staddle "
                                 "holds the account and has not retried. "
                                 + ("The FMS shows a payment that may be this attempt." if cmd.suggested_payment_id
-                                   else "Gatehouse has not matched any FMS payment to this attempt."))
+                                   else "Staddle has not matched any FMS payment to this attempt."))
                         head = "Payment outcome unknown"
                     else:
                         what, head = sentence(cmd.provider_reason or "The FMS and the ledger disagree about this payment"), "Payment needs a person"
@@ -402,8 +402,8 @@ class Pages:
                                       f"A {money(cmd.amount)} payment agreed {how} is {IN_FLIGHT[cmd.state]}. No other payment can start "
                                       "on this lease until it settles.",
                                       "The FMS reports it succeeded and the ledger shows it, the FMS reports it declined, or "
-                                      "Gatehouse hands it to a person.",
-                                      "Gatehouse checks on its own", f"/payments/{cmd.id}", money(cmd.amount)))
+                                      "Staddle hands it to a person.",
+                                      "Staddle checks on its own", f"/payments/{cmd.id}", money(cmd.amount)))
                 elif cmd.state in REVERSED:
                     found = True
                     head, proof = REVERSED[cmd.state]
@@ -530,7 +530,7 @@ def router(pages: Pages) -> APIRouter:
 
     @r.get("/", response_class=HTMLResponse)
     def front(request: Request):
-        """What Gatehouse is, and each built feature shown live on the seeded world, with a link into it."""
+        """What Staddle is, and each built feature shown live on the seeded world, with a link into it."""
         with session() as s:
             facilities = pages.facilities(s)
             if not facilities:

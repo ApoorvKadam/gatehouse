@@ -67,8 +67,8 @@ def test_a_genuine_answer_gives_a_signed_cookie_and_then_the_visitor_can_type_an
         passed = pass_the_check(visitor)
         assert passed.status_code == 200 and passed.json() == {"verified": True}
         cookie = passed.headers["set-cookie"]
-        assert "gh_visitor=" in cookie and "HttpOnly" in cookie and "samesite=lax" in cookie.lower()
-        assert app.state.guard.valid(visitor.cookies.get("gh_visitor")) is not None
+        assert "staddle_visitor=" in cookie and "HttpOnly" in cookie and "samesite=lax" in cookie.lower()
+        assert app.state.guard.valid(visitor.cookies.get("staddle_visitor")) is not None
         assert turnstile.asked == [("good-token", "testclient")]                 # the token and the address, nothing else
         typed = type_as(visitor, "dana", "Why is my unit on the sale list?", "press-0001")
         assert typed.status_code == 200
@@ -100,7 +100,7 @@ def test_a_cookie_the_desk_did_not_sign_is_not_a_pass(fms_url, sim, turnstile):
     other = Guard("site-key-for-tests", "secret-for-tests")                       # another process, with another key
     for value in ("0123456789abcdef0123456789abcdef", "0123456789abcdef0123456789abcdef.9999999999.deadbeef", "0123456789abcdef0123456789abcdef.deadbeef",
                   other.cookie(), "x.y.z", ""):
-        with TestClient(app, cookies={"gh_visitor": value}) as visitor:
+        with TestClient(app, cookies={"staddle_visitor": value}) as visitor:
             assert type_as(visitor, "dana", "Hello", "press-0001").status_code == 403, value
 
 
@@ -140,7 +140,7 @@ def test_with_no_keys_the_check_is_off_and_the_preview_works_as_before(fms_url, 
     app = live_app(fms_url, Scripted())
     with TestClient(app) as visitor:
         page = visitor.get("/inbox")
-        assert 'class="cf-turnstile"' not in page.text and "gh_visitor" in page.headers["set-cookie"]       # a plain cookie, as before
+        assert 'class="cf-turnstile"' not in page.text and "staddle_visitor" in page.headers["set-cookie"]       # a plain cookie, as before
         assert pass_the_check(visitor).status_code == 404
         assert type_as(visitor, "dana", "Hello", "press-0001").status_code == 200
     monkeypatch.setenv("DESK_TURNSTILE_SITEKEY", "a-site-key")

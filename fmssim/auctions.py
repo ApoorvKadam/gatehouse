@@ -5,7 +5,7 @@ Where Cubby documents a rule it is followed: settle is refused before the auctio
 process, one whose lien process was cancelled, or one already settled; complete is refused while the lease is still
 SOLD. Where Cubby is silent the simulator picks a rule and says so here: search takes exactly one of auctionId or
 facilityId, and cancel-lien accepts only a LISTED lease. The /sim routes are what staff do from the dashboard;
-Gatehouse never calls them, and it never calls cancel-lien, settle or complete either."""
+Staddle never calls them, and it never calls cancel-lien, settle or complete either."""
 from __future__ import annotations
 
 from datetime import date, datetime

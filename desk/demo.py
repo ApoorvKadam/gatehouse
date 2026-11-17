@@ -1,6 +1,6 @@
 """The synthetic world the hosted preview opens on.
 
-Every item in it is produced by running Gatehouse's own flows against the simulator (identity check, read-back,
+Every item in it is produced by running Staddle's own flows against the simulator (identity check, read-back,
 the tenant's yes, the FMS misbehaving, reconciliation, lien evidence), never by writing finished rows, so what a
 visitor sees is what the code actually did. It runs once, on a database that holds no leases yet, and before
 the worker starts, so the worker never sees a half-built world. When it is done no payment is pending or waiting
@@ -33,7 +33,7 @@ log = logging.getLogger("desk.demo")
 ORLANDO, ALBANY = "fac_NSorlando01", "fac_NSalbany001"
 DESK = "front desk (synthetic)"
 # the simulator hands out the same ids after every reset with this seed, so every boot names the same payments
-ID_SEED = "gatehouse-preview"
+ID_SEED = "staddle-preview"
 
 
 def build(factory: sessionmaker[Session], adapter: FMSAdapter, fms_base_url: str, run_id: str = "local",
@@ -96,7 +96,7 @@ def schedule_sale(sim: httpx.Client) -> None:
 
 def trace(fms_base_url: str) -> dict:
     """The simulator's own record of the seeded payments, saved once the world is built. A real FMS has nothing
-    like it; the preview shows it next to what Gatehouse concluded, so a reader can check the two agree."""
+    like it; the preview shows it next to what Staddle concluded, so a reader can check the two agree."""
     recorded_at = datetime.now(ZoneInfo("America/New_York")).strftime("%b %-d, %-I:%M %p")
     out = {}
     with httpx.Client(base_url=fms_base_url, timeout=30) as sim:
@@ -228,7 +228,7 @@ def tenant_texts(session: Session, adapter: FMSAdapter, sim: httpx.Client) -> No
     Cubby would send, and the desk keeps it the way its webhook receiver does:
     - a stranger asks about gate hours; Cubby texts only customers, so the desk cannot answer through it;
     - Omar, twelve days behind on rent with nothing else wrong, asks for the gate hours too, so a visitor can play him;
-    - Marcus texts STOP, and when the desk later tries to tell him about his returned payment, Gatehouse refuses;
+    - Marcus texts STOP, and when the desk later tries to tell him about his returned payment, Staddle refuses;
     - Priya asks about her payment plan, and the front desk answers;
     - Dana asks why her unit is on the sale list after she paid, which is the sale story above from her side, and then sends her
       card receipt. Cubby's webhook carries no media, so the file reaches the facility's own inbox and the desk keeps it with the text;
@@ -270,10 +270,10 @@ ORLANDO_RULE = dict(lockout_days=30, gate_rule="deny_if_any_unit_restricted", ve
 def access_world(session: Session, adapter: FMSAdapter, sim: httpx.Client, run_id: str) -> None:
     """Access after the stories above, read the way the worker reads it:
     - B-1042: Dana's money reached the ledger, so the FMS turned her gate code back on, but the overlock staff put on
-      in October is still recorded on her unit. Gatehouse opens an item and one FMS task; staff mark the task done
+      in October is still recorded on her unit. Staddle opens an item and one FMS task; staff mark the task done
       without taking the lock off, and the item stays open, because the FMS still records the lock.
     - C-207: staff took the overlock off when Marcus paid; the payment came back, and the unit is past the rule again
-      with no lock. Gatehouse flags it for a person and does not lock anyone out.
+      with no lock. Staddle flags it for a person and does not lock anyone out.
     - A-012 and A-013: Priya's payment arrangement pauses A-012's overlock; A-013 is past the rule and locked, and her
       shared gate code is off. The FMS matches the rule, so there is nothing to do.
     - Albany: no rule recorded, so one review item."""

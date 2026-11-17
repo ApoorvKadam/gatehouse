@@ -4,10 +4,10 @@ Four kinds of work, each read fresh every pass from auctions/search and the leas
 - a sale still listed while the ledger shows nothing owed (one FMS task asks staff to cancel it or say why it stands);
 - a payment after the notice while the sale is still listed and something is still owed (a person and counsel decide);
 - a sale settled (no bids, sold, bidder paid, complete) on an account with nothing owed or payments since the notice:
-  the FMS does not say whether the sale came before or after those payments, so Gatehouse claims no order;
+  the FMS does not say whether the sale came before or after those payments, so Staddle claims no order;
 - a listing on an outside auction site, which the FMS cancellation does not take down.
 
-Gatehouse never changes a sale. An item closes only on its own evidence: "FMS lien cancellation verified" needs a
+Staddle never changes a sale. An item closes only on its own evidence: "FMS lien cancellation verified" needs a
 fresh auctions/search showing that auction and lease CANCELLED, and an outside listing closes only when that site's
 feed reports it withdrawn. A completed task, a failed read or a changed balance closes nothing; a balance that becomes
 due again moves the item to review instead."""
@@ -55,10 +55,10 @@ OUTSIDE_NOTE = ("Cancelling the lien in the FMS does not take down a listing on 
 CLOSING = {
     LISTED_PAID: "auctions/search shows this auction and lease CANCELLED. A completed task does not close it.",
     BALANCE_CHANGED: ("auctions/search shows this auction and lease CANCELLED, or a person records what happens to the sale. "
-                      "Gatehouse cannot record that yet."),
+                      "Staddle cannot record that yet."),
     AFTER_NOTICE: ("auctions/search shows this auction and lease CANCELLED, or a person and counsel record whether the sale "
-                   "stands. Gatehouse cannot record that yet."),
-    SETTLED_REVIEW: "A person and counsel review the sale's timing against the payments. Gatehouse does not close this on its own.",
+                   "stands. Staddle cannot record that yet."),
+    SETTLED_REVIEW: "A person and counsel review the sale's timing against the payments. Staddle does not close this on its own.",
     OUTSIDE: "The outside site's own feed reports the listing withdrawn. The FMS cancellation does not close it.",
 }
 WHO = {LISTED_PAID: "Collections lead", BALANCE_CHANGED: "Collections lead", AFTER_NOTICE: "Collections lead, with counsel",
@@ -146,9 +146,9 @@ def assess(f: SaleFacts) -> Finding | None:
     subject, status, observed = subject_of(f.entry), f.entry.status, observed_of(f)
     since = f"since the notice ({f.notice_source}, {on(f.notice_on)})" if f.notice_on else "since the notice (no notice date known)"
     if status == "LISTED" and f.owed == 0:
-        why = ("No notice date is known, so Gatehouse does not say whether any payment came after the notice." if not f.notice_on else
+        why = ("No notice date is known, so Staddle does not say whether any payment came after the notice." if not f.notice_on else
                f"The FMS reports payments {since}: {_paid(f)}." if f.payments else
-               f"No payment {since} was found, so a credit, waiver or correction may explain it; Gatehouse does not call it a tenant payment.")
+               f"No payment {since} was found, so a credit, waiver or correction may explain it; Staddle does not call it a tenant payment.")
         task = (f"Cancel the lien sale for unit {f.unit}, or record why it stands",
                 f"The FMS ledger shows nothing owed on unit {f.unit}, and {_when(f)} is still listed in the FMS. {why}",
                 f.entry.unit_id, None)
@@ -156,7 +156,7 @@ def assess(f: SaleFacts) -> Finding | None:
     if status == "LISTED" and f.payments:
         return Finding(AFTER_NOTICE, subject,
                        f"The FMS reports payments {since}: {_paid(f)}. {dollars(f.owed)} is still owed and {_when(f)} is still "
-                       "listed. Whether the notice's claim was satisfied is for a person and counsel; Gatehouse draws no "
+                       "listed. Whether the notice's claim was satisfied is for a person and counsel; Staddle draws no "
                        "conclusion about it.", observed)
     if status in SETTLED and (f.owed == 0 or f.payments):
         return settled_review(f)
@@ -170,12 +170,12 @@ def settled_review(f: SaleFacts) -> Finding:
             " No notice date is known, so no payment is said to follow it." if not f.notice_on else "")
     return Finding(SETTLED_REVIEW, subject_of(f.entry),
                    f"The FMS records this sale as {STATUS_WORDS[f.entry.status]}, and its ledger shows {owed}.{paid} The FMS does "
-                   "not say whether the sale came before or after these payments, so Gatehouse makes no claim about the "
+                   "not say whether the sale came before or after these payments, so Staddle makes no claim about the "
                    "order. A bidder's payment is not the tenant's.", observed_of(f))
 
 
 def notice_date(session: Session, lease: Lease | None, entry: ProviderAuctionEntry) -> tuple[str | None, str]:
-    """The notice's mailing date from Gatehouse's own lien file when there is one, else the FMS's lien start date."""
+    """The notice's mailing date from Staddle's own lien file when there is one, else the FMS's lien start date."""
     if lease is not None:
         case = session.scalar(select(DelinquencyCase).where(DelinquencyCase.lease_id == lease.id).order_by(DelinquencyCase.id.desc()).limit(1))
         if case is not None:
@@ -383,7 +383,7 @@ def _balance_changed(session: Session, mine: list[WorkItem], facts: SaleFacts, n
             continue
         _retitle(session, item, BALANCE_CHANGED)
         item.problem = (f"When this was opened the FMS ledger showed nothing owed. It now shows {dollars(facts.owed)} owed, and "
-                        f"{_when(facts)} is still listed. Gatehouse does not close this or treat the sale as cleared; a person "
+                        f"{_when(facts)} is still listed. Staddle does not close this or treat the sale as cleared; a person "
                         "reassesses the notice, the charges and the sale.")
         item.observed = _carry(item, observed_of(facts))
         _warn_task(item, "The FMS task opened for this item asked staff to cancel the sale on the older reading. Do not act on "
@@ -403,7 +403,7 @@ def _outside(session: Session, facility: Facility, run_id: str, entry: ProviderA
     now = utcnow()
     if listing is not None and listing.get("status") not in FEED_STATUSES:
         if item is not None:
-            item.note = (f"Not verified: the outside site's feed reported this listing with a status Gatehouse cannot read "
+            item.note = (f"Not verified: the outside site's feed reported this listing with a status Staddle cannot read "
                          f"({listing.get('status')!r}) at {when(now)}.")
         return
     if listing is None:

@@ -85,7 +85,7 @@ def test_the_page_today_and_the_api_show_the_work_in_plain_words(fms_url, sim, a
         page = html.unescape(visitor.get("/rent-changes").text)
         assert "Rent changes at Northstar Storage, Orlando East" in page and 'href="/rent-changes"' in page
         assert "Billed at another amount" in page and "Not applied" in page and "Billed at the FMS rent" in page and "Cannot tell yet" in page
-        assert "Gatehouse sets no price and changes no rent." in page and page.count(NOTICE_WHY) == 1
+        assert "Staddle sets no price and changes no rent." in page and page.count(NOTICE_WHY) == 1
         assert "lease_" not in page and "not_applied" not in page and "wrong_charge" not in page and "cannot_tell" not in page
         today = html.unescape(visitor.get("/today").text)
         for head in ("Rent billed at another amount", "Rent change not applied", "Rent increase on an account a person must weigh"):

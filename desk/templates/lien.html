@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Lien file, unit {{ lease.unit_name }} | Gatehouse{% endblock %}
+{% block title %}Lien file, unit {{ lease.unit_name }} | Staddle{% endblock %}
 {% block main %}
 <div class="wrap">
 <p class="crumbs"><a href="/today?facility={{ facility.provider_id }}">Today at {{ facility.name }}</a> / <a href="/accounts/{{ case.id }}">Unit {{ lease.unit_name }}</a></p>
@@ -9,7 +9,7 @@
 </div>
 <div class="state"><span class="chip {{ 'wait' if current.state in ('Review packet assembled', 'Waiting for a timing threshold', 'Counsel review required') else 'act' }}">{{ current.state }}</span><span class="muted small">as of {{ local(current.evaluated_at) }}</span></div>
 {% if snap %}<p class="lede">Owed on this account, per the FMS: <b>{{ money(snap.total_due) }}</b>, read {{ local(snap.observed_at) }}.</p>{% endif %}
-<p class="lede">{{ current.summary }} Gatehouse never says a file is compliant or that a unit may be sold. The best a file can reach is a packet ready for a person to review. Files are evaluated when someone asks, not yet on their own: account changes after {{ local(current.evaluated_at) }} are not reflected here until the file is evaluated again.</p>
+<p class="lede">{{ current.summary }} Staddle never says a file is compliant or that a unit may be sold. The best a file can reach is a packet ready for a person to review. Files are evaluated when someone asks, not yet on their own: account changes after {{ local(current.evaluated_at) }} are not reflected here until the file is evaluated again.</p>
 
 {% if changed %}
 <section class="panel">

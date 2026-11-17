@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block bodyclass %}page-front{% endblock %}
-{% block title %}Gatehouse: unfinished work in self-storage, checked against the FMS{% endblock %}
+{% block title %}Staddle: unfinished work in self-storage, checked against the FMS{% endblock %}
 {% block main %}
 <section class="lt-hero">
   <div class="wrap">
@@ -8,15 +8,15 @@
       <div class="lt-hero-text">
         <div class="spot hero-spot" data-reveal>{% set guard_size = 156 %}{% set guard_pose = "" %}{% include "guard.html" %}<p class="spot-say say-pass">I keep watch at the gate. Nothing gets past me on someone's word.</p></div>
         <h1>Nothing is done until <span>the FMS shows it.</span></h1>
-        <p>Gatehouse watches an operator's facility management system and the systems around it. It <b>opens an item for every unfinished piece of work</b>, names the fact that will close it, and <b>sends disagreements to a person</b> with the evidence.</p>
+        <p>Staddle watches an operator's facility management system and the systems around it. It <b>opens an item for every unfinished piece of work</b>, names the fact that will close it, and <b>sends disagreements to a person</b> with the evidence.</p>
         <div class="actions">
           <a class="button primary" href="/today">Open today's work {% include "icons/arrow-right.svg" %}</a>
           <a class="button" href="#built">See what is built</a>
         </div>
       </div>
       <figure class="film lt-film">
-        <video id="film" controls preload="metadata" playsinline poster="{{ url_for('static', path='film/gatehouse-walkthrough.jpg') }}?v=20261112" aria-label="Gatehouse in use: a walkthrough of every screen">
-          <source src="{{ url_for('static', path='film/gatehouse-walkthrough.mp4') }}?v=20261112" type="video/mp4">
+        <video id="film" controls preload="metadata" playsinline poster="{{ url_for('static', path='film/staddle-walkthrough.jpg') }}?v=20261112" aria-label="Staddle in use: a walkthrough of every screen">
+          <source src="{{ url_for('static', path='film/staddle-walkthrough.mp4') }}?v=20261112" type="video/mp4">
         </video>
       </figure>
     </div>
@@ -146,7 +146,7 @@
         <h2>A payment whose answer was lost is held, not retried.</h2>
       </div>
       <div>
-        <p>The tenant agreed to {{ money(held.amount) }} {{ "by phone" if (held.authorization or {}).get("channel") == "desk" else "in the tenant chat" }}. No usable answer came back from the FMS{% if held_answer %} ({{ held_answer }}){% endif %}, so nobody can say yet whether the card was charged. Gatehouse does not charge again and does not tell the tenant it worked. It points to an FMS payment that may be this one and waits for a person to decide.</p>
+        <p>The tenant agreed to {{ money(held.amount) }} {{ "by phone" if (held.authorization or {}).get("channel") == "desk" else "in the tenant chat" }}. No usable answer came back from the FMS{% if held_answer %} ({{ held_answer }}){% endif %}, so nobody can say yet whether the card was charged. Staddle does not charge again and does not tell the tenant it worked. It points to an FMS payment that may be this one and waits for a person to decide.</p>
         <a class="open" href="/payments/{{ held.id }}">Open this payment {% include "icons/arrow-right.svg" %}</a>
       </div>
     </div>
@@ -179,7 +179,7 @@
       <div class="spot">{% set guard_size = 104 %}{% set guard_pose = "wink" %}{% include "guard.html" %}<p class="spot-say say-card">Who said it? Each lane tells you.</p></div>
       <p class="kicker" style="--c:var(--navy)">{% include "icons/rows-3.svg" %}The record</p>
       <h2>Every fact keeps its source.</h2>
-      <p>Each account's history is kept in four lanes: what the FMS said, what Gatehouse observed, what Gatehouse concluded, and what a person decided. Reading down a lane gives one source's account, so nobody has to guess who said a payment went through.</p>
+      <p>Each account's history is kept in four lanes: what the FMS said, what Staddle observed, what Staddle concluded, and what a person decided. Reading down a lane gives one source's account, so nobody has to guess who said a payment went through.</p>
       <a class="open" href="/accounts/{{ record_case }}">Open the account record {% include "icons/arrow-right.svg" %}</a>
     </div>
     <div class="frame" data-reveal>
@@ -204,7 +204,7 @@
       <div class="spot">{% set guard_size = 104 %}{% set guard_pose = "dizzy" %}{% include "guard.html" %}<p class="spot-say say-stamp">Paid, then sent back by the bank.</p></div>
       <p class="kicker" style="--c:var(--amber)">{% include "icons/rotate-ccw.svg" %}Returns and disputes</p>
       <h2>A payment that comes back reopens the account.</h2>
-      <p>A payment that posted can still be returned by the bank, refunded or disputed weeks later. Gatehouse keeps watching confirmed payments, and when the FMS reports one reversed, the account opens again and the work goes back on Today.</p>
+      <p>A payment that posted can still be returned by the bank, refunded or disputed weeks later. Staddle keeps watching confirmed payments, and when the FMS reports one reversed, the account opens again and the work goes back on Today.</p>
       <a class="open" href="/payments/{{ returned.id }}">Open this payment {% include "icons/arrow-right.svg" %}</a>
     </div>
     <div class="frame" data-reveal>
@@ -229,7 +229,7 @@
       <div class="spot">{% set guard_size = 104 %}{% set guard_pose = "left" %}{% include "guard.html" %}<p class="spot-say say-keycard">Paid should mean the gate opens.</p></div>
       <p class="kicker" style="--c:var(--blue)">{% include "icons/door-open.svg" %}Access and overlocks</p>
       <h2>A tenant who paid gets their unit back, and a task marked done is not proof.</h2>
-      <p>Gatehouse reads the gate code, the locks on each unit and any exemption from the FMS, and compares them with the facility's recorded lockout rule in both directions. A paying tenant still locked out, or an account past the rule whose code the FMS still allows, becomes an item and one FMS task for a person. The item closes only when the FMS shows the expected state. Gatehouse never changes access itself, and the FMS's records are not proof the gate opened or a lock came off.</p>
+      <p>Staddle reads the gate code, the locks on each unit and any exemption from the FMS, and compares them with the facility's recorded lockout rule in both directions. A paying tenant still locked out, or an account past the rule whose code the FMS still allows, becomes an item and one FMS task for a person. The item closes only when the FMS shows the expected state. Staddle never changes access itself, and the FMS's records are not proof the gate opened or a lock came off.</p>
       <a class="open" href="/access/{{ access.id }}">Open this access item {% include "icons/arrow-right.svg" %}</a>
     </div>
     <div class="frame" data-reveal>
@@ -261,7 +261,7 @@
         <h2>A lien file goes back to review when the account has changed.</h2>
       </div>
       <div>
-        <p>For a Florida unit, every requirement of the lien statute is listed with its basis and the evidence recorded for it, and a missing record is an open item. A file is evaluated when a person asks. A payment on or after the day the notice was delivered that leaves a balance due sends the file back to a person at that evaluation instead of on to the sale; a payment of the whole balance takes it out of lien work. The excerpt shows the latest evaluation as it was recorded. Gatehouse never says a unit may be sold.</p>
+        <p>For a Florida unit, every requirement of the lien statute is listed with its basis and the evidence recorded for it, and a missing record is an open item. A file is evaluated when a person asks. A payment on or after the day the notice was delivered that leaves a balance due sends the file back to a person at that evaluation instead of on to the sale; a payment of the whole balance takes it out of lien work. The excerpt shows the latest evaluation as it was recorded. Staddle never says a unit may be sold.</p>
         <a class="open" href="/accounts/{{ changed.case_id }}/lien">Open this lien file {% include "icons/arrow-right.svg" %}</a>
       </div>
       {% else %}
@@ -334,7 +334,7 @@
       <div class="spot">{% set guard_size = 104 %}{% set guard_pose = "blink" %}{% include "guard.html" %}<p class="spot-say say-sms"><small>Text from a tenant &middot; reminder held</small>They said STOP. That settles it.</p></div>
       <p class="kicker" style="--c:var(--lilac)">{% include "icons/message-square.svg" %}Reminder check</p>
       <h2>A reminder tool should not text a tenant who asked to stop, or who is on a payment plan.</h2>
-      <p>Your reminder tool decides who to text. Before it does, Gatehouse checks each past-due account against what the FMS and the desk know: a STOP, a payment still being checked, a lien file, a payment arrangement. A tenant who must not be texted, or whose text waits for a person, comes back with the reason. Gatehouse sends nothing.</p>
+      <p>Your reminder tool decides who to text. Before it does, Staddle checks each past-due account against what the FMS and the desk know: a STOP, a payment still being checked, a lien file, a payment arrangement. A tenant who must not be texted, or whose text waits for a person, comes back with the reason. Staddle sends nothing.</p>
       <a class="open" href="/calls-and-reminders#reminders">Open the reminder check {% include "icons/arrow-right.svg" %}</a>
     </div>
     <div class="frame" data-reveal>
@@ -358,7 +358,7 @@
       <div class="spot">{% set guard_size = 104 %}{% set guard_pose = "sparkle" %}{% include "guard.html" %}<p class="spot-say say-bill">An increase is done when the bill says so.</p></div>
       <p class="kicker" style="--c:var(--teal)">{% include "icons/trending-up.svg" %}Rent changes</p>
       <h2>A rent increase is done when the bill after it is the new rent.</h2>
-      <p>Your revenue tool or your staff decide each increase, and the FMS holds it. Gatehouse checks the work around it: whether the account can take it, whether the FMS applied it on the day, and whether the first full bill after it is the new rent, read in the lease's own billing cycle. It sets no price and changes no rent, and it never calls a notice sent, because no record the FMS keeps says so.</p>
+      <p>Your revenue tool or your staff decide each increase, and the FMS holds it. Staddle checks the work around it: whether the account can take it, whether the FMS applied it on the day, and whether the first full bill after it is the new rent, read in the lease's own billing cycle. It sets no price and changes no rent, and it never calls a notice sent, because no record the FMS keeps says so.</p>
       <a class="open" href="/rent-changes">Open the rent changes {% include "icons/arrow-right.svg" %}</a>
     </div>
     <div class="frame" data-reveal>
@@ -382,7 +382,7 @@
       <div class="spot">{% set guard_size = 104 %}{% set guard_pose = "right" %}{% include "guard.html" %}<p class="spot-say say-memo">Every missed call gets a call back.</p></div>
       <p class="kicker" style="--c:var(--teal)">{% include "icons/phone.svg" %}Missed calls</p>
       <h2>A missed call is done when the FMS shows what came of it.</h2>
-      <p>Your phone system logs the calls nobody answered. Gatehouse looks each caller up in the FMS by the whole number, asks staff to call back through one FMS task per caller, and counts a lead as won only when the FMS shows it converted. A number on two customers goes to a person. It creates no lead or customer from a caller ID, and it sends no text: a missed call is not consent.</p>
+      <p>Your phone system logs the calls nobody answered. Staddle looks each caller up in the FMS by the whole number, asks staff to call back through one FMS task per caller, and counts a lead as won only when the FMS shows it converted. A number on two customers goes to a person. It creates no lead or customer from a caller ID, and it sends no text: a missed call is not consent.</p>
       <a class="open" href="/calls-and-reminders#calls">Open the missed calls {% include "icons/arrow-right.svg" %}</a>
     </div>
     <div class="frame" data-reveal>
@@ -405,7 +405,7 @@
       <div class="spot">{% set guard_size = 104 %}{% set guard_pose = "right" %}{% include "guard.html" %}<p class="spot-say say-tape">I check your systems. I do not replace them.</p></div>
       <p class="kicker" style="--c:var(--navy)">{% include "icons/unplug.svg" %}Where it fits</p>
       <h2>It does not replace what you run.</h2>
-      <p>Your FMS, your reminders and your auction site already do their jobs. Gatehouse starts where they stop. It checks that each outcome reached the system of record, and it keeps the evidence when the systems disagree.</p>
+      <p>Your FMS, your reminders and your auction site already do their jobs. Staddle starts where they stop. It checks that each outcome reached the system of record, and it keeps the evidence when the systems disagree.</p>
     </div>
     <div class="frame" data-reveal>
       <div class="frame-bar"><span><b>What it checks</b> &middot; that a reminder tool does not</span></div>
@@ -432,7 +432,7 @@
       <div class="spot">{% set guard_size = 104 %}{% set guard_pose = "heart" %}{% include "guard.html" %}<p class="spot-say say-greenbar">Broken on purpose, every build.</p></div>
       <p class="kicker" style="--c:var(--teal)">{% include "icons/circle-check.svg" %}Evaluation</p>
       <h2>Every build runs the failures and stops on a red line.</h2>
-      <p>Each scenario runs against its own throwaway simulator: declines, pending answers, lost answers, returns, a paid tenant still locked out, a task marked done with the lock still on, a text that gives an order. Red lines such as a duplicate charge, an access change made by Gatehouse or a text sent after STOP must be zero, and builds that are wrong on purpose must be caught.</p>
+      <p>Each scenario runs against its own throwaway simulator: declines, pending answers, lost answers, returns, a paid tenant still locked out, a task marked done with the lock still on, a text that gives an order. Red lines such as a duplicate charge, an access change made by Staddle or a text sent after STOP must be zero, and builds that are wrong on purpose must be caught.</p>
       <a class="open" href="/evaluation">Open the evaluation {% include "icons/arrow-right.svg" %}</a>
     </div>
     <div class="frame" data-reveal>

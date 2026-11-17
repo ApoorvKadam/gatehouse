@@ -8,7 +8,7 @@ decides who called. Nobody: an unknown caller. A withheld number is never search
 could find everyone.
 
 A person is asked to call back through an FMS task, made the one way every task here is made (intent first, a lost answer
-looked up by its marker). Gatehouse creates no lead and no customer from a caller ID alone, and sends no text: a missed call
+looked up by its marker). Staddle creates no lead and no customer from a caller ID alone, and sends no text: a missed call
 is neither confirmed details nor consent. An item closes only when a fresh reading shows the caller's lead CONVERTED,
 UNQUALIFIED or DUPLICATE after the call; a completed task does not prove anyone spoke to the caller."""
 from __future__ import annotations
@@ -164,10 +164,10 @@ def problem(who: Who, calls: list[dict], zone: str | None) -> str:
     said = {"lead": "The caller has an open lead in the FMS, so the call is recorded against it.",
             "tenant": "The caller is a current tenant. What they want is not known; it may be another unit.",
             "customer": "The caller is a customer in the FMS with no open lead and no lease here.",
-            "shared": f"This number is on {who.count} customers in the FMS, so Gatehouse does not pick one: a person decides who called.",
-            "unknown": "The FMS has no customer with this number. Gatehouse creates no lead or customer from a caller ID alone.",
+            "shared": f"This number is on {who.count} customers in the FMS, so Staddle does not pick one: a person decides who called.",
+            "unknown": "The FMS has no customer with this number. Staddle creates no lead or customer from a caller ID alone.",
             "withheld": "The caller withheld their number, so there is no one to look up or call back.",
-            "short": "The caller ID has fewer than ten digits, so Gatehouse looks nobody up with it: a person decides who called."}[who.kind]
+            "short": "The caller ID has fewer than ten digits, so Staddle looks nobody up with it: a person decides who called."}[who.kind]
     voicemail = next((c["voicemail"] for c in reversed(calls) if c.get("voicemail")), None)
     return f"{rang} {said}" + (f' Voicemail: "{voicemail}"' if voicemail else " No voicemail.")
 
@@ -281,7 +281,7 @@ def task_words(item: WorkItem) -> str:
             return "An FMS task asked staff to call back; it is marked completed, which does not close this row."
         return f"An FMS task asks staff to call back. It is {'open' if status == 'OPEN' else status.lower().replace('_', ' ')}."
     if item.task_state in ("sending", "outcome_unknown"):
-        return "Creating the FMS task gave no usable answer yet; Gatehouse does not ask again while the outcome is unknown."
+        return "Creating the FMS task gave no usable answer yet; Staddle does not ask again while the outcome is unknown."
     if item.task_state == "rejected":
         return "The FMS refused the callback task, so nothing was created."
     if who == "shared":

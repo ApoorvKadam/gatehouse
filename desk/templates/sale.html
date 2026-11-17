@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ kind_names[w.kind] }}, unit {{ o.get('unit', '') }} | Gatehouse{% endblock %}
+{% block title %}{{ kind_names[w.kind] }}, unit {{ o.get('unit', '') }} | Staddle{% endblock %}
 {% block main %}
 <div class="wrap">
 <p class="crumbs"><a href="/today?facility={{ facility.provider_id }}">Today at {{ facility.name }}</a> / Lien sales</p>
@@ -23,7 +23,7 @@
       <dt>Status</dt><dd>{{ status_words.get(o.get('status'), o.get('status', 'not read'))|capitalize }}</dd>
       {% if read_at %}<dt>Read</dt><dd>{{ local(read_at) }}</dd>{% endif %}
     </dl>
-    <p class="note">Gatehouse reads the sale and never changes it: it does not cancel, settle or complete a lien sale.</p>
+    <p class="note">Staddle reads the sale and never changes it: it does not cancel, settle or complete a lien sale.</p>
   </section>
 
   <section class="panel">

@@ -51,7 +51,7 @@ def _report(**more) -> dict:
 
 
 def test_the_page_shows_the_report_or_says_there_is_none(fms_url, sim, monkeypatch):
-    report = _report(rows=[{"module": "Access", "name": "Paid, still locked", "trouble": "disagree", "fms": "f", "gatehouse": "g", "told": "t", "passed": True}],
+    report = _report(rows=[{"module": "Access", "name": "Paid, still locked", "trouble": "disagree", "fms": "f", "staddle": "g", "told": "t", "passed": True}],
                      red_lines=[{"module": "Access", "line": "a physical outcome labeled verified", "trouble": "disagree", "count": 0, "checked": 9, "of": "passes"}],
                      controls=[{"name": "A build that closes on a task", "short": "Closes on a task", "trouble": "disagree", "broken": "closes", "caught": True}])
     with TestClient(preview(fms_url)) as visitor:
@@ -66,10 +66,10 @@ def test_the_page_shows_the_report_or_says_there_is_none(fms_url, sim, monkeypat
         assert "has no evaluation report" in visitor.get("/evaluation").text
 
 
-def test_the_page_writes_the_state_codes_in_what_gatehouse_did_as_words(fms_url, sim, monkeypatch):
+def test_the_page_writes_the_state_codes_in_what_staddle_did_as_words(fms_url, sim, monkeypatch):
     report = _report(rows=[{"module": "Payments", "name": "Response lost after charging", "trouble": "late", "fms": "charges and applies, answers too late",
-                            "gatehouse": "NEEDS_STAFF with the FMS payment suggested; staff confirmed it: CONFIRMED; 1 charge", "told": "t", "passed": True},
-                           {"module": "Access", "name": "Paid, still locked", "trouble": "disagree", "fms": "f", "gatehouse": "g", "told": "t", "passed": False}],
+                            "staddle": "NEEDS_STAFF with the FMS payment suggested; staff confirmed it: CONFIRMED; 1 charge", "told": "t", "passed": True},
+                           {"module": "Access", "name": "Paid, still locked", "trouble": "disagree", "fms": "f", "staddle": "g", "told": "t", "passed": False}],
                      red_lines=[{"module": "Payments", "line": "a duplicate charge", "trouble": "twice", "count": 0, "checked": 12, "of": "scenarios"},
                                 {"module": "Access", "line": "an item closed on a task", "trouble": "disagree", "count": 2, "checked": 14, "of": "passes"}],
                      controls=[{"name": "A build that resends", "short": "Resends", "trouble": "late", "broken": "sends again", "caught": False}])
@@ -85,9 +85,9 @@ def test_the_page_writes_the_state_codes_in_what_gatehouse_did_as_words(fms_url,
 
 
 def test_every_mark_links_to_its_row_and_each_part_is_sorted_by_kind():
-    rows = [{"module": "Payments", "name": name, "trouble": kind, "fms": "f", "gatehouse": "g", "told": "t", "passed": True}
+    rows = [{"module": "Payments", "name": name, "trouble": kind, "fms": "f", "staddle": "g", "told": "t", "passed": True}
             for name, kind in [("a", "disagree"), ("b", "no"), ("c", "normal"), ("d", "late"), ("e", "no")]]
-    rows.append({"module": "Access", "name": "f", "trouble": "money", "fms": "f", "gatehouse": "g", "told": "t", "passed": True})
+    rows.append({"module": "Access", "name": "f", "trouble": "money", "fms": "f", "staddle": "g", "told": "t", "passed": True})
     report = _report(rows=rows, red_lines=[{"module": "Payments", "line": line, "trouble": kind, "count": 0, "checked": 3, "of": "passes"}
                                            for line, kind in [("a", "disagree"), ("b", "twice"), ("c", "late")]],
                      controls=[{"name": name, "short": name, "trouble": kind, "broken": "sends again", "caught": True}
@@ -101,12 +101,12 @@ def test_every_mark_links_to_its_row_and_each_part_is_sorted_by_kind():
     assert len(every) == 11 and all(m["href"][1:] in ids for m in every)                                # a mark never points at nothing
     assert [key for key, _ in view["kinds"]] == ["normal", "no", "late", "twice", "money", "disagree"]  # every kind the marks use, in the legend's order
     card = json.loads(marks["Payments"][0]["tip"])
-    assert [line[0] for line in card["lines"]] == ["The FMS did", "Gatehouse did", "Who hears what"] and card["kind"] == TROUBLES["normal"]
+    assert [line[0] for line in card["lines"]] == ["The FMS did", "Staddle did", "Who hears what"] and card["kind"] == TROUBLES["normal"]
     assert json.loads(lines["Payments"][0]["tip"])["kind"] == TROUBLES["late"]                          # a red line names the trouble it guards against
 
 
 def test_a_report_without_kinds_still_draws_its_marks():
-    report = _report(rows=[{"module": "Access", "name": "Paid, still locked", "fms": "f", "gatehouse": "g", "told": "t", "passed": True}],
+    report = _report(rows=[{"module": "Access", "name": "Paid, still locked", "fms": "f", "staddle": "g", "told": "t", "passed": True}],
                      red_lines=[], controls=[])
     view = web.evaluation_view(report)
     assert view["kinds"] == [] and view["scenario_marks"][0][1][0]["key"] is None

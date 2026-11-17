@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Messages, {{ facility.name }} | Gatehouse{% endblock %}
+{% block title %}Messages, {{ facility.name }} | Staddle{% endblock %}
 {% macro flags(t) %}
   {% set run = t.investigation %}
   {% if t.own %}<span class="chip plain">Yours</span>{% endif %}
@@ -49,7 +49,7 @@
           or <button type="button" data-as="dana" data-try="STOP">STOP</button>.</p>
         <p class="play-foot"><button class="button primary" type="submit" id="play-send">Send text</button></p>
         <p class="small" id="play-error" role="alert" hidden></p>
-        {% if check and not check.verified %}<div class="cf-turnstile" data-sitekey="{{ check.sitekey }}" data-action="visit" data-appearance="interaction-only" data-callback="gatehouseChecked" data-error-callback="gatehouseCheckFailed"></div>{% endif %}
+        {% if check and not check.verified %}<div class="cf-turnstile" data-sitekey="{{ check.sitekey }}" data-action="visit" data-appearance="interaction-only" data-callback="staddleChecked" data-error-callback="staddleCheckFailed"></div>{% endif %}
       </form>
     </section>
     {% endif %}

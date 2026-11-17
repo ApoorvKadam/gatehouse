@@ -70,7 +70,7 @@
 {% if waiting %}
 <script>
 (function () {
-  function readRun(fresh) { var r = sessionStorage.getItem("gh-run"); if (fresh || !r) { r = "r" + Date.now().toString(16); sessionStorage.setItem("gh-run", r); } return r; }
+  function readRun(fresh) { var r = sessionStorage.getItem("staddle-run"); if (fresh || !r) { r = "r" + Date.now().toString(16); sessionStorage.setItem("staddle-run", r); } return r; }
   function fail(r) { return r.json().then(function (b) { throw new Error(b && typeof b.detail === "string" ? b.detail : "Something went wrong. Try again."); }, function () { throw new Error("Something went wrong. Try again."); }); }
   // one morning message through the agent; a run that already read it on an earlier copy reads it again under a fresh one
   function read(el) {

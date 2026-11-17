@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Payment of {{ money(cmd.amount) }}, unit {{ lease.unit_name }} | Gatehouse{% endblock %}
+{% block title %}Payment of {{ money(cmd.amount) }}, unit {{ lease.unit_name }} | Staddle{% endblock %}
 {% block main %}
 <div class="wrap">
 <p class="crumbs"><a href="/today?facility={{ facility.provider_id }}">Today at {{ facility.name }}</a> / <a href="/accounts/{{ case.id }}">Unit {{ lease.unit_name }}</a></p>
@@ -9,7 +9,7 @@
 </div>
 {% set held = cmd.state in ('NEEDS_STAFF', 'OUTCOME_UNKNOWN') %}
 <div class="state"><span class="chip {{ 'act' if held else ('wait' if cmd.state in ('RETURNED', 'REFUNDED', 'REFUND_PENDING', 'DISPUTED') else ('done' if cmd.state == 'CONFIRMED' else 'plain')) }}">{% if cmd.state == 'NEEDS_STAFF' and not cmd.provider_payment_id %}Outcome unknown: held for a person
-  {% elif cmd.state == 'RETURNED' %}{% if cmd.confirmed_at %}Confirmed, then returned{% else %}Returned before Gatehouse confirmed it{% endif %}
+  {% elif cmd.state == 'RETURNED' %}{% if cmd.confirmed_at %}Confirmed, then returned{% else %}Returned before Staddle confirmed it{% endif %}
   {% elif cmd.state == 'CONFIRMED' %}Confirmed by the FMS ledger
   {% else %}{{ cmd.state|readable|upfirst }}{% endif %}</span></div>
 {% if case.hold_reasons %}<p class="lede">{% for r in case.hold_reasons %}{{ sentence(r) }} {% endfor %}</p>{% endif %}
@@ -29,7 +29,7 @@
   </section>
 
   <section class="panel">
-    <h2><span class="lane-dot lane-observed"></span>What Gatehouse sent and heard back</h2>
+    <h2><span class="lane-dot lane-observed"></span>What Staddle sent and heard back</h2>
     <dl class="kv">
       <dt>Written down first</dt><dd>{{ local(cmd.created_at) }}, before the FMS was called</dd>
       <dt>Sent to the FMS</dt><dd>{{ local(cmd.submitted_at) or 'Not sent' }}</dd>
@@ -53,16 +53,16 @@
   </section>
 
   <section class="panel">
-    <h2><span class="lane-dot lane-concluded"></span>What Gatehouse tells the tenant</h2>
+    <h2><span class="lane-dot lane-concluded"></span>What Staddle tells the tenant</h2>
     <p class="told"><b>For this payment as it stands now</b>{{ told }}</p>
-    <p class="note">Gatehouse writes every sentence a tenant reads about a payment. It says "applied" only after the FMS ledger shows the money. At the desk, staff read this sentence out; in the chat, Gatehouse sends it.</p>
+    <p class="note">Staddle writes every sentence a tenant reads about a payment. It says "applied" only after the FMS ledger shows the money. At the desk, staff read this sentence out; in the chat, Staddle sends it.</p>
   </section>
 
   {% if cmd.state == 'NEEDS_STAFF' %}
   <section class="panel wide">
     <h2><span class="lane-dot lane-decided"></span>What a person can decide</h2>
     <ul class="decisions">
-      <li><b>This is the payment</b><span>Name the FMS payment that is this attempt. Gatehouse confirms it only once the ledger shows it applied.</span></li>
+      <li><b>This is the payment</b><span>Name the FMS payment that is this attempt. Staddle confirms it only once the ledger shows it applied.</span></li>
       <li><b>Not charged</b><span>Refused while the FMS shows this payment as anything but declined, failed or rejected, or while any possible match is pending. Every possible match has to be named, with why it is another payment.</span></li>
       <li><b>Keep open</b><span>Leave the account held and record what was checked.</span></li>
     </ul>
@@ -79,7 +79,7 @@
       <dt>Balance at the simulator</dt><dd>{{ money(truth.totalDue) }}</dd>
     </dl>
     <p>A real FMS cannot show this: the simulator keeps its own record of what it did. It was saved when this preview started, before anyone opened a page.
-    {% if cmd.state == 'NEEDS_STAFF' and truth.payments|length == 1 %} It shows one payment on this lease, and Gatehouse sent this payment once and did not retry it.{% endif %}</p>
+    {% if cmd.state == 'NEEDS_STAFF' and truth.payments|length == 1 %} It shows one payment on this lease, and Staddle sent this payment once and did not retry it.{% endif %}</p>
   </section>
   {% endif %}
 </div>

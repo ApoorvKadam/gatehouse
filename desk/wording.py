@@ -92,9 +92,9 @@ def review_view(action: dict) -> dict:
     except ValueError:
         read = None
     label, tone = REVIEW_LABELS.get(outcome, ("Staff review", "plain"))
-    done = {"linked": "The FMS already had a task asking a person to act on this sale. Gatehouse read it back from the FMS on {at}: it is {status}.",
-            "requested": "Gatehouse asked the FMS for a task asking a person to act on this sale, and read it back on {at}: it is {status}.",
-            "not_confirmed": "Gatehouse could not confirm an FMS task for this sale. It does not ask again while the outcome is unknown, so a person has to follow up.",
+    done = {"linked": "The FMS already had a task asking a person to act on this sale. Staddle read it back from the FMS on {at}: it is {status}.",
+            "requested": "Staddle asked the FMS for a task asking a person to act on this sale, and read it back on {at}: it is {status}.",
+            "not_confirmed": "Staddle could not confirm an FMS task for this sale. It does not ask again while the outcome is unknown, so a person has to follow up.",
             "refused": "The FMS refused to create the task, so nothing was made. A person has to follow up.",
             "not_requested": "The desk could not confirm that the sale is listed with nothing owed, so it asked for no new task."}.get(outcome, "")
     text = done.format(at=when(read), status=status)

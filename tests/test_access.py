@@ -135,7 +135,7 @@ def test_a_restriction_that_is_missing_is_flagged_and_nobody_is_locked_out(sessi
     after = access_truth(fms_url)
     (item,) = open_items(session)
     assert (item.kind, item.subject_id) == (MISSING, "lease_BellC0207") and "does not lock anyone out" in item.problem
-    # Gatehouse asked for a person and changed nothing about access
+    # Staddle asked for a person and changed nothing about access
     assert after["codes"] == before["codes"] and [l["locks"] for l in after["leases"]] == [l["locks"] for l in before["leases"]]
     assert len(tasks_for_unit(fms_url, "lease_BellC0207")) == 1
 
@@ -193,7 +193,7 @@ def test_a_lost_task_answer_is_looked_up_and_never_sent_twice(session, adapter, 
     for _ in range(3):
         reconcile_access(session, adapter, facility, RUN)
     (item,) = open_items(session)
-    # the task was made, its id never arrived, and Gatehouse found it by its marker
+    # the task was made, its id never arrived, and Staddle found it by its marker
     assert item.task_state == "created" and len(tasks_for_unit(fms_url, "lease_WhitB1042")) == 1
 
 
@@ -293,7 +293,7 @@ def tasks_for_unit_or_customer(fms_url, customer):
 def test_when_the_fms_and_the_rule_disagree_a_person_settles_it_first(session, adapter, sim, fms_url):
     sim.post("/sim/access/rule", {"facilityId": ORLANDO, "lockoutDays": 60})
     sim.post("/sim/access/run", {"facilityId": ORLANDO})                  # the FMS now says no overlock is needed
-    facility = orlando(session, adapter)                                   # Gatehouse's recorded rule still says 30 days
+    facility = orlando(session, adapter)                                   # Staddle's recorded rule still says 30 days
     reconcile_access(session, adapter, facility, RUN)
     assert {w.kind for w in open_items(session)} == {DISAGREE}
     assert access_truth(fms_url)["tasks"] == []

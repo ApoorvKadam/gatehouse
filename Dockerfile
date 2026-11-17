@@ -16,22 +16,22 @@ RUN pip install --no-cache-dir ".[chat]" && mkdir -p /app/data
 RUN python -m desk.evaluate --out /app/desk/static/evaluation.json
 
 COPY start.sh ./
-RUN useradd --create-home --uid 1000 gatehouse && chown -R gatehouse /app/data
-USER gatehouse
+RUN useradd --create-home --uid 1000 staddle && chown -R staddle /app/data
+USER staddle
 
-# the simulator stays on 127.0.0.1:8100 inside the container; only Gatehouse's port is published
+# the simulator stays on 127.0.0.1:8100 inside the container; only Staddle's port is published
 EXPOSE 8000
 CMD ["bash", "start.sh"]
 
 # The test suite, run inside the image that ships, so a dependency missing from it fails here and not in
-# production: docker build --target test -t gatehouse:test . && docker run --rm gatehouse:test
+# production: docker build --target test -t staddle:test . && docker run --rm staddle:test
 FROM app AS test
 USER root
 RUN pip install --no-cache-dir "pytest>=8" "ruff>=0.5"
 COPY tests ./tests
 # undefined names only: an edit that drops a helper fails this build, not the first request that needs it
 RUN ruff check --select F821,F822,F823 --no-cache desk fmssim fms_checks core tests
-USER gatehouse
+USER staddle
 CMD ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
 
 # what a plain `docker build` produces, and what the host runs

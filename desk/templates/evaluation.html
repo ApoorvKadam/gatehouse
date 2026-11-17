@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Evaluation | Gatehouse{% endblock %}
+{% block title %}Evaluation | Staddle{% endblock %}
 {% macro bar(groups, label) %}
   <div class="segbar" data-fill role="group" aria-label="{{ label }}">
     {% for name, marks in groups %}
@@ -47,7 +47,7 @@
       <ul class="kinds" aria-label="Each colour and the kind of trouble it stands for. Point at one to find its marks.">
         {% for key, label in kinds %}<li class="k-{{ key }}" tabindex="0"><i aria-hidden="true"></i>{{ label }}</li>{% endfor %}
       </ul>
-      <p class="key-note">A scenario throws it at Gatehouse, a red line guards against it, and a wrong build gets it wrong.</p>
+      <p class="key-note">A scenario throws it at Staddle, a red line guards against it, and a wrong build gets it wrong.</p>
     </div>
   </div>
   {% endif %}
@@ -71,7 +71,7 @@
   <div class="flow flow-head" aria-hidden="true">
     <span>Scenario</span>
     <span><i class="lane-dot lane-fms"></i>The FMS did</span><span></span>
-    <span><i class="lane-dot lane-concluded"></i>Gatehouse did</span><span></span>
+    <span><i class="lane-dot lane-concluded"></i>Staddle did</span><span></span>
     <span><i class="lane-dot lane-observed"></i>Who hears what</span>
     <span></span>
   </div>
@@ -83,7 +83,7 @@
     </div>
     <p class="flow-node">{{ r.fms }}</p>
     <span class="flow-arrow" aria-hidden="true">{% include "icons/arrow-right.svg" %}</span>
-    <p class="flow-node">{{ r.gatehouse }}</p>
+    <p class="flow-node">{{ r.staddle }}</p>
     <span class="flow-arrow" aria-hidden="true">{% include "icons/arrow-right.svg" %}</span>
     <p class="flow-node told">{{ r.told }}</p>
     <span class="flow-result"><span class="chip {{ 'done' if r.passed else 'act' }}">{% include "icons/circle-check.svg" %}{{ 'Pass' if r.passed else 'Fail' }}</span></span>
@@ -147,15 +147,15 @@
   <p class="small muted live-foot" data-live-step role="status">{% if live_check and live_check.status == 'running' %}{{ live_check.step or 'The check is running.' }}{% elif live_check and live_check.finished_at %}Last run finished {{ local(live_check.finished_at) }}. The check only reads the FMS; it never changes it.{% else %}No run yet. The check only reads the FMS; it never changes it.{% endif %}</p>
   {% if live %}<p><button class="button" type="button" data-live-run>{{ 'Run it again' if live_check else 'Run the check' }}</button></p>
   <p class="small" data-live-error role="alert" hidden></p>{% endif %}
-  {% if check and not check.verified %}<div class="cf-turnstile" data-sitekey="{{ check.sitekey }}" data-action="visit" data-appearance="interaction-only" data-callback="gatehouseChecked" data-error-callback="gatehouseCheckFailed"></div>{% endif %}
+  {% if check and not check.verified %}<div class="cf-turnstile" data-sitekey="{{ check.sitekey }}" data-action="visit" data-appearance="interaction-only" data-callback="staddleChecked" data-error-callback="staddleCheckFailed"></div>{% endif %}
 </section>
 {% endif %}
 
 <details class="table-view">
   <summary>Table view of every result</summary>
   <table>
-    <thead><tr><th>Part</th><th>Scenario</th><th>Kind of trouble</th><th>What the FMS did</th><th>What Gatehouse did</th><th>Who hears what</th><th class="num">Result</th></tr></thead>
-    <tbody>{% for part, rows in scenarios %}{% for r in rows %}<tr><td class="small">{{ part }}</td><td><b>{{ r.name }}</b></td><td class="small">{{ r.kind }}</td><td class="small">{{ r.fms }}</td><td class="small">{{ r.gatehouse }}</td><td class="small muted">{{ r.told }}</td><td class="num"><span class="status {{ 'met' if r.passed else 'review' }}">{{ 'Pass' if r.passed else 'Fail' }}</span></td></tr>{% endfor %}{% endfor %}</tbody>
+    <thead><tr><th>Part</th><th>Scenario</th><th>Kind of trouble</th><th>What the FMS did</th><th>What Staddle did</th><th>Who hears what</th><th class="num">Result</th></tr></thead>
+    <tbody>{% for part, rows in scenarios %}{% for r in rows %}<tr><td class="small">{{ part }}</td><td><b>{{ r.name }}</b></td><td class="small">{{ r.kind }}</td><td class="small">{{ r.fms }}</td><td class="small">{{ r.staddle }}</td><td class="small muted">{{ r.told }}</td><td class="num"><span class="status {{ 'met' if r.passed else 'review' }}">{{ 'Pass' if r.passed else 'Fail' }}</span></td></tr>{% endfor %}{% endfor %}</tbody>
   </table>
   <table>
     <thead><tr><th>Part</th><th>Red line</th><th class="num">Count</th><th class="num">Counted over</th></tr></thead>
