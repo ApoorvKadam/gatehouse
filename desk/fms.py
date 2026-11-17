@@ -172,7 +172,8 @@ class Facility:
         """Open disputes, with what staff need to decide: the fee, who posted it, the tenant's words, the schedule they signed,
         whether collection is paused, and the account before and after removing it."""
         b, out = self.b, []
-        for d in b.disputes.values():
+        mine = {e.payload["dispute"] for e in self.own if e.kind == "dispute.opened"}      # recorded on this copy, by the agent
+        for d in sorted(b.disputes.values(), key=lambda x: (x.review_by, x.id)):
             if d.outcome is not None:
                 continue
             ch = b.charges[d.charge]
@@ -180,6 +181,7 @@ class Facility:
             who = self.people[d.tenant]
             out.append({"id": d.id, "who": who, "fee": KIND_WORDS.get(ch.kind, ch.kind), "amount": money(ch.cents), "unit": lease.unit,
                         "posted": day(ch.posted_at), "by_hand": ch.source.startswith("staff"), "quote": d.quote, "review_by": day(d.review_by),
+                        "recorded": f"{'today' if local(d.opened_at).date() == self.today else day(d.opened_at)} by {AGENT if d.id in mine else 'staff at the desk'}",
                         "held": b.held(ch.id), "in_schedule": ch.kind in lease.schedule, "signed": f"{day(lease.start)}, {lease.start.year}",
                         "schedule": ", ".join(KIND_WORDS.get(k, k) for k in lease.schedule) or "no fees",
                         "owed_now": money(who["owed"]), "owed_after": money(who["owed"] - ch.open_cents)})

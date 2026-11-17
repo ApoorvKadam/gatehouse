@@ -68,46 +68,6 @@
   color-scheme: light;
 }
 
-/* dark: follows the device setting; same structure, lifted state colors so they stay readable on a dark ground */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --paper: #121413;
-    --band: #191c1b;
-    --ink: #eceeec;
-    --ink-2: #b8bdb9;
-    --ink-3: #8f9590;
-    --rule: #2a2e2c;
-    --frame: #353a37;
-    --blue: #93a6ff;
-    --brick: #ff8f78;
-    --teal: #63c8be;
-    --amber: #f0b54a;
-    --chip-act: #ff98903d;   --chip-act-ink: #ffaea7;
-    --chip-wait: #e2b6233d;  --chip-wait-ink: #eec448;
-    --chip-done: #90ca903d;  --chip-done-ink: #90ca90;
-    --navy: #8aa3e0;
-    --lilac: #a99ff0;
-    --bar: #171a19;
-    --hover: #181b1a;
-    --primary-hover: #d9dcd9;
-    --select: #2c3a66;
-    --truth-bg: #1b2744;
-    --truth-ink: #f1f3f9;
-    --truth-dim: #a5b0cc;
-    --truth-text: #cfd5e6;
-    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
-    --soft-lilac: #4b4680;
-    --on-teal: #0b0b0b; --on-brick: #0b0b0b;
-    --c-normal: #8f9590; --c-normal-ink: #0b0b0b;
-    --c-no: #3987e5; --c-no-ink: #0b0b0b;
-    --c-late: #c98500; --c-late-ink: #0b0b0b;
-    --c-twice: #d55181; --c-twice-ink: #0b0b0b;
-    --c-money: #9085e9; --c-money-ink: #0b0b0b;
-    --c-disagree: #d95926; --c-disagree-ink: #0b0b0b;
-    color-scheme: dark;
-  }
-}
-
 * { box-sizing: border-box; }
 html { background: var(--paper); }
 body {
@@ -700,15 +660,6 @@ body {
   --shadow: 0 1px 2px rgba(27,25,23,.04), 0 10px 30px rgba(27,25,23,.06);
   background: var(--paper);
 }
-@media (prefers-color-scheme: dark) {
-  body {
-    --paper: #111a17; --band: #17241f; --bar: #111a17; --hover: #273930;
-    --ink: #f0f1e9; --ink-2: #cdd7cd; --ink-3: #abb9af; --rule: #33473d; --frame: #536356;
-    --blue: #b99a64; --card: #1a2923; --lt-card: #17241f; --lt-blue-ink: #111a17;
-    --link: #a5d8c2; --focus: #dbbe85; --select: #355744;
-    --line-2: #8fcfb2;
-  }
-}
 .page-front main { padding-top: 0; }
 .top, .preview-note { background: var(--paper); }
 .page-front .button { border-radius: 6px; font-weight: 500; padding: 11px 18px; font-size: 0.875rem; background: transparent; }
@@ -740,8 +691,6 @@ body {
 
 .lt-close { background: var(--blue); color: #fff; padding: clamp(64px, 8vw, 112px) 0; }
 .lt-close h2 { color: #fff; font-family: var(--display); font-weight: 500; font-size: clamp(2.25rem, 4vw, 3.75rem); line-height: 1.08; letter-spacing: -0.02em; max-width: 14em; }
-/* the closing band stays green in dark mode too, a step lighter than the page, with light text: brass is for the mark and buttons */
-@media (prefers-color-scheme: dark) { .lt-close { background: #1d3a32; } .lt-close, .lt-close h2 { color: var(--ink); } }
 .lt-close .actions { margin-top: var(--s6); }
 .lt-close .lt-light { background: #fff; color: #18302b; border-color: #fff; }
 .lt-close .lt-ghost { color: inherit; border-color: color-mix(in srgb, currentColor 45%, transparent); }
@@ -774,7 +723,6 @@ footer .foot { display: grid; grid-template-columns: minmax(0, 2fr) repeat(3, mi
 .bx-stop { grid-area: stop; } .bx-access { grid-area: access; } .bx-sale { grid-area: sale; } .bx-rent { grid-area: rent; }
 .bx-lien, .bx-access { background: var(--lt-card); box-shadow: none; }
 .bx-dark { background: #1d1a17; color: #f4ede2; border-color: #1d1a17; }
-@media (prefers-color-scheme: dark) { .page-front .bx-dark { background: #2a2622; border-color: #2a2622; } }
 .bx-q { font-size: 0.9375rem; font-weight: 600; letter-spacing: -0.01em; }
 .bx-dark .bx-q { color: #f4ede2; }
 .bx-amt, .bx-big { font-family: var(--display); font-size: clamp(2rem, 3vw, 2.875rem); font-weight: 500; letter-spacing: -0.02em; line-height: 1; font-variant-numeric: tabular-nums; color: var(--blue); }
@@ -820,7 +768,6 @@ footer .foot { display: grid; grid-template-columns: minmax(0, 2fr) repeat(3, mi
 .frame .frame-bar { background: color-mix(in srgb, var(--card) 96%, var(--ink)); }
 .frame .steps .dot, .bx .steps .dot { background: var(--card); }
 .frame .steps li.held .dot, .bx .steps li.held .dot { background: var(--brick); }
-@media (prefers-color-scheme: dark) { .button.primary, .page-front .button.primary { color: var(--lt-blue-ink); } }
 
 /* the motion layer every page shares (base.html): one entrance per block, lists arrive in order, bars grow to their value,
    numbers roll to the figure the record holds. Without the script, or with reduced motion, everything is simply there. */
@@ -1145,6 +1092,10 @@ body.fms > main { min-width: 0; }
 .fms-convs li.picked a { background: color-mix(in srgb, var(--blue) 8%, var(--paper)); }
 .fms-snip { flex: 1 0 100%; color: var(--ink-2); font-size: var(--t-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fms-unread a { color: var(--ink-2); }
+.fms-convs li.reading a { background: color-mix(in srgb, var(--blue) 6%, var(--paper)); box-shadow: inset 3px 0 0 var(--blue); }
+.fms-convs li.closed a { box-shadow: inset 3px 0 0 var(--chip-done-ink); }
+.fms-convs li.to-staff a { box-shadow: inset 3px 0 0 var(--chip-act-ink); }
+.fms-readall { align-items: center; justify-content: space-between; margin-bottom: var(--s3); }
 .fms-case { padding: var(--s4) var(--s6) var(--s5); border: 1px solid var(--frame); border-radius: 10px; background: var(--paper); }
 .fms-case ul { margin: 0; padding-left: 1.1rem; }
 .fms-case mark { background: color-mix(in srgb, var(--chip-wait) 70%, transparent); color: inherit; padding: 0 3px; border-radius: 3px; }

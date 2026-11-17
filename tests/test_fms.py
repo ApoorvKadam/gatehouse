@@ -119,14 +119,14 @@ def test_the_screens_show_the_generated_year_in_words(fms_url, sim):
         pages = {p: c.get(p) for p in PAGES}
         assert all(r.status_code == 200 for r in pages.values()), {p: r.status_code for p, r in pages.items() if r.status_code != 200}
         text = {p: seen(r.text) for p, r in pages.items()}
-        assert "$2,808.00" in text["/home"] and "22 tenants" in text["/home"] and "22 tenants owe $2,808.00" in text["/billing"]
-        assert "All 120 units" in text["/home"] and len(re.findall(r"[A-Z][a-z]{2} \d{1,2}, 20\d\d", text["/units"].split("units occupied.", 1)[1])) == 110
-        assert "121 tenants" in text["/tenants"]
-        assert "Building A" in text["/units"] and "Vacant 10" in text["/units"] and "Row A" not in text["/units"]
+        assert "$2,556.00" in text["/home"] and "21 tenants" in text["/home"] and "21 tenants owe $2,556.00" in text["/billing"]
+        assert "All 120 units" in text["/home"] and len(re.findall(r"[A-Z][a-z]{2} \d{1,2}, 20\d\d", text["/units"].split("units occupied.", 1)[1])) == 111
+        assert "122 tenants" in text["/tenants"]
+        assert "Building A" in text["/units"] and "Vacant 9" in text["/units"] and "Row A" not in text["/units"]
         assert "38 of 40 right" in text["/messages/tests"] and "23 of 40 right" in text["/messages/tests"]
         assert "We waive one late fee per tenant" in text["/rules"] and "$25.00" in text["/rules"]
         for name in ("Maria Lopez", "James Carter", "Priya Shah", "Faye Turner"):
-            assert name in text["/today"]
+            assert name in text["/messages"] and name not in text["/today"]       # read in Messages, decide in Today
         record = seen(c.get(record_of(c, "Maria Lopez")).text)
         assert "Ledger" in record and "Card declined" in record and "November rent" in record
         for p, r in pages.items():
@@ -164,7 +164,7 @@ def test_a_reversal_lands_on_this_copy_only_is_shown_after_a_reload_and_start_ov
         james = record_of(a, "James Carter")
         assert "Late fee removed: duplicate" in seen(a.get(james).text)
         assert "removed" not in seen(b.get(james).text)
-        assert "James Carter" in seen(a.get("/today").text).split("Closed by Tilden", 1)[1]
+        assert "Tilden closed 1 message on this copy" in seen(a.get("/today").text)
         a.post("/start-over")
         assert "removed" not in seen(a.get(james).text)
 
@@ -174,17 +174,47 @@ def test_staff_remove_a_fee_she_never_signed_for_through_the_gate_with_a_note(fm
     with sign_in(app) as c:
         assert run(c, "priya", shift="s3", run_id="r1").status_code == 200
         today = c.get("/today").text
-        assert "Collection paused until the review by Nov 24" in seen(today)
-        dispute = re.search(r'name="dispute" value="([^"]+)"', today).group(1)
+        card = next(a for a in today.split("<article")[1:] if "Priya Shah" in a)
+        assert "Collection paused until the review by Nov 24" in seen(card) and "Today by Tilden" in seen(card)
+        dispute = re.search(r'name="dispute" value="([^"]+)"', card).group(1)
         assert c.post("/disputes/decide", data={"dispute": dispute, "action": "remove_disputed_fee", "reason": "x"}).status_code == 422
         r = c.post("/disputes/decide", data={"dispute": dispute, "action": "remove_disputed_fee", "reason": "her signed lease has no admin fee"},
                    follow_redirects=False)
         assert r.status_code == 303
         c.post("/disputes/decide", data={"dispute": dispute, "action": "remove_disputed_fee", "reason": "pressed again"})
         after = seen(c.get("/today").text)
-        assert "No open disputes" in after and after.count("Removed the fee") == 1 and "her signed lease has no admin fee" in after
+        waiting = after.split("Disputes waiting for a decision", 1)[1].split("Handed to staff", 1)[0]
+        assert "Priya Shah" not in waiting and "Nora Feld" in waiting                    # last week's dispute still waits
+        assert after.count("Removed the fee") == 1 and "her signed lease has no admin fee" in after
         priya = record_of(c, "Priya Shah")
         assert "Admin fee removed: not in the signed schedule" in seen(c.get(priya).text)
+
+
+def test_the_day_opens_with_last_weeks_dispute_and_staff_can_settle_it_on_their_copy(fms_url, sim):
+    """A first visit finds one dispute from last week waiting, on Home, Today, Units and the tenant's record, all from the same
+    records. Removing the fee is one reversal on this copy only; Start over brings the dispute back."""
+    app = site(fms_url)
+    with sign_in(app) as c, sign_in(app) as other:
+        assert "1 dispute waiting for a decision" in seen(c.get("/home").text)
+        today = c.get("/today").text
+        card = next(a for a in today.split("<article")[1:] if "Nora Feld" in a)
+        words = seen(card)
+        assert "Recorded Nov 8 by staff at the desk" in words and "Collection paused until the review by Nov 18" in words
+        assert "$25.00 admin fee, posted Nov 8 by hand" in words and "Late fee" in words and "Remove the fee" in words
+        nora = record_of(c, "Nora Feld")
+        unit = re.search(r"unit (C3\d\d)", words).group(1)
+        units = c.get("/units").text
+        assert f'title="{unit}: Nora Feld, Fee in dispute"' in units and "Fee in dispute 1" in seen(units)
+        dispute = re.search(r'name="dispute" value="([^"]+)"', card).group(1)
+        for reason in ("her move-in special has no admin fee", "pressed again"):
+            assert c.post("/disputes/decide", data={"dispute": dispute, "action": "remove_disputed_fee", "reason": reason},
+                          follow_redirects=False).status_code == 303
+        record = seen(c.get(nora).text)
+        assert record.count("Admin fee removed: not in the signed schedule") == 1
+        assert "Nora Feld" not in seen(c.get("/today").text).split("Handed to staff", 1)[0] and "0 disputes" in seen(c.get("/home").text)
+        assert "Nora Feld" in seen(other.get("/today").text)                           # another visitor's copy still has it
+        c.post("/start-over")
+        assert "1 dispute waiting for a decision" in seen(c.get("/home").text) and "removed" not in seen(c.get(nora).text)
 
 
 def test_a_naive_day_start_is_read_as_utc_on_new_york_time():
@@ -258,6 +288,7 @@ def test_his_corrections_of_the_night_stay_corrected(fms_url, sim):
         conversations = cold.split('class="fms-convs"', 1)[1].split("</ol>", 1)[0]
         assert "/today" not in conversations and conversations.count('href="/messages?unread=') == len(SHIFT)
         assert 'id="read-one"' in cold                       # the first unread message is open, with its own read button
+        assert 'id="read-all"' in cold and "read-all" not in c.get("/today").text        # the only read buttons are in Messages
 
 
 def test_the_date_is_the_real_day_and_a_new_day_brings_new_books(fms_url, sim):
