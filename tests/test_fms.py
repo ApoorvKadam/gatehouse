@@ -150,7 +150,7 @@ def test_our_agent_off_sends_every_message_to_staff_and_the_books_stay(fms_url, 
         r = run(c, "james", shift="s2", run_id="r1")
         assert r.status_code == 200 and r.json()["off"] and r.json()["handed"]
         today = seen(c.get("/today").text)
-        assert "Handed to staff" in today and "the agent is off" in today.lower()
+        assert "Handed to staff" in today and "Tilden is off on this copy" in today
         assert "Reversed the second copy" not in seen(c.get("/messages").text)
 
 
