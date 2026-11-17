@@ -18,12 +18,13 @@ from starlette.concurrency import run_in_threadpool
 from core.case import OFF
 from core.books import ADMIN_FEE_CENTS, LATE_FEE_CENTS, RENT, REVIEW_DAYS, lines, local, month_key
 from core.evidence import KIND_WORDS, day, money, month_words
-from core.gate import ACTIONS, STAFF_ACTIONS, Command, execute
+from core.gate import ACTIONS, STAFF_ACTIONS, STAFF_RULE, Command, execute
+from core.rules import staff_words, waiver_words
 from core.seed import story_month
 
 from . import spend
 from .web import AGENT
-from .front_desk import ACTION_WORDS, CLAIM_WORDS, SHIFT, CaseIn, FrontDesk, account_words
+from .front_desk import ACTION_WORDS, CLAIM_WORDS, SHIFT, CaseIn, FrontDesk, RuleIn, account_words
 from .guard import LIFETIME, SLOW_DOWN, UNSET, Unreachable
 
 DEMO_NAME, DEMO_PASSWORD = "dana.reyes", "northstar"
@@ -305,7 +306,10 @@ class Facility:
 
     def rules(self) -> dict:
         rule = self.b.rules.get("late_fee_waiver")
-        return {"waiver": rule, "typed": [words(k, v) for k, v in (rule or {}).get("typed", {}).items()],
+        staff_rule = self.b.rules.get(STAFF_RULE)
+        return {"waiver": rule, "typed": [words(k, v) for k, v in (rule or {}).get("typed", {}).items() if not isinstance(v, dict)],
+                "waiver_words": waiver_words(rule["typed"]) if rule else [], "staff_rule": staff_rule,
+                "staff_rule_words": staff_words(staff_rule["typed"]) if staff_rule else [],
                 "late_fee": money(LATE_FEE_CENTS), "admin_fee": money(ADMIN_FEE_CENTS), "review_days": REVIEW_DAYS,
                 "actions": [(MAY_DO[a], a in ("reverse_duplicate", "correct_fee_posted_in_error", "waive_fee")) for a in ACTIONS],
                 "staff": [STAFF_DO[a] for a in STAFF_ACTIONS]}
@@ -499,6 +503,34 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
             with session_factory() as s:
                 return settings.daily_budget_usd - spend.spent_today(s)
         return fd.run(ident, body, live, settings.visitor_cases_per_day, budget_left)
+
+    @app.post("/api/fms/rules")
+    def propose_rule(body: RuleIn, request: Request, ident: str = Depends(need)):
+        """An owner sentence read into a proposed rule on this session's copy: what it says, what changes, last year replayed."""
+        same_site(request)
+
+        def budget_left() -> float:
+            with session_factory() as s:
+                return settings.daily_budget_usd - spend.spent_today(s)
+        pid, p, effect = fd.rule_proposal(ident, body.sentence, live, budget_left if live else None)
+        f = Facility(fd, ident)
+        names = {t: f.people[t]["name"] for t in f.people}
+        changed = lambda rows: [{"who": names.get(r["tenant"], ""), "due": day(date.fromisoformat(r["due"])), "asked": day(date.fromisoformat(r["asked"])),
+                                 "before": r["old"], "after": r["new"]} for r in rows[:8]]
+        return {"id": pid, "outcome": p.outcome, "kind": p.kind, "words": p.words, "reason": p.reason, "not_expressed": p.not_expressed,
+                "quotes": [q["words"] for q in p.quotes], "cents": round(p.call.cents, 4) if p.call else 0,
+                "replay": {"fees": effect["fees"], "before": effect["old"], "after": effect["new"], "now_allowed": len(effect["to_allowed"]),
+                           "now_refused": len(effect["to_refused"]), "allowed": changed(effect["to_allowed"]), "refused": changed(effect["to_refused"])}
+                if effect else None}
+
+    @app.post("/rules/approve", include_in_schema=False)
+    async def approve_rule(request: Request):
+        """The visitor approves the proposal they were shown, as the owner, on this session's copy only."""
+        same_site(request)
+        ident = need(request)
+        data = await form(request)
+        await run_in_threadpool(fd.approve_rule, ident, data.get("proposal", "")[:20])
+        return RedirectResponse("/rules#in-force", status_code=303)
 
     @app.post("/disputes/decide", include_in_schema=False)
     async def decide(request: Request):

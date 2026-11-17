@@ -4,7 +4,29 @@
 <header class="head">
   <h1>Rules</h1>
 </header>
-<div class="fms-grid">
+<section class="fms-section" aria-labelledby="h-write">
+  <h2 id="h-write">Write a rule</h2>
+  <p class="muted">Write how waivers or hand-offs to staff should work, in your own words. {{ agent }} turns the sentence into an exact rule, code checks it and shows what it would have changed last year. Nothing changes until you approve it. On this copy you approve as the owner.</p>
+  <form id="rule-form" class="fms-rule-form">
+    <label for="rule-text">Your rule</label>
+    <textarea id="rule-text" maxlength="400" rows="3" required placeholder="For example: two late fee waivers a year are fine, but only for tenants who have rented with us for a year."></textarea>
+    <button class="button primary" type="submit">Have {{ agent }} read it</button>
+    <p id="rule-status" class="fms-status" role="status" aria-live="polite"></p>
+  </form>
+  <article id="rule-result" class="fms-card" hidden>
+    <p class="fms-card-head"><span id="rule-chip" class="chip"></span></p>
+    <p id="rule-reason"></p>
+    <div id="rule-words-box" hidden><h3>The rule, in words</h3><ul id="rule-words"></ul></div>
+    <div id="rule-quotes-box" hidden><h3>Your words it rests on</h3><ul id="rule-quotes"></ul></div>
+    <div id="rule-gaps-box" hidden><h3>What it cannot express yet</h3><ul id="rule-gaps"></ul></div>
+    <div id="rule-replay-box" hidden><h3>Last year, checked again</h3><p id="rule-replay"></p><ul id="rule-changes"></ul></div>
+    <form id="rule-approve" method="post" action="/rules/approve" hidden>
+      <input type="hidden" name="proposal" id="rule-proposal">
+      <button class="button primary" type="submit">Approve as the owner</button>
+    </form>
+  </article>
+</section>
+<div class="fms-grid" id="in-force">
   <section class="panel" aria-labelledby="h-fees">
     <h2 id="h-fees">Fees and schedule</h2>
     <dl class="fms-defs">
@@ -16,10 +38,18 @@
   </section>
   {% if waiver %}
   <section class="panel" aria-labelledby="h-owner">
-    <h2 id="h-owner">The owner's rule</h2>
+    <h2 id="h-owner">The owner's waiver rule{% if waiver.version > 1 %} <span class="chip done">Version {{ waiver.version }}</span>{% endif %}</h2>
     <blockquote class="fms-rule">{{ waiver.sentence }}</blockquote>
+    <ul class="fms-may">{% for w in waiver_words %}<li><span>{{ w }}</span></li>{% endfor %}</ul>
     <p class="muted">The exact form code checks before any waiver is written:</p>
     <dl class="fms-defs">{% for k, v in typed %}<div><dt>{{ k|upfirst }}</dt><dd>{{ v }}</dd></div>{% endfor %}</dl>
+  </section>
+  {% endif %}
+  {% if staff_rule %}
+  <section class="panel" aria-labelledby="h-staff-rule">
+    <h2 id="h-staff-rule">Sent to staff by the owner's rule <span class="chip done">Version {{ staff_rule.version }}</span></h2>
+    <blockquote class="fms-rule">{{ staff_rule.sentence }}</blockquote>
+    <ul class="fms-may">{% for w in staff_rule_words %}<li><span>{{ w }}</span></li>{% endfor %}</ul>
   </section>
   {% endif %}
   <section class="panel" aria-labelledby="h-agent">
@@ -34,4 +64,42 @@
     <p class="muted">Removing a fee the tenant never signed for is a correction, not a waiver, so it does not use up the owner's yearly waiver.</p>
   </section>
 </div>
+<script>
+(function () {
+  var form = document.getElementById("rule-form"), text = document.getElementById("rule-text"), status = document.getElementById("rule-status");
+  var CHIPS = { adopt: ["Ready to approve", "done"], already: ["Already how it works", "plain"], cannot: ["Cannot be expressed yet", "wait"], refuse: ["Refused", "act"] };
+  function list(id, items) { var ul = document.getElementById(id); ul.textContent = ""; (items || []).forEach(function (t) { var li = document.createElement("li"); li.textContent = t; ul.appendChild(li); }); document.getElementById(id + "-box") && (document.getElementById(id + "-box").hidden = !(items && items.length)); }
+  form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    var button = form.querySelector("button"); button.disabled = true;
+    // the previous result and its approval go away until this reading comes back
+    document.getElementById("rule-result").hidden = true; document.getElementById("rule-approve").hidden = true; document.getElementById("rule-proposal").value = "";
+    status.textContent = "{{ agent }} is reading the sentence. Code then checks it and replays last year.";
+    fetch("/api/fms/rules", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sentence: text.value }) })
+      .then(function (r) { return r.ok ? r.json() : r.json().then(function (b) { throw new Error(b && typeof b.detail === "string" ? b.detail : "Something went wrong. Try again."); }); })
+      .then(function (p) {
+        var chip = document.getElementById("rule-chip"), c = CHIPS[p.outcome] || ["", "plain"];
+        chip.textContent = c[0]; chip.className = "chip " + c[1];
+        // the rule is shown in code's own words; the model's note is shown only when nothing can be adopted
+        var reason = document.getElementById("rule-reason"); reason.textContent = p.outcome === "adopt" ? "" : p.reason; reason.hidden = p.outcome === "adopt";
+        list("rule-words", p.words); list("rule-quotes", p.quotes); list("rule-gaps", p.not_expressed);
+        var box = document.getElementById("rule-replay-box");
+        if (p.replay) {
+          var r = p.replay;
+          document.getElementById("rule-replay").textContent = "If every tenant had asked about every one of last year's " + r.fees + " late fees on the day they next paid: " +
+            "Waivers allowed: " + r.before + " under the rule in force, " + r.after + " under this one. " + r.now_allowed + " would now be allowed and " + r.now_refused + " would now be refused.";
+          var ul = document.getElementById("rule-changes"); ul.textContent = "";
+          r.allowed.concat(r.refused).forEach(function (x) { var li = document.createElement("li"); li.textContent = x.who + ", late fee due " + x.due + ": " + (r.allowed.indexOf(x) >= 0 ? "now allowed" : "now refused, " + x.after) + "."; ul.appendChild(li); });
+          box.hidden = false;
+        } else { box.hidden = true; }
+        document.getElementById("rule-proposal").value = p.id;
+        document.getElementById("rule-approve").hidden = p.outcome !== "adopt";
+        document.getElementById("rule-result").hidden = false;
+        status.textContent = p.cents ? "Read for " + p.cents.toFixed(3) + " cents." : "";
+        button.disabled = false;
+      })
+      .catch(function (err) { status.textContent = err.message; button.disabled = false; });
+  });
+})();
+</script>
 {% endblock %}

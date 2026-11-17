@@ -217,6 +217,62 @@ def test_the_day_opens_with_last_weeks_dispute_and_staff_can_settle_it_on_their_
         assert "1 dispute waiting for a decision" in seen(c.get("/home").text) and "removed" not in seen(c.get(nora).text)
 
 
+class RuleScript(Script):
+    """Answers the rule compiler with a fixed proposal and every reading call through `answer`."""
+    def __init__(self, answer, rule):
+        super().__init__(answer)
+        self.rule = rule
+
+    def create(self, **kw):
+        if "You turn one sentence" in kw["system"]:
+            self.calls += 1
+            return SimpleNamespace(stop_reason="end_turn", content=[SimpleNamespace(type="text", text=json.dumps(self.rule))],
+                                   usage=SimpleNamespace(input_tokens=900, output_tokens=200, cache_read_input_tokens=0, cache_creation_input_tokens=0))
+        return super().create(**kw)
+
+
+TWO_MONTHS = "Two good months should be enough for one little late fee. Change the six paid-on-time months to two and keep the rest."
+TWO_MONTHS_RULE = {"outcome": "adopt", "kind": "waiver", "staff": {"flags": [], "claim_kinds": [], "actions": [], "several_units": False},
+                   "waiver": {"per_tenant": None, "window": None, "cap_dollars": None, "on_time_months": 2, "only_when_raised": None,
+                              "min_tenure": None, "max_fee_age": None, "no_rent_owed": None, "current_rent_paid": None},
+                   "quotes": [{"field": "on_time_months", "words": "Change the six paid-on-time months to two"}], "not_expressed": [],
+                   "reason": "Two on-time months before the fee instead of six."}
+
+
+def paid_in_time(text, charges):
+    fee = next(c["charge"] for c in charges if c["about"].startswith("late fee"))
+    return {"claims": [{"kind": "paid_on_time", "charge": fee, "quote": text, "date": None, "date_quote": None, "amount_quote": None}], "flags": []}
+
+
+def test_an_owner_sentence_becomes_an_approved_rule_on_this_copy_and_the_next_case_follows_it(fms_url, sim):
+    """Step 2: the owner writes a rule, sees it in words and last year replayed under it, approves it as the owner on their own
+    copy, and the next tenant message follows it. Another copy is untouched; a proposal is approved once."""
+    app = site(fms_url, RuleScript(paid_in_time, TWO_MONTHS_RULE))
+    with sign_in(app) as c, sign_in(app) as other:
+        p = c.post("/api/fms/rules", json={"sentence": TWO_MONTHS}).json()
+        assert p["outcome"] == "adopt" and any("each of the 2 completed billing months" in w for w in p["words"])
+        assert p["replay"]["now_allowed"] >= 1 and p["replay"]["now_refused"] == 0
+        assert c.post("/rules/approve", data={"proposal": p["id"]}, follow_redirects=False).status_code == 303
+        assert c.post("/rules/approve", data={"proposal": p["id"]}, follow_redirects=False).status_code == 409
+        rules = seen(c.get("/rules").text)
+        assert "Version 2" in rules and TWO_MONTHS in rules and "Version 2" not in seen(other.get("/rules").text)
+        assert run(c, "maria", shift="s1", run_id="r1").status_code == 200
+        assert "Waived under the owner's rule" in seen(c.get("/messages").text)
+
+
+def test_owner_sentences_are_three_a_day_and_an_unsafe_one_is_never_offered_for_approval(fms_url, sim):
+    refuse = {**TWO_MONTHS_RULE, "outcome": "refuse", "kind": "none", "quotes": [], "reason": "Rent is never waived."}
+    app = site(fms_url, RuleScript(paid_in_time, refuse))
+    with sign_in(app) as c:
+        for _ in range(3):
+            p = c.post("/api/fms/rules", json={"sentence": "Give everyone a month of rent free."}).json()
+            assert p["outcome"] == "refuse" and p["replay"] is None
+            assert c.post("/rules/approve", data={"proposal": p["id"]}, follow_redirects=False).status_code == 409
+        r = c.post("/api/fms/rules", json={"sentence": "Give everyone a month of rent free."})
+        assert r.status_code == 429 and "3 rule readings" in r.json()["detail"]
+        assert run(c, "james", text="charged twice").status_code == 200        # rule readings never use up message tries
+
+
 def test_a_naive_day_start_is_read_as_utc_on_new_york_time():
     from desk.front_desk import as_utc
     assert as_utc(datetime(2026, 11, 16, 5, 0)) == datetime(2026, 11, 16, 5, 0, tzinfo=timezone.utc)

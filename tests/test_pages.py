@@ -153,6 +153,15 @@ def test_a_class_is_styled_by_one_rule_of_its_own():
     assert sorted({sel for sel in own if own.count(sel) > 1}) == []
 
 
+def test_every_page_title_block_holds_only_its_title():
+    """A replace of the first endblock once put a whole script into the page title of two templates (Today, then Rules)."""
+    import re
+    from pathlib import Path
+    for t in Path("desk/templates").glob("fms*.html"):
+        m = re.search(r"{% block page %}(.*?){% endblock %}", t.read_text(), re.S)
+        assert m is None or ("<" not in m.group(1) and len(m.group(1)) < 60), t.name
+
+
 def test_figures_are_centred_and_boxes_side_by_side_match():
     """On every page where it applies, every block of figures is
     centred, and boxes that sit side by side are the same height. A new figure block or side-by-side layout joins these lists."""

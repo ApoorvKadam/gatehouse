@@ -12,7 +12,7 @@ from . import agent, table
 from .billing import Ledger
 from .books import Books, LATE_FEE, fold, local
 from .evidence import Claim, Finding, charge_list, check
-from .gate import Command, Decision, evaluate, evaluate_ask, execute, waiver_rule
+from .gate import Command, Decision, evaluate, evaluate_ask, execute, staff_rule_for_message, waiver_rule
 from .reply import write
 from .store import Store
 
@@ -163,6 +163,12 @@ def handle(store: Store, stream: str, case: str, phone: str | None, text: str, a
             actions[i] = (a, "model") if a in valid else ("hand_to_staff", "code")
     # act, through the gate: corrections of our own records first, then waivers, then the rest; oldest charge first within each
     source = "fixed_workflow" if arm.chooser == "table" and arm.reader == "keywords" else "operator"
+    units = len({books.charges[c.charge].lease for c in res.claims if c.charge in books.charges}) or 1
+    # the owner's staff rule covers the whole message: if any claim, flag or the units match, nothing is done before staff see it
+    hit = staff_rule_for_message(books, [f.claim.kind for f in findings], tuple(res.flags), units)
+    if hit:
+        actions = {i: ("hand_to_staff", "owner rule") for i in order}
+        res.handed = res.handed or hit[0]
     rank = {"reverse_duplicate": 0, "correct_fee_posted_in_error": 0, "waive_fee": 1}
     for i in sorted(order, key=lambda i: (rank.get(actions[i][0], 2), order.index(i))):
         action, by = actions[i]
@@ -170,7 +176,8 @@ def handle(store: Store, stream: str, case: str, phone: str | None, text: str, a
         target = next((o.charge for o in f.options if o.action == action), f.claim.charge)
         cmd = Command(f"{case}:{i}:{action}", action, tenant, source, target, case, quote=f.claim.quote,
                       raised=f.claim.kind in ("wants_waiver", "paid_on_time", "charged_twice", "never_agreed", "challenges_record"),
-                      role="office_manager" if action == "hand_to_staff" else None)
+                      role="office_manager" if action == "hand_to_staff" else None, reason=hit[0] if hit else None,
+                      claim_kind=f.claim.kind, flags=tuple(res.flags), units=units)
         dec = execute(store, stream, cmd, now)
         if not dec.allowed and action != "hand_to_staff":
             execute(store, stream, Command(f"{case}:{i}:refused-to-staff", "hand_to_staff", tenant, source, target, case,

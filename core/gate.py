@@ -33,6 +33,9 @@ class Command:
     raised: bool = False            # the tenant raised this charge in their message
     role: str | None = None         # the staff role a hand-over goes to
     reason: str | None = None
+    claim_kind: str | None = None   # what the reader said the tenant claims, for the owner's staff rules
+    flags: tuple[str, ...] = ()     # the reader's flags for the whole message
+    units: int = 1                  # how many units the message's claims are about
 
 
 @dataclass
@@ -67,9 +70,47 @@ def waiver_rule(books: Books) -> dict | None:
     return books.rules.get("late_fee_waiver")
 
 
-def waiver_check(books: Books, tenant: str, charge, now: datetime, already: int | None = None) -> tuple[bool, str, str | None]:
-    """The owner's waiver rule, read from its recorded typed form. Returns (allowed, check, the owner's sentence)."""
-    rule = waiver_rule(books)
+STAFF_RULE = "send_to_staff"
+
+
+def staff_rule_for_message(books: Books, kinds: list[str], flags: tuple[str, ...], units: int) -> tuple[str, str] | None:
+    """The owner's staff rule on the whole message, before any action: a flag, any claim's kind, or several units."""
+    rule = books.rules.get(STAFF_RULE)
+    if rule is None:
+        return None
+    t = rule["typed"]
+    if set(flags) & set(t.get("flags", [])):
+        return "the owner's rule sends messages like this to staff", rule["sentence"]
+    if set(kinds) & set(t.get("claim_kinds", [])):
+        return "the owner's rule sends this kind of claim to staff", rule["sentence"]
+    if t.get("several_units") and units > 1:
+        return "the owner's rule sends a message about several units to staff", rule["sentence"]
+    return None
+
+
+def staff_rule(books: Books, cmd: Command) -> tuple[str, str] | None:
+    """The owner's rule that sends this message to staff instead of the agent, as (the check in words, the owner's sentence)."""
+    rule = books.rules.get(STAFF_RULE)
+    if rule is None:
+        return None
+    t = rule["typed"]
+    why = None
+    if set(cmd.flags) & set(t.get("flags", [])):
+        why = "the owner's rule sends messages like this to staff"
+    elif cmd.claim_kind and cmd.claim_kind in t.get("claim_kinds", []):
+        why = "the owner's rule sends this kind of claim to staff"
+    elif cmd.action in t.get("actions", []):
+        why = "the owner's rule leaves this action to staff"
+    elif t.get("several_units") and cmd.units > 1:
+        why = "the owner's rule sends a message about several units to staff"
+    return (why, rule["sentence"]) if why else None
+
+
+def waiver_check(books: Books, tenant: str, charge, now: datetime, already: int | None = None,
+                 rule: dict | None = None) -> tuple[bool, str, str | None]:
+    """The owner's waiver rule, read from its recorded typed form (or a proposed one, for a replay). Returns (allowed, check, the
+    owner's sentence)."""
+    rule = rule or waiver_rule(books)
     if rule is None:
         return False, "no owner rule allows waivers", None
     t, sentence = rule["typed"], rule["sentence"]
@@ -77,6 +118,20 @@ def waiver_check(books: Books, tenant: str, charge, now: datetime, already: int 
         return False, "the owner's rule waives late fees only", sentence
     if charge.cents > t["cap_cents"]:
         return False, "over the owner's cap for one waiver", sentence
+    today = local(now).date()
+    if t.get("max_fee_age_days") and (today - local(charge.posted_at).date()).days > t["max_fee_age_days"]:
+        return False, "the fee is older than the owner's rule allows for a waiver", sentence
+    if t.get("min_tenure_days"):
+        starts = [x.start for x in books.leases.values() if x.tenant == tenant and x.ended is None]
+        if not starts or (today - min(starts)).days < t["min_tenure_days"]:
+            return False, "the tenant has not rented as long as the owner's rule asks", sentence
+    if t.get("no_rent_owed") and any(c.kind == RENT and c.due <= today for c in books.open_charges(tenant, skip_held=False)):
+        return False, "the tenant owes rent, and the owner's rule waives no fee while rent is owed", sentence
+    if t.get("current_rent_paid"):
+        key = f"{today.year:04d}-{today.month:02d}"
+        for x in books.leases.values():
+            if x.tenant == tenant and x.ended is None and any(c.open_cents > 0 for c in books.live(f"rent:{x.id}:{key}")):
+                return False, "this month's rent is not paid in full, which the owner's rule asks before a waiver", sentence
     used = books.waived_within(tenant, now, t["within_days"]) if already is None else already
     if used >= t["per_tenant"]:
         return False, "the tenant already had a waiver in the last 12 months", sentence
@@ -97,6 +152,11 @@ def evaluate(books: Books, cmd: Command, now: datetime) -> Decision:
         return d(False, "only staff decide a dispute")
     if cmd.action == "hand_to_staff":
         return d(True, f"handed to the {cmd.role or 'office_manager'}".replace("_", " "))
+    # the owner's staff rule comes before anything the agent may do, explaining included; staff are never stopped by it
+    if not staff:
+        hit = staff_rule(books, cmd)
+        if hit:
+            return d(False, hit[0], hit[1])
     if cmd.tenant not in books.tenants:
         return d(False, "no identified tenant, so nothing on any account changes")
     ch = books.charges.get(cmd.charge or "")
