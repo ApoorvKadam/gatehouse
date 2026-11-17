@@ -698,6 +698,7 @@ body {
 
 /* the footer, in columns */
 footer .foot { display: grid; grid-template-columns: minmax(0, 2fr) repeat(3, minmax(0, 1fr)); gap: var(--s6); padding-top: var(--s7); padding-bottom: var(--s7); }
+footer .foot-site { grid-template-columns: minmax(0, 2fr) repeat(2, minmax(0, 1fr)); }
 .foot-brand { display: grid; gap: 6px; align-content: start; }
 .foot-brand b { font-family: var(--display); font-size: 1.25rem; font-weight: 600; color: var(--ink); }
 .foot-col { display: grid; gap: 8px; align-content: start; font-size: var(--t-sm); }

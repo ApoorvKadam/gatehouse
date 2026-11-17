@@ -182,7 +182,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         if start_worker:
             worker.stop()
 
-    app = FastAPI(title="Gatehouse", lifespan=lifespan)
+    app = FastAPI(title="Staddle", lifespan=lifespan)
     app.state.session_factory = factory
     app.state.guard = guard
     # the reconciliation desk's own API on the simulator; on the public site the FMS (desk/fms.py) replaces it, and its code stays

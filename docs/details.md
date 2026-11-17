@@ -1,6 +1,6 @@
-# Gatehouse: the full write-up
+# The earlier reconciliation desk: the full write-up
 
-The short version is the [README](../README.md). This page keeps every detail: where it fits, each part, how it is built, how to run it, the lien rules, the limits and the data.
+This page describes the reconciliation desk Staddle grew out of, from when the project was called Gatehouse; the name is kept below where it describes that desk. The short version is the [README](../README.md). This page keeps every detail: where it fits, each part, how it is built, how to run it, the lien rules, the limits and the data.
 
 ## Where it fits
 
