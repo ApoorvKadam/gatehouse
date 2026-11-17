@@ -86,8 +86,8 @@
         var box = document.getElementById("rule-replay-box");
         if (p.replay) {
           var r = p.replay;
-          document.getElementById("rule-replay").textContent = "If every tenant had asked about every one of last year's " + r.fees + " late fees on the day they next paid: " +
-            "Waivers allowed: " + r.before + " under the rule in force, " + r.after + " under this one. " + r.now_allowed + " would now be allowed and " + r.now_refused + " would now be refused.";
+          document.getElementById("rule-replay").textContent = "Last year had " + r.fees + " late fees. If every tenant had asked about each one on the day they next paid, the rule in force allows " +
+            r.before + " waivers and this one allows " + r.after + ". " + r.now_allowed + " would now be allowed and " + r.now_refused + " would now be refused.";
           var ul = document.getElementById("rule-changes"); ul.textContent = "";
           r.allowed.concat(r.refused).forEach(function (x) { var li = document.createElement("li"); li.textContent = x.who + ", late fee due " + x.due + ": " + (r.allowed.indexOf(x) >= 0 ? "now allowed" : "now refused, " + x.after) + "."; ul.appendChild(li); });
           box.hidden = false;
