@@ -145,11 +145,11 @@ def test_with_no_keys_the_check_is_off_and_the_preview_works_as_before(fms_url, 
         assert type_as(visitor, "dana", "Hello", "press-0001").status_code == 200
     monkeypatch.setenv("DESK_TURNSTILE_SITEKEY", "a-site-key")
     monkeypatch.setenv("DESK_TURNSTILE_SECRET", "a-secret")
-    monkeypatch.setenv("DESK_TURNSTILE_HOST", "Gatehouse-Peug.onrender.com")
+    monkeypatch.setenv("DESK_TURNSTILE_HOST", "Staddle.onrender.com")
     settings = Settings.from_env()
-    assert (settings.turnstile_sitekey, settings.turnstile_secret, settings.turnstile_host) == ("a-site-key", "a-secret", "Gatehouse-Peug.onrender.com")
+    assert (settings.turnstile_sitekey, settings.turnstile_secret, settings.turnstile_host) == ("a-site-key", "a-secret", "Staddle.onrender.com")
     guard = Guard(settings.turnstile_sitekey, settings.turnstile_secret, settings.turnstile_host)
-    assert guard.host == "gatehouse-peug.onrender.com" and guard.on and not guard.broken
+    assert guard.host == "staddle.onrender.com" and guard.on and not guard.broken
     assert Guard("a-site-key", "a-secret").broken and not Guard("a-site-key", "a-secret").on and not Guard().broken
 
 
@@ -168,13 +168,13 @@ def test_a_check_set_up_in_part_closes_both_paths_and_the_operator_still_works(f
 
 
 def test_the_answer_must_come_from_the_address_the_desk_was_told_to_expect_and_not_from_the_request(fms_url, sim, turnstile):
-    app = live_app(fms_url, Scripted(), **{**KEYS, "turnstile_host": "Gatehouse-Peug.onrender.com"})
-    assert app.state.guard.host == "gatehouse-peug.onrender.com"
+    app = live_app(fms_url, Scripted(), **{**KEYS, "turnstile_host": "Staddle.onrender.com"})
+    assert app.state.guard.host == "staddle.onrender.com"
     with TestClient(app) as visitor:
         turnstile.answer = {"success": True, "hostname": "elsewhere.example", "action": ACTION}
         for headers in ({}, {"x-forwarded-host": "elsewhere.example"}, {"host": "elsewhere.example"}):          # what the client writes decides nothing
             assert visitor.post("/api/visitor", json={"token": "t"}, headers=headers).status_code == 403, headers
-        turnstile.answer = {"success": True, "hostname": "Gatehouse-Peug.onrender.com", "action": ACTION}
+        turnstile.answer = {"success": True, "hostname": "Staddle.onrender.com", "action": ACTION}
         assert pass_the_check(visitor).status_code == 200                            # given where the desk expects it, whatever the Host header says
 
 
