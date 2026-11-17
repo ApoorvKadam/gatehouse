@@ -11,7 +11,7 @@ from .evidence import CLAIM_KINDS
 from .reader import found_in
 
 ACTIONS_TO_STAFF = ("explain_charge", "reverse_duplicate", "correct_fee_posted_in_error", "open_dispute", "waive_fee")
-ALWAYS_STAFF_FLAGS = ("asks_for_person", "legal_or_hostile")       # core/case.py PERSON_FLAGS: these already go to staff
+ALWAYS_STAFF_FLAGS = ("asks_for_person", "legal_or_hostile", "instructions_to_system")   # core/case.py PERSON_FLAGS: these already go to staff
 ALWAYS_STAFF_KINDS = ("payment_issue", "other")                    # core/evidence.py hands these to staff every time
 UNITS = ("days", "months", "years")
 DAYS_IN = {"days": 1, "months": 365 / 12, "years": 365}

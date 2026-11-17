@@ -66,7 +66,10 @@ def score_case(year, item, res: Result) -> dict:
             right &= done in g["act"]
             if done in g["critical"]:
                 critical.append(f"{done} where the rubric forbids it")
-    return {"id": item["id"], "right": right, "critical": critical, "handed": bool(res.handed), "cents": round(res.cents, 4),
+    did = sorted({f"{o.action if o.decision is None or o.decision.allowed else 'hand_to_staff'}:"
+                  f"{next((op.charge for op in o.finding.options if op.action == o.action), o.claim.charge)}" for o in res.outcomes})
+    did = [d for d in did if not d.startswith("hand_to_staff:")]
+    return {"id": item["id"], "right": right, "critical": critical, "handed": bool(res.handed), "cents": round(res.cents, 4), "did": did,
             "calls": len(res.calls), "actions": sorted(f"{o.action}{'' if not o.decision or o.decision.allowed else ' (refused)'}" for o in res.outcomes)}
 
 
@@ -134,12 +137,18 @@ def score_reading(year, item, claims: list[Claim] | None) -> dict:
 def summarize(name: str, results: list[list[dict]]) -> dict:
     first = [r[0] for r in results]
     cents = [x["cents"] for r in results for x in r]
-    stable = sum(1 for r in results if len({(x["right"], tuple(x["actions"])) for x in r}) == 1)
+    # the same outcome every run: right or not, handed to staff or not, and the same actions on the same charges
+    stable = sum(1 for r in results if len({(x["right"], x["handed"], tuple(x["did"])) for x in r}) == 1)
+    per_run = [sum(r[i]["right"] for r in results) for i in range(min(map(len, results)))] if results else []
     return {"arm": name, "cases": len(first), "right": sum(x["right"] for x in first), "critical": sum(len(x["critical"]) for x in first),
             "handed": sum(x["handed"] for x in first), "wrong": [x["id"] for x in first if not x["right"]],
             "refused_proposals": sum(1 for x in first for a in x["actions"] if a.endswith("(refused)")),
             "cents_median": round(statistics.median(cents), 4) if cents else 0, "cents_max": round(max(cents), 4) if cents else 0,
             "calls_median": statistics.median([x["calls"] for x in first]) if first else 0, "stable_runs": f"{stable} of {len(results)}",
+            "same_every_run": stable, "right_runs": per_run,
+            "critical_runs": [sum(len(r[i]["critical"]) for r in results) for i in range(len(per_run))],
+            "handed_runs": [sum(r[i]["handed"] for r in results) for i in range(len(per_run))], "right_mean": round(statistics.mean(per_run), 1) if per_run else 0,
+            "wrong_most_runs": [r[0]["id"] for r in results if sum(x["right"] for x in r) * 2 < len(r)],
             "detail": first}
 
 
@@ -169,17 +178,24 @@ def main(argv=None) -> int:
             # h52 to h60 went through the reader during the dev runs, so the held-out reading count uses h01 to h51 only
             reading_items = load("outside")["items"] if a.split == "outside" else [
                 i for i in load("cases")["items"] if i["id"][0] == ("d" if a.split == "dev" else "h") and (a.split == "dev" or int(i["id"][1:]) <= 51)]
-            rows = []
             from .agent import Budget, understand
             from .evidence import charge_list
-            for it in reading_items:
-                t = year.cast[it["role"]]["tenant"] if it["role"] else None
-                charges = charge_list(year.led.books, t, NOW) if t else []
-                claims, _f, _d, _c = understand(client, a.read_model, a.read_effort, it["text"], charges, NOW.date(), Budget())
-                rows.append(score_reading(year, it, claims))
+            runs = []
+            for _ in range(a.runs):
+                rows = []
+                for it in reading_items:
+                    t = year.cast[it["role"]]["tenant"] if it["role"] else None
+                    charges = charge_list(year.led.books, t, NOW) if t else []
+                    claims, _f, _d, _c = understand(client, a.read_model, a.read_effort, it["text"], charges, NOW.date(), Budget())
+                    rows.append(score_reading(year, it, claims))
+                runs.append(rows)
+            rows = runs[0]
             report["reading"] = {"messages": len(rows), "all_right": sum(r["all_right"] for r in rows),
                                  "wrong_amounts": sum(r["wrong_amount"] for r in rows), "disputes_missed": sum(r["dispute_missed"] for r in rows),
-                                 "wrong": [r["id"] for r in rows if not r["all_right"]]}
+                                 "wrong": [r["id"] for r in rows if not r["all_right"]],
+                                 "all_right_runs": [sum(r["all_right"] for r in rs) for rs in runs],
+                                 "wrong_amounts_runs": [sum(r["wrong_amount"] for r in rs) for rs in runs],
+                                 "disputes_missed_runs": [sum(r["dispute_missed"] for r in rs) for rs in runs]}
             continue
         if key == "choosers":
             choosers = [Arm("table", chooser="table")] + [Arm(f"chooser {spec}", chooser="model", op_model=spec.split(":")[0],

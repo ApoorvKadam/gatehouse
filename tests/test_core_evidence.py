@@ -51,6 +51,25 @@ def test_charged_twice(year):
     assert y.verdict == "contradicts" and "October rent" in y.says
 
 
+def test_a_card_charged_twice_goes_to_staff_whichever_way_it_is_read(year):
+    # Faye's two $110 payments on Nov 2: read as a payment question or as rent charged twice, the books show both payments
+    b = year.led.books
+    rent = nov(year, "faye", RENT)[0]
+    named = dict(cents=11000, amount_quote="$110")
+    for f in (check(b, year.t("faye"), Claim("payment_issue", None, "$110 from my card twice", **named), NOW),
+              check(b, year.t("faye"), Claim("charged_twice", None, "$110 from my card twice", **named), NOW), finding(year, "faye", "charged_twice", rent)):
+        assert f.verdict == "payment" and not f.choices and "Two payments of $110.00 went through on Nov 2" in f.says
+    # a payment question that names neither the day nor the amount keeps the general answer
+    assert "processor" in check(b, year.t("faye"), Claim("payment_issue", None, "my card was declined"), NOW).says
+    # a day the tenant names that is not the day of the two payments keeps the general answer
+    other_day = check(b, year.t("faye"), Claim("payment_issue", None, "twice on the 3rd", "2026-11-03", "the 3rd"), NOW)
+    assert other_day.verdict == "payment" and "processor" in other_day.says
+    # with the charge picked, a day the tenant gets wrong ("on the 1st", when rent was due) does not hide the pair
+    assert check(b, year.t("faye"), Claim("charged_twice", rent.id, "twice on the 1st", "2026-11-01", "the 1st"), NOW).verdict == "payment"
+    # Dev's two rents on two units are explained, not handed over
+    assert finding(year, "dev", "charged_twice", nov(year, "dev", RENT)[0]).verdict == "contradicts"
+
+
 def test_never_agreed_and_challenges(year):
     p = finding(year, "priya", "never_agreed", nov(year, "priya", ADMIN_FEE)[0])
     assert p.verdict == "no_record" and [o.action for o in p.choices] == ["open_dispute"]

@@ -17,7 +17,10 @@ from .reader import amounts as read_amounts
 from .reply import write
 from .store import Store
 
-PERSON_FLAGS = ("asks_for_person", "legal_or_hostile")
+# flags that send the whole message to staff, with the reason Today shows; a message with words aimed at the system goes too,
+# because a waiver it led to could be the instruction obeyed
+PERSON_FLAGS = {"asks_for_person": "the tenant asked for a person", "legal_or_hostile": "the message threatens legal action or is abusive",
+                "instructions_to_system": "the message has words aimed at the system, so nothing changes before staff see it"}
 OFF = "Tilden is off on this copy, so the message waits for staff"
 
 
@@ -132,9 +135,12 @@ def handle(store: Store, stream: str, case: str, phone: str | None, text: str, a
     # choose
     actions: dict[int, tuple[str, str]] = {}
     pending = []
+    person = next((why for fl, why in PERSON_FLAGS.items() if fl in res.flags), None)
+    if person:
+        res.handed = person
     for i in order:
         f = findings[i]
-        if any(fl in res.flags for fl in PERSON_FLAGS):
+        if person:
             actions[i] = ("hand_to_staff", "staff rule")
         elif len(f.choices) == 1 and not res.flags:
             actions[i] = (f.choices[0].action, "code")
@@ -175,10 +181,15 @@ def handle(store: Store, stream: str, case: str, phone: str | None, text: str, a
         actions = {i: ("hand_to_staff", "owner rule") for i in order}
         res.handed = res.handed or hit[0]
     rank = {"reverse_duplicate": 0, "correct_fee_posted_in_error": 0, "waive_fee": 1}
+    done = set()
     for i in sorted(order, key=lambda i: (rank.get(actions[i][0], 2), order.index(i))):
         action, by = actions[i]
         f = findings[i]
         target = next((o.charge for o in f.options if o.action == action), f.claim.charge)
+        # two claims about one pair of copies ("$20 on the 6th and another on the 10th") are one reversal, not a second refused one
+        if action != "hand_to_staff" and (action, target) in done:
+            continue
+        done.add((action, target))
         cmd = Command(f"{case}:{i}:{action}", action, tenant, source, target, case, quote=f.claim.quote,
                       raised=f.claim.kind in ("wants_waiver", "paid_on_time", "charged_twice", "never_agreed", "challenges_record"),
                       role="office_manager" if action == "hand_to_staff" else None, reason=hit[0] if hit else None,

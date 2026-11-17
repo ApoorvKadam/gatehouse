@@ -147,7 +147,7 @@ class Facility:
             done = list(dict.fromkeys(named(o) for o in outcomes if o["allowed"] and o["action"] != "hand_to_staff"))
             # why it went to staff in the records' own words when a claim says so, else the case's reason
             why = next((o["says"] for o in outcomes if o["action"] == "hand_to_staff" and o["says"]), None)
-            if any(o.get("by") == "owner rule" for o in outcomes):      # the owner's own rule sent it: say so, not the records
+            if any(o.get("by") in ("owner rule", "staff rule") for o in outcomes):      # a rule sent it: say which, not the records
                 why = p["handed"]
             out.append({"n": e.id, "who": who, "text": p["text"], "handed": p["handed"], "why": why or p["handed"], "reply": p["reply"], "claims": claims,
                         "outcomes": outcomes, "asked": [a for a in p.get("asked", []) if not a["allowed"]], "entries": entries,
