@@ -154,7 +154,7 @@ def test_a_class_is_styled_by_one_rule_of_its_own():
 
 
 def test_figures_are_centred_and_boxes_side_by_side_match():
-    """His rule, said twice on 2026-11-16 ("it applies to all the tabs or anywhere it is relevant"): every block of figures is
+    """On every page where it applies, every block of figures is
     centred, and boxes that sit side by side are the same height. A new figure block or side-by-side layout joins these lists."""
     from pathlib import Path
 

@@ -1170,7 +1170,7 @@ body.fms > main { min-width: 0; }
 .ov-pair article p { font-size: var(--t-body); }
 .lt-film figcaption { margin-top: var(--s2); font-size: var(--t-sm); }
 
-/* one step smaller everywhere (his words 2026-11-15: "The fonts look too big ... One or two sides in would be good") */
+/* one step smaller everywhere: the first sizes read too big for an FMS screen */
 html { font-size: 93.75%; }
 
 /* Home, as an FMS opens: the facility's key figures in one strip, then what needs a person, then units by row */
