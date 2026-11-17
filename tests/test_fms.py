@@ -130,7 +130,7 @@ def test_the_screens_show_the_generated_year_in_words(fms_url, sim):
         record = seen(c.get(record_of(c, "Maria Lopez")).text)
         assert "Ledger" in record and "Card declined" in record and "November rent" in record
         for p, r in pages.items():
-            # his corrections of 2026-11-15: the menu down the left with an icon for each item, no tagline under a title, no GitHub inside
+            # the menu down the left with an icon for each item, no tagline under a title, no GitHub inside the FMS
             assert 'class="fms-rail"' in r.text and r.text.count('<svg class="icon"') >= 7 and 'class="tagline"' not in r.text, p
             assert "github" not in r.text.lower(), p
         for p, words in text.items():
@@ -138,7 +138,7 @@ def test_the_screens_show_the_generated_year_in_words(fms_url, sim):
             assert not re.search(r"\b[a-z]+_[a-z_]+\b", words), (p, re.findall(r"\b[a-z]+_[a-z_]+\b", words)[:3])   # no codes
             assert not re.search(r"(?i)claude|haiku|sonnet|anthropic|openai|gpt|our agent", words), p
         assert c.get("/tenants?q=A108").text.count('href="/tenants/') == 1
-        # every month's charges add up: billed is paid, removed or still open (his question of 2026-11-16 about the top box)
+        # every month's charges add up: billed is paid, removed or still open
         for key in re.findall(r'<option value="(\d{4}-\d{2})"', pages["/billing"].text):
             box = seen(c.get("/billing", params={"month": key}).text)
             got = {k: float(v.replace(",", "")) for k, v in re.findall(r"(Rent billed|Fees billed|Paid|Removed or waived|Still open) \$([\d,]+\.\d\d)", box)}
@@ -160,7 +160,7 @@ def test_a_reversal_lands_on_this_copy_only_is_shown_after_a_reload_and_start_ov
         assert run(a, "james", shift="s2", run_id="r1").status_code == 200
         shown = seen(a.get("/messages").text)
         assert "Reversed the second copy" in shown and "Fee income" in shown and "You are right" in shown
-        assert "Reading cost" in shown and "1,200 tokens read, 150 written" in shown          # his message of 2026-11-16: the cost shows in the FMS too
+        assert "Reading cost" in shown and "1,200 tokens read, 150 written" in shown          # the cost shows in the FMS too, as on the Overview
         james = record_of(a, "James Carter")
         assert "Late fee removed: duplicate" in seen(a.get(james).text)
         assert "removed" not in seen(b.get(james).text)
@@ -292,7 +292,7 @@ def test_his_corrections_of_the_night_stay_corrected(fms_url, sim):
 
 
 def test_the_date_is_the_real_day_and_a_new_day_brings_new_books(fms_url, sim):
-    """2026-11-16, his order: the FMS date is today's date and changes every day, with no second date explained anywhere."""
+    """The FMS date is today's date and changes every day, with no second date explained anywhere."""
     app = site(fms_url, Script(reader))
     fd = app.state.front_desk
     with sign_in(app) as c:
