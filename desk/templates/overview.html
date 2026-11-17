@@ -18,7 +18,7 @@
         <img src="{{ url_for('static', path='shots/fms-messages.jpg') }}?v={{ css_version }}" width="1536" height="900" alt="Messages in the FMS: James Carter's text about a late fee charged twice, what {{ agent }} read, what the books show, the second fee reversed in a balanced entry, and the reply written from the records">
       </picture>
     </figure>
-    <p class="ov-result" data-reveal>Tested on {{ ours.cases }} tenant messages, written and labelled before any run: {{ agent }} handled <b>{{ ours.right }}</b> right with <b>{{ ours.critical }}</b> critical errors, at a median {{ '%.3f'|format(ours.cents_median) }} cents a message. A fixed-rule workflow handled {{ fixed.right }}.</p>
+    <p class="ov-result" data-reveal>Tested {{ cmp.runs }} times on {{ ours.cases }} tenant messages, written and labelled before any run. {{ agent }} handled <b>{{ ours.right }}</b> right on average, with <b>{{ ours.critical }}</b> critical errors in any run, at a median {{ '%.3f'|format(ours.cents_median) }} cents a message. A fixed-rule workflow handled {{ fixed.right }}.</p>
   </div>
 </section>
 
@@ -70,7 +70,7 @@
       <p class="tagline">It stops, says why, and puts the work in front of a person.</p>
     </div>
     <div class="ov-pair" data-stagger>
-      <article><b>A card charged twice</b><p>Faye says her card was charged twice on {{ month }} 2. The books do not hold the card processor's records, so {{ agent }} hands it to staff with that reason. Nothing on her account changes.</p></article>
+      <article><b>A card charged twice</b><p>Faye says her card was charged twice on {{ month }} 2. The books show two $110 payments that morning, the second held as credit. Money goes back to a card only through staff, so {{ agent }} hands it over with that reason. Nothing on her account changes.</p></article>
       <article><b>A fee she never signed for</b><p>Priya disputes a $25 admin fee. It is not in the schedule she signed, so the dispute is recorded and collection pauses. The office manager removes the fee or keeps it under review, on Today.</p></article>
     </div>
   </div>

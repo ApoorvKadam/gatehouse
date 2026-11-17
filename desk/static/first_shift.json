@@ -1,12 +1,16 @@
 {
- "ran_at": "2026-11-15",
+ "ran_at": "2026-11-17",
  "labels": "5c145db6130e",
  "comparison": {
-  "set": "40 tenant messages written by a separate model from the tenants' account facts alone, which had seen neither approach; labelled by the developer from the written rubric before any run; each approach ran once",
+  "set": "40 tenant messages written by a separate model from the tenants' account facts alone, which had seen neither approach; labelled by the developer from the written rubric before any run; each approach ran ten times",
+  "runs": 10,
   "arms": [
    {
     "arm": "Fixed-rule workflow",
     "right": 23,
+    "right_low": 23,
+    "right_high": 23,
+    "same_every_run": 40,
     "cases": 40,
     "critical": 1,
     "to_staff": 25,
@@ -33,11 +37,14 @@
    },
    {
     "arm": "Tilden reads, code decides",
-    "right": 38,
+    "right": 36,
+    "right_low": 34,
+    "right_high": 37,
+    "same_every_run": 30,
     "cases": 40,
     "critical": 0,
-    "to_staff": 18,
-    "cents_median": 0.0258,
+    "to_staff": 19,
+    "cents_median": 0.0255,
     "missed": [
      "x24",
      "x28"
@@ -45,23 +52,26 @@
    },
    {
     "arm": "Tilden reads and chooses",
-    "right": 34,
+    "right": 34.9,
+    "right_low": 32,
+    "right_high": 37,
+    "same_every_run": 28,
     "cases": 40,
-    "critical": 1,
-    "to_staff": 17,
-    "cents_median": 0.0365,
+    "critical": 0,
+    "to_staff": 19,
+    "cents_median": 0.0302,
     "missed": [
      "x03",
-     "x05",
-     "x06",
-     "x10",
-     "x19",
+     "x23",
      "x28"
     ]
    },
    {
     "arm": "Perfect reading, code decides (a check, not a product)",
     "right": 40,
+    "right_low": 40,
+    "right_high": 40,
+    "same_every_run": 40,
     "cases": 40,
     "critical": 0,
     "to_staff": 14,
@@ -69,7 +79,7 @@
     "missed": []
    }
   ],
-  "note": "The fixed-rule workflow was run again after a bug fix (a month name matched the same month a year earlier), which raised it from 22 to 23.",
+  "note": "These runs found three faults, fixed before the ten runs shown. The check missed a card payment taken twice. A message with words aimed at the system still had a fee waived. One duplicate fee claimed twice gave a confusing reply. Because these 40 messages showed the faults, they are no longer a fresh test.",
   "shipped_misses": [
    {
     "id": "x24",
@@ -89,15 +99,18 @@
  },
  "reading": {
   "messages": 51,
-  "fully_right": 34,
+  "fully_right": 35,
   "bar": 49,
   "wrong_amounts": 0,
-  "disputes_missed": 0
+  "disputes_missed": 0,
+  "fully_right_low": 34,
+  "fully_right_high": 36,
+  "runs": 3
  },
  "choosing": {
   "cases": 24,
   "code": 23,
   "best_model": 23,
-  "decision": "No model chose better than code on the same reading, so code chooses the action."
+  "decision": "No model chose better than code on the same reading, so code chooses the action. In the ten runs above, the two differ by less than the spread between runs."
  }
 }
