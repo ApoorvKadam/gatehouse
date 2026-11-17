@@ -41,14 +41,14 @@ Code writes the reply from what the gate recorded. Tilden cannot change the book
 
 ## How it was measured
 
-Tilden was scored on 40 tenant messages written by a separate model that had seen neither approach, labelled by the developer from a written rubric before any run, each approach run once:
+Tilden was scored on 40 tenant messages written by a separate model that had seen neither approach, labelled by the developer from a written rubric before any run, each approach run ten times:
 
-| Approach | Right action | Serious errors | To staff |
-|---|---|---|---|
-| Tilden reads, code decides | 38 of 40 | 0 | 18 |
-| A fixed-rule workflow, same books | 23 of 40 | 1 | 25 |
+| Approach | Right action, average of 10 runs | Range | Same answer every run | Serious errors in any run | To staff |
+|---|---|---|---|---|---|
+| Tilden reads, code decides | 36 of 40 | 34 to 37 | 30 | 0 | 19 |
+| A fixed-rule workflow, same books | 23 of 40 | 23 | 40 | 1 | 25 |
 
-A serious error is money moved that should not have been. Both of Tilden's misses went to staff instead of being explained. Tilden's reading, measured alone on 51 held-back messages, was fully right on 34 against a bar of 49 set beforehand, with no wrong amount accepted and no dispute missed. A model choosing the action did no better than code (23 of 24 against 23), so code chooses. Reading costs about 0.03 cents a message.
+A serious error is money moved that should not have been. A single run on Nov 15 had given Tilden 38; run five times, the code before these fixes averaged 33.6. Those runs found three faults, fixed before the ten runs above. The check missed a card payment taken twice. A message with words aimed at the system still had a fee waived. One duplicate fee claimed twice gave a confusing reply. Because these 40 messages showed the faults, they are no longer a fresh test. Both messages Tilden got wrong in most runs went to staff instead of being explained. Tilden's reading, measured alone on 51 held-back messages, was fully right on 34 to 36 over three runs, against a bar of 49 set beforehand, with no wrong amount accepted and no dispute missed. A model choosing the action did no better than code (23 of 24 against 23), so code chooses. Reading costs about 0.03 cents a message.
 
 ## The books
 

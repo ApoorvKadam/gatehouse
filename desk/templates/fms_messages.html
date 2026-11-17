@@ -142,18 +142,18 @@
   <div class="fms-arms">
     {% for a in cmp.arms %}
     <div class="fms-arm"><span>{{ a.arm }}</span><span class="fms-track" aria-hidden="true"><i style="width: {{ (100 * a.right / a.cases)|round(1) }}%"></i></span>
-      <b>{{ a.right }} of {{ a.cases }} right</b><span class="muted">{{ a.critical }} critical, {{ a.to_staff }} to staff{% if a.cents_median %}, {{ '%.3f'|format(a.cents_median) }} cents a message{% endif %}</span></div>
+      <b>{{ a.right }} of {{ a.cases }} right</b><span class="muted">{% if a.right_low != a.right_high %}{{ a.right_low }} to {{ a.right_high }} over {{ cmp.runs }} runs, {% endif %}the same answer every run on {{ a.same_every_run }}; {{ a.critical }} critical, {{ a.to_staff }} to staff{% if a.cents_median %}, {{ '%.3f'|format(a.cents_median) }} cents a message{% endif %}</span></div>
     {% endfor %}
   </div>
   <p class="muted">{{ cmp.note }}</p>
-  <h3>The two messages {{ agent }} missed</h3>
+  <h3>What {{ agent }} got wrong in most runs</h3>
   {% for m in cmp.shipped_misses %}
   <article class="fms-line"><p>{{ m.tenant }} <q>{{ m.text }}</q></p><p class="muted">{{ m.did }} The labelled answer: {{ m.expected }}</p></article>
   {% endfor %}
 </section>
 <section class="fms-section" aria-labelledby="h-reading">
   <h2 id="h-reading">The reading test missed its bar</h2>
-  <p>On {{ score.reading.messages }} held-back messages, {{ agent }}'s reading was fully right on {{ score.reading.fully_right }}. The bar, set before the run, was {{ score.reading.bar }}. It accepted {{ score.reading.wrong_amounts }} wrong amounts and missed {{ score.reading.disputes_missed }} disputes; most misses name a different kind of claim, which the set above shows rarely changes what is done.</p>
+  <p>On {{ score.reading.messages }} held-back messages, {{ agent }}'s reading was fully right on {{ score.reading.fully_right }} on average ({{ score.reading.fully_right_low }} to {{ score.reading.fully_right_high }} over {{ score.reading.runs }} runs). The bar, set before the run, was {{ score.reading.bar }}. It accepted {{ score.reading.wrong_amounts }} wrong amounts and missed {{ score.reading.disputes_missed }} disputes; most misses name a different kind of claim, and some of those change what is done, as the messages above show.</p>
 </section>
 <section class="fms-section" aria-labelledby="h-choosing">
   <h2 id="h-choosing">Who chooses the action</h2>

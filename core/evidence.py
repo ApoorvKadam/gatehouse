@@ -89,6 +89,31 @@ def _hand(reason: str) -> Option:
     return Option("hand_to_staff", None, reason)
 
 
+def paid_twice(books: Books, tenant: str, now: datetime, claim: Claim, charge: str | None = None) -> list:
+    """Two payments of the same amount on the same day in the last two months, the later left as credit: how a card charged
+    twice shows in the books. With a charge, the earlier payment paid it; without one, the day and amount the tenant names must match."""
+    since = local(now).date() - timedelta(days=62)
+    pays = sorted((p for p in books.payments.values() if p.tenant == tenant and not p.returned and local(p.effective_at).date() >= since),
+                  key=lambda p: p.effective_at)
+    for i, a in enumerate(pays):
+        on = local(a.effective_at).date()
+        if charge is None and (claim.cents not in (None, a.cents) or claim.date not in (None, on.isoformat())):
+            continue
+        if charge is not None and not any(x["charge"] == charge for x in a.applications):
+            continue
+        for b in pays[i + 1:]:
+            if b.cents == a.cents and b.credit_cents == b.cents and local(b.effective_at).date() == on:
+                return [a, b]
+    return []
+
+
+def _paid_twice_finding(f, pair: list) -> Finding:
+    a, b = pair
+    at = lambda p: clock(p.effective_at).split(" at ")[1]
+    return f("payment", f"Two payments of {money(a.cents)} went through on {day(a.effective_at)}, at {at(a)} and {at(b)}. The second was left "
+             f"as credit on the account. Money goes back to a card only through staff.", [a.id, b.id], [_hand("money back to a card is for staff")])
+
+
 def _rent_story(books: Books, c: Charge, month: str) -> tuple[str, list[str]]:
     """How the month's rent was paid, from the records: declined tries, payments and their times, returns."""
     lease = books.leases[c.lease]
@@ -113,6 +138,10 @@ def _rent_story(books: Books, c: Charge, month: str) -> tuple[str, list[str]]:
 def check(books: Books, tenant: str, claim: Claim, now: datetime) -> Finding:
     f = lambda verdict, says, records=(), options=(): Finding(claim, verdict, says, list(records), list(options))
     hand = _hand("give the case to staff")
+    # a card charged twice, named by its day or amount: as a payment question, or as a charge twice with no charge picked
+    if (claim.kind == "payment_issue" or (claim.kind == "charged_twice" and claim.charge is None)) and (claim.cents or claim.date):
+        if pair := paid_twice(books, tenant, now, claim):
+            return _paid_twice_finding(f, pair)
     if claim.kind == "payment_issue":
         return f("payment", "Questions about card charges need the payment processor's records, which staff check.", options=[_hand("a payment question for staff")])
     if claim.kind == "other" or claim.kind not in CLAIM_KINDS:
@@ -151,6 +180,8 @@ def check(books: Books, tenant: str, claim: Claim, now: datetime) -> Finding:
                      f"{'billing' if twins[0].source == 'billing' else 'staff'} and again on {day(later.posted_at)} by "
                      f"{'staff, by hand' if later.source.startswith('staff') else 'billing'}.", [x.id for x in twins],
                      [Option("reverse_duplicate", later.id, f"reverse the second {money(later.cents)} {what}"), hand])
+        if pair := paid_twice(books, tenant, now, claim, c.id):
+            return _paid_twice_finding(f, pair)
         others = [x for x in books.tenant_charges(tenant) if x.id != c.id and not x.closed]
         # what looks like the same charge twice: first the same day, then the same amount, then the same kind, close by
         alike = ([x for x in others if x.due == c.due and x.kind == c.kind]
