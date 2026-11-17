@@ -67,9 +67,9 @@ def test_the_record_keeps_each_source_in_its_own_lane(fms_url, sim):
         rows = visitor.get(f"/api/facilities/{ORLANDO}/queue").json()["rows"]
         gina = next(r for r in rows if r["lease"] == "lease_OkfrE0505")["case_id"]
         page = visitor.get(f"/accounts/{gina}").text
-        for lane in ("The FMS said", "Gatehouse observed", "Gatehouse concluded", "A person decided"):
+        for lane in ("The FMS said", "Staddle observed", "Staddle concluded", "A person decided"):
             assert lane in page
-        assert "9 legal checks recorded" in page and "Payment made outside Gatehouse" in page
+        assert "9 legal checks recorded" in page and "Payment made outside Staddle" in page
         lien = visitor.get(f"/accounts/{gina}/lien").text
         assert "Account changed: re-review" in lien and "Changed since the evaluation" in lien
         assert "compliant" not in lien.replace("never says a file is compliant", "")
@@ -115,7 +115,7 @@ def test_a_payment_still_pending_at_the_fms_is_shown_as_in_progress(fms_url, sim
 def test_a_lien_file_shows_its_state_as_of_its_evaluation_beside_the_balance_now(fms_url, sim):
     app = preview(fms_url)
     with TestClient(app) as visitor, TestClient(app, headers={"X-Desk-Token": "op-token"}) as desk:
-        # the tenant pays the rest at the counter; Gatehouse sees it on its next read of the FMS
+        # the tenant pays the rest at the counter; Staddle sees it on its next read of the FMS
         sim.post("/sim/payments/offline", {"allocations": {"lease_OkfrE0505": 11500}})
         assert desk.post("/api/reconcile").status_code == 200
         lien = visitor.get(f"/accounts/{account_of(app, 'E-505')}/lien").text
@@ -139,7 +139,7 @@ def test_a_class_is_styled_by_one_rule_of_its_own():
     and the flow text was squeezed into 36 px boxes. A class gets one rule of its own; a variant is a second class or a longer selector."""
     from pathlib import Path
 
-    css = re.sub(r"/\*.*?\*/", "", (Path(__file__).parent.parent / "desk" / "static" / "gatehouse.css").read_text(), flags=re.S)
+    css = re.sub(r"/\*.*?\*/", "", (Path(__file__).parent.parent / "desk" / "static" / "staddle.css").read_text(), flags=re.S)
     rules, depth, rule = [], 0, ""
     for ch in css:
         depth += (ch == "{") - (ch == "}")
@@ -158,7 +158,7 @@ def test_figures_are_centred_and_boxes_side_by_side_match():
     centred, and boxes that sit side by side are the same height. A new figure block or side-by-side layout joins these lists."""
     from pathlib import Path
 
-    css = re.sub(r"/\*.*?\*/", "", (Path(__file__).parent.parent / "desk" / "static" / "gatehouse.css").read_text(), flags=re.S)
+    css = re.sub(r"/\*.*?\*/", "", (Path(__file__).parent.parent / "desk" / "static" / "staddle.css").read_text(), flags=re.S)
 
     def body(selector: str) -> str:
         found = re.search(r"(?m)^" + re.escape(selector) + r"\s*\{([^}]*)\}", css)
@@ -241,7 +241,7 @@ def test_findings_are_written_in_dollars_and_dates_and_quote_records_as_they_are
     now = {"bookEntries": [{"bookEntryId": "be1", "type": "CHARGE", "amount": 5000, "amountPaid": 5000,
                             "details": {"description": 'Fee "5000 cents 2026-10-06" late', "accruesOn": "2026-10-07"}}]}
     changes = ledger_changes(then, now)
-    # the description is quoted from the ledger exactly; only Gatehouse's own words carry dollars and dates
+    # the description is quoted from the ledger exactly; only Staddle's own words carry dollars and dates
     assert 'the Fee "5000 cents 2026-10-06" late charge\'s amount paid changed from $0.00 to $50.00' in changes
     assert 'the Fee "5000 cents 2026-10-06" late charge\'s due date changed from Oct 6, 2026 to Oct 7, 2026' in changes
 
@@ -309,23 +309,23 @@ def test_the_overview_plays_the_whole_walkthrough_and_the_sound_is_the_visitors_
         page = visitor.get("/").text
         video = page.split('<video id="film"')[1].split(">")[0]
         assert "controls" in video and "autoplay" not in video and "muted" not in video and "loop" not in video
-        assert "film/gatehouse-walkthrough.mp4" in page and "film-play" not in page     # the player's own controls start it, with its sound
+        assert "film/staddle-walkthrough.mp4" in page and "film-play" not in page     # the player's own controls start it, with its sound
         moved = visitor.get("/film", follow_redirects=False)                                 # no second page to find the film on
         assert 'href="/film"' not in page and moved.status_code == 301 and moved.headers["location"] == "/"
-        assert "gatehouse-teaser" not in page and "gatehouse-film" not in page
+        assert "staddle-teaser" not in page and "staddle-film" not in page
 
 
 def test_the_film_files_are_there_and_small_enough_to_ship():
     from pathlib import Path
     folder = Path(__file__).parent.parent / "desk" / "static" / "film"
     sizes = {p.name: p.stat().st_size for p in folder.iterdir()}
-    assert set(sizes) == {"gatehouse-walkthrough.mp4", "gatehouse-walkthrough.jpg"}
-    assert sizes["gatehouse-walkthrough.mp4"] < 95_000_000 and sizes["gatehouse-walkthrough.jpg"] < 400_000      # the film is 2560x1440; GitHub refuses a file over 100 MB
+    assert set(sizes) == {"staddle-walkthrough.mp4", "staddle-walkthrough.jpg"}
+    assert sizes["staddle-walkthrough.mp4"] < 95_000_000 and sizes["staddle-walkthrough.jpg"] < 400_000      # the film is 2560x1440; GitHub refuses a file over 100 MB
 
 
 def test_the_walkthrough_answers_a_byte_range_so_the_player_can_seek(fms_url, sim):
     with TestClient(preview(fms_url)) as visitor:
-        got = visitor.get("/static/film/gatehouse-walkthrough.mp4", headers={"Range": "bytes=100-199"})
+        got = visitor.get("/static/film/staddle-walkthrough.mp4", headers={"Range": "bytes=100-199"})
         assert got.status_code == 206 and len(got.content) == 100
         assert got.headers["content-range"].startswith("bytes 100-199/")
 
@@ -340,10 +340,10 @@ def test_operations_shows_what_the_agent_did_and_not_what_it_cost(fms_url, sim):
 
 def test_no_page_names_a_record_by_an_id(fms_url, sim):
     """Every page the preview links to, both facilities and every message thread: a record is named by what a person reads, never by a
-    provider id, a desk record id, the marker Gatehouse writes into an FMS task, or a state code."""
+    provider id, a desk record id, the marker Staddle writes into an FMS task, or a state code."""
     from desk.wording import _BARE_ID, _RECORD_ID
     from .test_console import visible
-    marker, code = re.compile(r"\[gatehouse work item"), re.compile(r"\b[A-Z]{2,}_[A-Z_]{2,}\b|(?<![/\w])[a-z]{2,}_[a-z_]{2,}\b(?!\.py)")     # a file path such as desk/evaluate_texts.py is not a code
+    marker, code = re.compile(r"\[staddle work item"), re.compile(r"\b[A-Z]{2,}_[A-Z_]{2,}\b|(?<![/\w])[a-z]{2,}_[a-z_]{2,}\b(?!\.py)")     # a file path such as desk/evaluate_texts.py is not a code
     with TestClient(preview(fms_url)) as client:
         start = ["/", "/today", "/calls-and-reminders", "/rent-changes", "/inbox", "/evaluation", "/operations"]
         facilities = re.findall(r'<option[^>]*value="([^"]+)"', client.get("/today").text)

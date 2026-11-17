@@ -269,4 +269,4 @@ def test_the_form_is_on_the_page_in_plain_words_and_names_nothing_of_how_it_is_r
         assert html.count("data-try=") == 3 and "another account" in html and "an order" in html and ">STOP</button>" in html
         for word in ("sandbox", "demo", "limit", "visitor", "budget"):
             assert word not in html.lower().replace('"visitor"', ""), word
-        assert no_vendor_name(html) and "gh_visitor" in page.headers["set-cookie"] and "HttpOnly" in page.headers["set-cookie"]
+        assert no_vendor_name(html) and "staddle_visitor" in page.headers["set-cookie"] and "HttpOnly" in page.headers["set-cookie"]

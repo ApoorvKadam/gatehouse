@@ -2,7 +2,7 @@
 entitled to under the facility's recorded rule? Both directions are work: a paying tenant still shut out, and an
 account past the rule whose code the FMS still allows.
 
-What Gatehouse knows, and from where:
+What Staddle knows, and from where:
 - the rule (days overdue before lockout, and what one shared gate code does when only some of a customer's units are
   past it) is an operator's statement, recorded with who approved it; Cubby documents no such setting, so a facility
   without one gets a review item, never a verdict;
@@ -10,7 +10,7 @@ What Gatehouse knows, and from where:
   read in one pass per customer; a pass with a failed read changes nothing for that customer;
 - a lock in OPERATOR_USE says the unit is restricted, not why.
 
-Gatehouse never changes access. A mismatch opens a work item and one FMS task for a person; the item closes only when
+Staddle never changes access. A mismatch opens a work item and one FMS task for a person; the item closes only when
 a later complete reading shows the expected configuration. A task marked done does not close it. None of this says
 the gate opened or a lock came off: the FMS records configuration, and the physical outcome stays unverified."""
 from __future__ import annotations
@@ -124,14 +124,14 @@ def assess_customer(adapter: FMSAdapter, facility: Facility, policy: AccessPolic
             facts[("lease", pl.provider_id)] = {"locked": bool(operator_locks), "should_restrict": None, "fms_agrees": False,
                                                 "date_readable": False}
             out.append(Discrepancy(REVIEW, "lease", pl.provider_id,
-                                   f"Unit {unit}: the FMS sent a delinquency date Gatehouse cannot read ({pl.delinquent_since!r}), "
+                                   f"Unit {unit}: the FMS sent a delinquency date Staddle cannot read ({pl.delinquent_since!r}), "
                                    "so whether the unit should be restricted is unknown.",
                                    DATE_SOURCE, "A readable delinquency date from the FMS.",
                                    "Operations manager", {"delinquent_since": pl.delinquent_since}))
             continue
         should_restrict = overdue is not None and overdue >= policy.lockout_days and not exempt
         restricted[pl.provider_id] = should_restrict
-        # always from the FMS's side: Gatehouse may still be checking a payment the FMS already shows
+        # always from the FMS's side: Staddle may still be checking a payment the FMS already shows
         standing = ("no balance due, per the FMS" if overdue is None else f"{overdue} days overdue, per the FMS")
         why_not = ("the FMS shows no balance due" if overdue is None
                    else f"its delinquency is paused by a {ex.reason.replace('_', ' ').lower()} exemption until {ex.end_date}" if exempt and ex
@@ -151,7 +151,7 @@ def assess_customer(adapter: FMSAdapter, facility: Facility, policy: AccessPolic
                 DISAGREE, "lease", pl.provider_id,
                 f"Unit {unit}: the recorded rule says the unit should {'be' if should_restrict else 'not be'} restricted, but the FMS "
                 f"says an overlock is {'needed' if pl.overlock_needed else 'not needed'}. One of the two rules is out of date, so "
-                "Gatehouse asks no one to change the unit until a person settles it.",
+                "Staddle asks no one to change the unit until a person settles it.",
                 "leases/search overlockNeeded", "The FMS and the recorded rule agree on this unit.", "Operations manager", observed))
             continue
         if not should_restrict and operator_locks:
@@ -170,7 +170,7 @@ def assess_customer(adapter: FMSAdapter, facility: Facility, policy: AccessPolic
                 MISSING, "lease", pl.provider_id,
                 f"Unit {unit} is {overdue} days overdue, past the facility's {policy.lockout_days}-day rule, and the FMS records "
                 f"no operator lock on it.{' The FMS itself calls for an overlock.' if pl.overlock_needed is True else ' The FMS did not say whether an overlock is needed.'} "
-                "Gatehouse does not lock anyone out; a person decides.",
+                "Staddle does not lock anyone out; a person decides.",
                 "locks/search by lease", "Locks Search shows an operator lock on the unit, or the account is no longer past the rule.",
                 "Facility manager", observed,
                 (f"Decide on an overlock for unit {unit}",
@@ -184,7 +184,7 @@ def assess_customer(adapter: FMSAdapter, facility: Facility, policy: AccessPolic
         out.append(Discrepancy(
             REVIEW, "customer", customer,
             "No gate code is on file in the FMS for this customer." if not codes else
-            f"{len(codes)} gate codes are on file for this customer; Gatehouse cannot tell which one the tenant uses.",
+            f"{len(codes)} gate codes are on file for this customer; Staddle cannot tell which one the tenant uses.",
             "access-codes/search", "Exactly one gate code on file for the customer.", "Facility manager", {"codes": len(codes)}))
     elif len(judged) == len(restricted):
         check = checks[codes[0].code]
@@ -201,7 +201,7 @@ def assess_customer(adapter: FMSAdapter, facility: Facility, policy: AccessPolic
         observed = {"check": message, "allowed": check.allowed, "expected_allowed": expected,
                     "restricted_units": units_past, "gate_rule": policy.gate_rule, "policy": policy.version}
         if expected is None:
-            out.append(Discrepancy(REVIEW, "customer", customer, f"The recorded gate rule {policy.gate_rule!r} is not one Gatehouse knows.",
+            out.append(Discrepancy(REVIEW, "customer", customer, f"The recorded gate rule {policy.gate_rule!r} is not one Staddle knows.",
                                    "access policy", "A known gate rule recorded for the facility.", "Operations manager", observed))
         elif expected and not check.allowed:
             reason = (f"unit(s) {', '.join(good)} are in good standing and unit(s) {units_past} are past the rule" if past
@@ -218,7 +218,7 @@ def assess_customer(adapter: FMSAdapter, facility: Facility, policy: AccessPolic
             out.append(Discrepancy(
                 MISSING, "customer", customer,
                 f"The FMS reports the customer's gate code as allowed, but unit(s) {units_past} are past the facility's rule "
-                f"({rule}). Gatehouse does not lock anyone out; a person decides.",
+                f"({rule}). Staddle does not lock anyone out; a person decides.",
                 "access-codes/check", "Check Access Code answers that access is not allowed, or no unit is past the rule.",
                 "Facility manager", observed,
                 ("Decide on gate access for this customer",
@@ -240,7 +240,7 @@ def reconcile_access(session: Session, adapter: FMSAdapter, facility: Facility, 
     if policy is None:
         found.append(Discrepancy(
             REVIEW, "facility", facility.provider_id,
-            f"No access rule is recorded for {facility.name}, so Gatehouse does not judge gate codes or overlocks here. "
+            f"No access rule is recorded for {facility.name}, so Staddle does not judge gate codes or overlocks here. "
             "Record the facility's lockout rule, who approved it and from when.",
             "access policy", "An approved access rule recorded for the facility.", "Operations manager"))
     else:
@@ -352,7 +352,7 @@ def _apply(session: Session, facility: Facility, run_id: str, found: list[Discre
 
 
 def _marker(item: WorkItem) -> str:
-    return f"[gatehouse work item {item.run_id}-{item.id}]"
+    return f"[staddle work item {item.run_id}-{item.id}]"
 
 
 def _tasks(session: Session, adapter: FMSAdapter, facility: Facility, run_id: str, found: list[Discrepancy], result: AccessPass) -> None:
@@ -399,7 +399,7 @@ def ensure_task(session: Session, adapter: FMSAdapter, facility: Facility, item:
                 item.note = ("The FMS task was marked completed, but the FMS still shows the problem on a complete "
                              "reading. A completed task does not close this item.")
             elif item.task_status in ("ARCHIVED", "not found"):
-                item.note = (f"The FMS task is {item.task_status.lower()}, and the problem is still there. Gatehouse does not "
+                item.note = (f"The FMS task is {item.task_status.lower()}, and the problem is still there. Staddle does not "
                              "create another task for the same episode.")
         if kept:
             item.note = kept
@@ -425,7 +425,7 @@ def _find_by_marker(adapter: FMSAdapter, item: WorkItem, task: tuple, facility_p
     else:
         item.task_state = "outcome_unknown"
         item.note = ("Creating the FMS task gave no usable answer, and no task with this item's marker is found yet. It may "
-                     "still appear; Gatehouse does not create another while the outcome is unknown.")
+                     "still appear; Staddle does not create another while the outcome is unknown.")
 
 
 def bound_facilities(session: Session) -> list[Facility]:

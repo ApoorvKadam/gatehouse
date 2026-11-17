@@ -1,7 +1,7 @@
 """Claude reads one tenant text and prepares the case for staff.
 
 Claude does the reading and the looking up. It calls read-only tools over the desk's own records, bound by code to the one
-tenant the desk matched and the one facility the text arrived at, and it ends by submitting a case packet. Gatehouse does
+tenant the desk matched and the one facility the text arrived at, and it ends by submitting a case packet. Staddle does
 the rest: it checks that every record the packet cites was returned by a lookup in this run, checks the claim against its own
 records, and keeps both, so staff see what Claude concluded and what the desk verified. Claude has no tool that writes
 anything, takes a payment, or reaches another tenant."""
@@ -84,7 +84,7 @@ A text that is only one of these words asks the facility to stop all texts: {sto
 </trusted_facts>
 
 <allowed_actions>
-Read records with get_account, get_payments, get_sale_status, get_lien_file, get_access, get_rent_change and get_recent_texts. When the tenant asks about a rent increase or a rent notice, read get_rent_change; no record shows whether a notice was sent, so never write that one was or was not. If the tenant says they were not told about a rent change, the intent is rent_notice_dispute: a person reviews the notice and answers them, so do not propose a reply and set needs_person. The lookups that take a lease_id accept only the lease_id values that get_account returns. When get_sale_status shows an open sale item for this tenant's unit that is still listed, you may ask for a staff review of it with request_staff_review, once, passing that item's record_id. Gatehouse decides whether to act, acts only after it has checked your packet, and reads the result back from the FMS; you do not see the result, so never write that a review was requested or done. When the tenant is waiting for an answer that the records can give, propose an acknowledgement with draft_reply, once, after any request for a staff review. List the parts that answer them, in the order a person would say them: payment_applied (a desk payment record, payment:..., that says the payment is confirmed; never an FMS-reported payment), balance_as_of (an account record, cite its lease: record_id), sale_status (a sale item record that get_sale_status returned, cite its record_id), rent_change (a rent change record that get_rent_change returned, cite its record_id; only when the tenant asks about their rent), staff_review (only if you asked for one), and acknowledgment (a closing line). Use message_received to open. Give an empty record_id for the parts that need none. Do not propose a reply to a STOP. The desk leaves out any part it cannot confirm, so you do not see the text or whether it was sent: never write that a reply was sent. Finish by calling submit_case_packet once.
+Read records with get_account, get_payments, get_sale_status, get_lien_file, get_access, get_rent_change and get_recent_texts. When the tenant asks about a rent increase or a rent notice, read get_rent_change; no record shows whether a notice was sent, so never write that one was or was not. If the tenant says they were not told about a rent change, the intent is rent_notice_dispute: a person reviews the notice and answers them, so do not propose a reply and set needs_person. The lookups that take a lease_id accept only the lease_id values that get_account returns. When get_sale_status shows an open sale item for this tenant's unit that is still listed, you may ask for a staff review of it with request_staff_review, once, passing that item's record_id. Staddle decides whether to act, acts only after it has checked your packet, and reads the result back from the FMS; you do not see the result, so never write that a review was requested or done. When the tenant is waiting for an answer that the records can give, propose an acknowledgement with draft_reply, once, after any request for a staff review. List the parts that answer them, in the order a person would say them: payment_applied (a desk payment record, payment:..., that says the payment is confirmed; never an FMS-reported payment), balance_as_of (an account record, cite its lease: record_id), sale_status (a sale item record that get_sale_status returned, cite its record_id), rent_change (a rent change record that get_rent_change returned, cite its record_id; only when the tenant asks about their rent), staff_review (only if you asked for one), and acknowledgment (a closing line). Use message_received to open. Give an empty record_id for the parts that need none. Do not propose a reply to a STOP. The desk leaves out any part it cannot confirm, so you do not see the text or whether it was sent: never write that a reply was sent. Finish by calling submit_case_packet once.
 </allowed_actions>
 
 <prohibited_claims>
@@ -137,7 +137,7 @@ TOOLS = [
     {"name": "request_staff_review", "strict": True,
      "input_schema": {"type": "object", "properties": {"record_id": {"type": "string", "description": "the record_id of the open sale item that get_sale_status returned for one of this tenant's units, exactly as it wrote it"}},
                       "required": ["record_id"], "additionalProperties": False},
-     "description": "Ask staff to review a sale that is still listed. Pass the record_id of an open sale item that get_sale_status returned. Gatehouse links the "
+     "description": "Ask staff to review a sale that is still listed. Pass the record_id of an open sale item that get_sale_status returned. Staddle links the "
                     "FMS task that asks a person to act on that sale, or asks the FMS for one if the desk has not yet, but only after it has checked your packet, "
                     "and it reads the task back from the FMS. You are not told the result. Changes nothing else. Call it at most once."},
     {"name": "draft_reply", "strict": True,
@@ -428,7 +428,7 @@ class Lookups:
             return {"error": "that sale item is not open for one of this tenant's units at this facility"}
         if item.id not in self.requests:
             self.requests.append(item.id)
-        return {"noted": "Your request for a staff review of this sale item is noted. Gatehouse acts on it only after it has checked your packet against its "
+        return {"noted": "Your request for a staff review of this sale item is noted. Staddle acts on it only after it has checked your packet against its "
                          "records, and it shows staff what the FMS says. Do not write in the packet that a review was requested or done."}
 
     def draft_reply(self, components) -> dict:
@@ -845,7 +845,7 @@ class Investigation(PaidRun):
                              **intake.compare(self.session, self.scope.leases, self.scope.facility.time_zone, found)}
         else:
             self.row.file = {"sample": key, "label": intake.SAMPLES[key], "claims": None, "verdict": "unread",
-                             "lines": ["Our agent could not read the file, so Gatehouse compares nothing. A person looks at it."]}
+                             "lines": ["Our agent could not read the file, so Staddle compares nothing. A person looks at it."]}
         self.session.commit()
 
     def _worst_call(self, system: str, messages: list) -> float:

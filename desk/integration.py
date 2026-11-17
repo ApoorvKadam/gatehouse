@@ -64,15 +64,15 @@ FIELDS = {"status": "payment status", "amount": "amount", "createdAt": "the time
           "rentChangeNewRentAmount": "scheduled rent", "effectiveRate": "net rent"}
 # what the desk does about each kind of departure, checked against the code that does it
 CONSEQUENCE = {
-    ("payments search", "unlisted value"): ("Gatehouse keeps it as written and never reads it as paid or failed. No new payment starts on that lease until the FMS "
-                                            "reports a status Gatehouse knows or the adapter is changed."),
-    ("payments search", "not whole cents"): "Gatehouse never rounds an amount, so it does not read that lease's payments until the FMS sends whole cents.",
+    ("payments search", "unlisted value"): ("Staddle keeps it as written and never reads it as paid or failed. No new payment starts on that lease until the FMS "
+                                            "reports a status Staddle knows or the adapter is changed."),
+    ("payments search", "not whole cents"): "Staddle never rounds an amount, so it does not read that lease's payments until the FMS sends whole cents.",
     ("make payment", "unlisted value"): "The payment is never sent again. It goes to a person if the FMS does not settle it.",
-    ("make payment", "not whole cents"): "Gatehouse never rounds an amount: the payment is held as outcome unknown and never sent again.",
-    ("payments search", "missing"): "Gatehouse never guesses an amount, so it does not read that lease's payments until the FMS sends one.",
-    ("make payment", "missing"): "Gatehouse never guesses an amount: the payment is held as outcome unknown and never sent again.",
-    ("leases search", "not whole cents"): "Gatehouse never rounds an amount, so the rent change check says it cannot tell for that lease.",
-    ("rent roll", "not whole cents"): "Gatehouse never rounds an amount, so the rent change check says it cannot tell for that lease.",
+    ("make payment", "not whole cents"): "Staddle never rounds an amount: the payment is held as outcome unknown and never sent again.",
+    ("payments search", "missing"): "Staddle never guesses an amount, so it does not read that lease's payments until the FMS sends one.",
+    ("make payment", "missing"): "Staddle never guesses an amount: the payment is held as outcome unknown and never sent again.",
+    ("leases search", "not whole cents"): "Staddle never rounds an amount, so the rent change check says it cannot tell for that lease.",
+    ("rent roll", "not whole cents"): "Staddle never rounds an amount, so the rent change check says it cannot tell for that lease.",
 }
 KEPT_WITHOUT_TIME = "A payment first seen without it has no time of its own, so it cannot end a reminder hold."
 

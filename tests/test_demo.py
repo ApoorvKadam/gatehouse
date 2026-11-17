@@ -121,7 +121,7 @@ def test_readiness_turns_false_when_every_worker_pass_fails(adapter):
 
     from desk.worker import Worker
 
-    # a database without Gatehouse's tables: every pass fails on its first query
+    # a database without Staddle's tables: every pass fails on its first query
     broken = sessionmaker(create_engine("sqlite:///:memory:", poolclass=StaticPool, connect_args={"check_same_thread": False}))
     worker = Worker(broken, adapter, every_seconds=0.05, stale_after=0.3)
     worker.start()

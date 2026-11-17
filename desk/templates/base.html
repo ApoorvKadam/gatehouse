@@ -3,11 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% block title %}Gatehouse{% endblock %}</title>
+<title>{% block title %}Staddle{% endblock %}</title>
 <link rel="preload" href="{{ url_for('static', path='geist.woff2') }}" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="{{ url_for('static', path='source-serif-4.woff2') }}" as="font" type="font/woff2" crossorigin>
 <link rel="icon" type="image/svg+xml" href="{{ url_for('static', path='favicon.svg') }}?v={{ css_version }}">
-<link rel="stylesheet" href="{{ url_for('static', path='gatehouse.css') }}?v={{ css_version }}">
+<link rel="stylesheet" href="{{ url_for('static', path='staddle.css') }}?v={{ css_version }}">
 <script>document.documentElement.classList.add("js")</script>
 </head>
 <body class="{% block bodyclass %}{% endblock %}">
@@ -15,7 +15,7 @@
 <header class="top">
   <span class="scroll-line" aria-hidden="true"></span>
   <div class="wrap">
-    <a class="brand" href="/"><span class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>Gatehouse</a>
+    <a class="brand" href="/"><span class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>Staddle</a>
     <nav aria-label="Main">
       <a href="/" {% if nav == 'front' %}aria-current="page"{% endif %}>Overview</a>
       <a href="/today" {% if nav == 'today' %}aria-current="page"{% endif %}>Today</a>
@@ -43,7 +43,7 @@
 {% block footer %}
 <footer>
   <div class="wrap foot">
-    <div class="foot-brand">{% set guard_size = 72 %}{% set guard_pose = "" %}{% include "guard.html" %}<b>Gatehouse</b><span>Unfinished work in self-storage, checked against the FMS.</span></div>
+    <div class="foot-brand">{% set guard_size = 72 %}{% set guard_pose = "" %}{% include "guard.html" %}<b>Staddle</b><span>Unfinished work in self-storage, checked against the FMS.</span></div>
     <nav class="foot-col" aria-label="Work"><h2>Work</h2><a href="/today">Today</a><a href="/calls-and-reminders">Calls and reminders</a><a href="/inbox">Messages</a><a href="/rent-changes">Rent changes</a></nav>
     <nav class="foot-col" aria-label="Proof"><h2>Proof</h2><a href="/evaluation">Evaluation</a><a href="/operations">Operations</a></nav>
     <div class="foot-col"><h2>About</h2><a class="gh-link" href="https://github.com/ApoorvKadam/staddle" rel="noopener">{% include "icons/github.svg" %}GitHub</a><span>FMS shapes follow Cubby's public Operator API. Not an official integration.</span></div>

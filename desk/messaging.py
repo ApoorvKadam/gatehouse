@@ -271,12 +271,12 @@ def may_text(session: Session, customer: ProviderCustomer | None, *, reply_to: I
              zone: str = "America/New_York") -> Verdict:
     """May the desk text this customer at all, at any hour? Cubby texts the number it holds for the customer and the desk has to
     look at every preference, so the checks are here. `zone` is the facility's, so a date in a reason is the date there. `customer` is the
-    tenant as the FMS shows them at this moment, or None when nobody is named. Gatehouse sends account messages and never promotions, so the marketing flag is not consulted.
+    tenant as the FMS shows them at this moment, or None when nobody is named. Staddle sends account messages and never promotions, so the marketing flag is not consulted.
     The carrier refuses a number that texted STOP; the desk's own record is a second layer, not the first."""
     if customer is None:
         return Verdict(False, "Cubby texts only a customer on file, so a person has to answer this number.")
     if not customer.phone:
-        return Verdict(False, "This API key cannot read the tenant's phone number, so Gatehouse cannot tell where Cubby would send a text.")
+        return Verdict(False, "This API key cannot read the tenant's phone number, so Staddle cannot tell where Cubby would send a text.")
     if reply_to is not None and reply_to.phone_key != e164(customer.phone):
         return Verdict(False, f"Cubby would text the number on file (ending {last4(customer.phone)}), "
                               f"not the number that texted (ending {last4(reply_to.phone)}).")
@@ -286,7 +286,7 @@ def may_text(session: Session, customer: ProviderCustomer | None, *, reply_to: I
         return Verdict(False, f"This number texted {keyword(stop.body)} on {sent:%b} {sent.day}. It stays off until they text START.")
     sms = customer.sms
     if sms is None:
-        return Verdict(False, "The FMS shows no text preferences for this tenant, so Gatehouse cannot tell whether texts are allowed.")
+        return Verdict(False, "The FMS shows no text preferences for this tenant, so Staddle cannot tell whether texts are allowed.")
     if sms.suppressed:
         if sms.reason == "UNDELIVERABLE":
             return Verdict(False, "The FMS marks this number undeliverable. Someone should check it before it is texted again.")
@@ -375,7 +375,7 @@ def send_text(session: Session, adapter: FMSAdapter, facility: Facility, custome
         row.state, row.reason = "rejected", outcome.detail
     else:
         row.state = "outcome_unknown"
-        row.reason = (f"No usable answer came back ({outcome.detail}). The text may have gone out, so Gatehouse does not send "
+        row.reason = (f"No usable answer came back ({outcome.detail}). The text may have gone out, so Staddle does not send "
                       "it again. Check the conversation with this tenant in Cubby.")
     session.commit()
     return row
@@ -388,7 +388,7 @@ def hold_stranded(session: Session, now: datetime | None = None) -> int:
     rows = session.scalars(select(OutboundMessage).where(OutboundMessage.state == "intent", OutboundMessage.created_at < cutoff)).all()
     for row in rows:
         row.state = "outcome_unknown"
-        row.reason = ("The desk stopped before it recorded what Cubby answered. The text may have gone out, so Gatehouse does not "
+        row.reason = ("The desk stopped before it recorded what Cubby answered. The text may have gone out, so Staddle does not "
                       "send it again. Check the conversation with this tenant in Cubby.")
     session.commit()
     return len(rows)

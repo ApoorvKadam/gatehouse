@@ -1,9 +1,9 @@
 """Texting as Cubby documents it. Tenants text a facility's Cubby number, and Cubby turns each text into an SMS Received
-webhook; here a /sim route hands back that payload, which a test or the seed delivers to Gatehouse's receiver.
+webhook; here a /sim route hands back that payload, which a test or the seed delivers to Staddle's receiver.
 Sending is POST /v1/messages/sms/send: it takes a customer, not a phone number. Cubby documents no idempotency key and no
 way to look a text up afterwards, and the send does not look at the customer's preferences. A number that texted STOP is refused by the
 carrier, and the FMS's own flag learns of it only when a send is rejected, so it can lag a STOP by one message.
-The /sim routes are what a tenant does on their phone and what a test can read back; Gatehouse never calls them."""
+The /sim routes are what a tenant does on their phone and what a test can read back; Staddle never calls them."""
 from __future__ import annotations
 
 import re

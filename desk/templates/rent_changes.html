@@ -1,12 +1,12 @@
 {% extends "base.html" %}
-{% block title %}Rent changes, {{ facility.name }} | Gatehouse{% endblock %}
+{% block title %}Rent changes, {{ facility.name }} | Staddle{% endblock %}
 {% block main %}
 <div class="wrap">
   <div class="head">
     <div class="head-title"><h1>Rent changes at {{ facility.name }}</h1><p class="tagline">An increase is finished when the bill says so.</p></div>
     {% if rows %}<p>{{ open }} of {{ rows|length }} {{ 'change needs' if open == 1 else 'changes need' }} a person</p>{% endif %}
   </div>
-  <p class="lede">Your revenue tool or your staff decide each increase, and the FMS holds it. This is the check around it: whether the account can take it, whether the FMS applied it on the day, and whether the first full bill after it is the new rent. Gatehouse sets no price and changes no rent.</p>
+  <p class="lede">Your revenue tool or your staff decide each increase, and the FMS holds it. This is the check around it: whether the account can take it, whether the FMS applied it on the day, and whether the first full bill after it is the new rent. Staddle sets no price and changes no rent.</p>
   {% if rows %}
   <div class="worklist check rents">
     <table>

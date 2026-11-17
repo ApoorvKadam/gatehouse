@@ -27,7 +27,7 @@ from .front_desk import ACTION_WORDS, CLAIM_WORDS, SHIFT, CaseIn, FrontDesk, acc
 from .guard import LIFETIME, SLOW_DOWN, UNSET, Unreachable
 
 DEMO_NAME, DEMO_PASSWORD = "dana.reyes", "northstar"
-SESSION = "gh_session"
+SESSION = "staddle_session"
 STAFF = "staff:office_manager"
 # the menu in the groups an FMS is organised by; a module joins its group when it is built, never as a greyed-out item
 MENU = (("Run the facility", (("home", "Home", "house"), ("today", "Today", "list-checks"), ("messages", "Messages", "message-square"))),

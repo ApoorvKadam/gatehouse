@@ -1,6 +1,6 @@
 """The check in front of a reminder: which past-due tenants a collections text must not go to today, and why.
 
-Gatehouse does not send reminders and does not decide when one is due. The operator's reminder tool does both, from what the FMS tells it. What
+Staddle does not send reminders and does not decide when one is due. The operator's reminder tool does both, from what the FMS tells it. What
 that tool cannot see is what the records say: a tenant who texted STOP, or whom the FMS marks opted out or undeliverable, must not be texted;
 nor must one who is paying under an arrangement, whose payment is still being checked, or whose unit has a lien file or a sale. A text then
 contradicts what staff or the law are already doing.
@@ -68,7 +68,7 @@ def decide(r: Reading) -> dict:
     texted at all outranks the rest. A reason a person has to settle holds the text: the check never guesses in favour of sending."""
     reasons = []
     if r.overdue is None:
-        reasons.append(("date", "The FMS sent a delinquency date Gatehouse cannot read, so how late this account is cannot be said."))
+        reasons.append(("date", "The FMS sent a delinquency date Staddle cannot read, so how late this account is cannot be said."))
     if not r.consent.ok:
         reasons.append(("consent", r.consent.reason))
     reasons += [(code, why) for code, why in (("lien", r.lien), r.exemption or ("exemption", None), ("payment", r.payment)) if why]
