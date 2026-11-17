@@ -1125,6 +1125,7 @@ body.fms > main { min-width: 0; }
 .fms-try button { justify-self: start; margin-top: var(--s2); }
 .fms-arms { display: grid; gap: var(--s3); margin: var(--s4) 0; }
 .fms-arm { display: grid; grid-template-columns: minmax(18rem, 1.3fr) minmax(8rem, 1fr) 8.5rem minmax(19rem, 1.2fr); gap: var(--s4); align-items: center; }
+.fms-arm-facts span { display: block; }
 .fms-summary { font-size: var(--t-lg); color: var(--ink-2); }
 .fms-search { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; margin-bottom: var(--s3); }
 .fms-search label { font-size: var(--t-sm); color: var(--ink-2); margin-right: var(--s2); }
