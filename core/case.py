@@ -17,7 +17,7 @@ from .reply import write
 from .store import Store
 
 PERSON_FLAGS = ("asks_for_person", "legal_or_hostile")
-OFF = "the agent is off on this copy, so the message waits for staff"
+OFF = "Tilden is off on this copy, so the message waits for staff"
 
 
 @dataclass
