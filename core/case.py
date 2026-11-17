@@ -13,6 +13,7 @@ from .billing import Ledger
 from .books import Books, LATE_FEE, fold, local
 from .evidence import Claim, Finding, charge_list, check
 from .gate import Command, Decision, evaluate, evaluate_ask, execute, staff_rule, staff_rule_for_message, waiver_rule
+from .reader import amounts as read_amounts
 from .reply import write
 from .store import Store
 
@@ -163,7 +164,11 @@ def handle(store: Store, stream: str, case: str, phone: str | None, text: str, a
             actions[i] = (a, "model") if a in valid else ("hand_to_staff", "code")
     # act, through the gate: corrections of our own records first, then waivers, then the rest; oldest charge first within each
     source = "fixed_workflow" if arm.chooser == "table" and arm.reader == "keywords" else "operator"
-    units = len({books.charges[c.charge].lease for c in res.claims if c.charge in books.charges}) or 1
+    # the units the message is about: those its claims point at, and those whose rent it names in dollars ("$90 and $155")
+    said = {cents for cents, _ in read_amounts(text)}
+    leases = {books.charges[c.charge].lease for c in res.claims if c.charge in books.charges}
+    leases |= {ch.lease for ch in books.tenant_charges(tenant) if ch.kind == "rent" and ch.cents in said}
+    units = len(leases) or 1
     # the owner's staff rule covers the whole message: if any claim, flag or the units match, nothing is done before staff see it
     hit = staff_rule_for_message(books, [f.claim.kind for f in findings], tuple(res.flags), units)
     if hit:

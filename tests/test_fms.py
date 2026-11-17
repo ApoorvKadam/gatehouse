@@ -283,6 +283,28 @@ def test_an_action_the_owner_leaves_to_staff_hands_the_message_over_and_today_na
         assert "Waiting for staff" in c.get("/messages").text
 
 
+SEVERAL_UNITS_RULE = {**TWO_MONTHS_RULE, "kind": "staff", "staff": {"flags": [], "claim_kinds": [], "actions": [], "several_units": True},
+                      "quotes": [{"field": "several_units", "words": "two different storage units"}], "reason": "Several units go to the office."}
+
+
+def one_rent_claim(text, charges):
+    rent = next(c["charge"] for c in charges if c["about"].startswith("rent"))
+    return {"claims": [{"kind": "charged_twice", "charge": rent, "quote": text, "date": None, "date_quote": None, "amount_quote": None}], "flags": []}
+
+
+def test_a_message_naming_rent_on_two_units_goes_to_staff_under_the_several_units_rule(fms_url, sim):
+    """Seen with the real model on 2026-11-17: Dev's "$90 and $155" message was read as one claim on one unit, so the rule never
+    fired. The units now also come from the rents the message names."""
+    app = site(fms_url, RuleScript(one_rent_claim, SEVERAL_UNITS_RULE))
+    with sign_in(app) as c:
+        p = c.post("/api/fms/rules", json={"sentence": "If a person is complaining about fees on two different storage units in one message, send it to the office."}).json()
+        assert p["outcome"] == "adopt"
+        c.post("/rules/approve", data={"proposal": p["id"]})
+        assert run(c, "dev", shift="s7", run_id="r1").status_code == 200
+        handed = seen(c.get("/today").text).split("Handed to staff", 1)[1].split("Closed by", 1)[0]
+        assert "Dev Patel" in handed and "several units" in handed
+
+
 def test_owner_sentences_are_three_a_day_and_an_unsafe_one_is_never_offered_for_approval(fms_url, sim):
     refuse = {**TWO_MONTHS_RULE, "outcome": "refuse", "kind": "none", "quotes": [], "reason": "Rent is never waived."}
     app = site(fms_url, RuleScript(paid_in_time, refuse))
