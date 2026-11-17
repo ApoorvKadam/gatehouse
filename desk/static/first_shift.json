@@ -111,6 +111,6 @@
   "cases": 24,
   "code": 23,
   "best_model": 23,
-  "decision": "No model chose better than code on the same reading, so code chooses the action. In the ten runs above, the two differ by less than the spread between runs."
+  "decision": "No model chose better than code on the same reading, so code chooses the action. In the ten runs above, Tilden choosing as well scored 34.9 against 36, inside the spread between runs."
  }
 }
