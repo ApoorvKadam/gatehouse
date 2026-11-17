@@ -195,8 +195,7 @@ def morning(year, day):
 
 
 def test_the_year_follows_any_day_and_the_morning_reads_the_same(year):
-    """The live FMS builds the year up to midnight of the real day (2026-11-16, his order: the date is today's and changes every
-    day). On any day the planted situations sit in the story month, the cast keeps its units, nothing is dated after midnight,
+    """The live FMS builds the year up to midnight of the real day (the date is today's and changes every day). On any day the planted situations sit in the story month, the cast keeps its units, nothing is dated after midnight,
     each date a morning message names falls in the story month, and the rule-based workflow does what it does on the fixed day."""
     items = load("shift")["items"]
     assert all(year.words(i["text"]) == i["text"] for i in items)          # the fixed day reads the messages as written

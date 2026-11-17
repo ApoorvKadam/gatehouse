@@ -152,7 +152,7 @@ class Facility:
                         # a message can be answered while the work it started still waits: a dispute stays open for staff
                         "waits": bool(who and who["dispute"] and any(o["action"] == "open_dispute" and o["allowed"] for o in outcomes)),
                         "cents": round(sum(c.get("cents", 0) for c in p.get("calls", [])), 4),
-                        # what each model call cost, as the Overview shows it (his message of 2026-11-16: show the reading cost in the FMS too)
+                        # what each model call cost, as the Overview shows it
                         "calls": [{"job": JOB_WORDS.get(c["job"], "Model call"), "tokens_in": c["tokens_in"], "tokens_out": c["tokens_out"],
                                    "cents": c["cents"], "seconds": c["ms"] / 1000, "ok": c["outcome"] == "ok"} for c in p.get("calls", [])],
                         "off": p["handed"] == OFF,
