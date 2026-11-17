@@ -17,7 +17,10 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from core.books import ZONE, at_local, local
+from core.billing import Ledger
 from core.case import READ_ONLY, handle
+from core.gate import STAFF_RULE
+from core.rules import Proposal, compile_rule, replay
 from core.cases import load
 from core.seed import build
 from core.store import BASE, Store
@@ -26,6 +29,9 @@ from . import spend
 
 SHIFT = load("shift")["items"]
 WORST_CASE_CENTS = 0.1          # the most one message can cost on the live link (one reading call on Haiku, capped)
+RULE_WORST_CENTS = 0.2          # the most reading one owner sentence can cost (one call on Haiku, output capped)
+RULES_PER_DAY = 3               # owner sentences a visitor may have read in a day, apart from the message tries
+RULE_MODEL = ("claude-haiku-5-5", "low")
 KEEP_FOR = timedelta(hours=24)
 ACTION_WORDS = {"explain_charge": "Explained from the records", "reverse_duplicate": "Reversed the second copy",
                 "correct_fee_posted_in_error": "Removed as posted in error", "open_dispute": "Dispute recorded for the office manager",
@@ -43,6 +49,10 @@ def account_words(account: str, books) -> str:
         return "Held for the tenant as credit"
     return {"income:rent": "Rent income", "income:fees": "Fee income", "contra:waivers": "Waivers given",
             "clearing:card": "Card payments on the way"}.get(account, account)
+
+
+class RuleIn(BaseModel):
+    sentence: str = Field(min_length=3, max_length=400)
 
 
 class CaseIn(BaseModel):
@@ -69,6 +79,9 @@ class FrontDesk:
         self.reserved = 0.0
         self._year = None
         self._views: OrderedDict[str, tuple] = OrderedDict()
+        # ponytail: the last proposal per visitor, in memory; a restart drops it and the owner asks again
+        self._proposals: OrderedDict[str, tuple] = OrderedDict()     # visitor -> (id, proposal, sentence, rule versions, day)
+        self._resets: dict[str, int] = {}                            # visitor -> how many times their copy was reset
         self._facts: dict | None = None
 
     def today(self) -> date:
@@ -151,7 +164,8 @@ class FrontDesk:
         """Today's tries by this visitor, each with the shift messages it ran: a shift is one try, a typed message is one try."""
         since = as_utc(spend.day_start()).isoformat()
         out: dict[str, set] = {}
-        for run, shift in self.ready().db.execute("SELECT run, shift FROM usage WHERE visitor = ? AND at >= ?", (visitor, since)):
+        rows = self.ready().db.execute("SELECT run, shift FROM usage WHERE visitor = ? AND at >= ? AND (shift IS NULL OR shift != 'rule')", (visitor, since))
+        for run, shift in rows:
             out.setdefault(run, set()).add(shift)
         return out
 
@@ -214,5 +228,85 @@ class FrontDesk:
     def reset(self, visitor: str) -> None:
         with self.lock:
             self.ready()
+            self._proposals.pop(visitor, None)
+            self._resets[visitor] = self._resets.get(visitor, 0) + 1
             self.store.drop_stream(self.stream(visitor))
             self._views.pop(self.stream(visitor), None)
+
+
+    # owner rules ------------------------------------------------------------------------------------------------------
+    def rule_proposal(self, visitor: str, sentence: str, live: bool, budget_left=None) -> tuple[str, Proposal, dict]:
+        """One owner sentence read into a proposed rule, checked by code, with last year replayed under it. A try of its own:
+        three a day per visitor, inside the day's budget."""
+        with self.lock:
+            store = self.ready()
+            books = store.books(self.stream(visitor))
+            current = dict(books.rules["late_fee_waiver"]["typed"])
+            versions = tuple(books.rules.get(n, {}).get("version", 0) for n in ("late_fee_waiver", STAFF_RULE))
+            day = self.day
+            copy = self._resets.get(visitor, 0)
+            since = as_utc(spend.day_start()).isoformat()
+            used = store.db.execute("SELECT COUNT(*) FROM usage WHERE visitor = ? AND shift = 'rule' AND at >= ?", (visitor, since)).fetchone()[0]
+            if live and used >= RULES_PER_DAY:
+                raise HTTPException(429, f"You have used today's {RULES_PER_DAY} rule readings. They come back at midnight, New York time.")
+            if live and budget_left is not None and budget_left() < RULE_WORST_CENTS / 100:
+                raise HTTPException(429, "Today's budget for live runs is used up. It comes back at midnight, New York time.")
+            usage = None
+            if live:
+                usage = store.db.execute("INSERT INTO usage(at, visitor, run, shift, cents) VALUES (?,?,?,?,0)",
+                                         (datetime.now(timezone.utc).isoformat(), visitor, "rule:" + secrets.token_hex(4), "rule")).lastrowid
+                self.reserved += RULE_WORST_CENTS
+        p = None
+        try:
+            if live and self.client is not None:
+                p = compile_rule(self.client, RULE_MODEL[0], RULE_MODEL[1], sentence, current)
+            else:
+                p = Proposal("cannot", reason="Tilden is off on this copy, so no sentence can be read into a rule")
+        finally:
+            with self.lock:     # a failed call keeps its worst cost: it may still have been billed
+                if usage is not None:
+                    store.db.execute("UPDATE usage SET cents = ? WHERE id = ?", (p.call.cents if p and p.call else RULE_WORST_CENTS, usage))
+                    self.reserved -= RULE_WORST_CENTS
+        effect = {}
+        if p.outcome == "adopt" and p.kind == "waiver":
+            with self.lock:
+                events = store.events(self.stream(visitor))
+            effect = replay(events, current, p.typed)
+        pid = secrets.token_hex(6)
+        with self.lock:
+            if self._resets.get(visitor, 0) != copy:      # the copy was reset while the sentence was read: this result is for the old one
+                raise HTTPException(409, "Your copy was started over while the rule was read. Write the rule again.")
+            self._proposals[visitor] = (pid, p, sentence, versions, day)
+            while len(self._proposals) > 64:
+                self._proposals.popitem(last=False)
+        return pid, p, effect
+
+    def approve_rule(self, visitor: str, pid: str) -> int:
+        """The visitor, acting as the owner on their own copy, adopts the proposal they were shown. Returns the new version."""
+        with self.lock:
+            held = self._proposals.get(visitor)
+            if held is None or held[0] != pid or held[1].outcome != "adopt":
+                raise HTTPException(409, "That proposal is no longer here. Write the rule again.")
+            _, p, sentence, versions, day = held
+            store = self.ready()
+            stream = self.stream(visitor)
+            books = store.books(stream)
+            now = tuple(books.rules.get(n, {}).get("version", 0) for n in ("late_fee_waiver", STAFF_RULE))
+            if now != versions or day != self.day:     # a rule changed, or the books were rebuilt, since it was read
+                del self._proposals[visitor]
+                raise HTTPException(409, "The rules changed since this proposal was read. Write the rule again.")
+            name = "late_fee_waiver" if p.kind == "waiver" else STAFF_RULE
+            typed = dict(p.typed)
+            before = books.rules.get(name)
+            if name == STAFF_RULE and before:          # a staff rule adds to the conditions already in force
+                old = before["typed"]
+                typed = {"action": "send_to_staff", "several_units": bool(old.get("several_units") or typed["several_units"]),
+                         **{k: sorted(set(old.get(k, [])) | set(typed[k])) for k in ("flags", "claim_kinds", "actions")}}
+                sentence = before["sentence"] + " " + sentence
+            version = (before or {}).get("version", 0) + 1
+            led = Ledger(books)
+            led.adopt_rule(self.clock(), name, version, sentence, typed, by="owner")
+            with store.write():
+                store.append(stream, led.pending)
+            del self._proposals[visitor]
+            return version

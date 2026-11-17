@@ -23,7 +23,7 @@ The preview opens on an Overview. The FMS is behind a sign-in that comes filled 
 - **Messages.** This morning's tenant texts, read one at a time or all at once. Each conversation with the tenant's words, what Tilden read, what the books show, what was done, the books entries written and the reply. Try a tenant message sends one of your own through the same path. Test results shows how Tilden was measured.
 - **Units** and **Tenants.** Who rents what at which rent, the account with its rentals and a ledger with a running balance.
 - **Billing and payments.** Each month's billing, payments with the day the card was charged and the day the facility learned of it, declined cards, and who is past due.
-- **Rules.** The fee schedule, the owner's waiver rule in words and in the exact form code checks, what Tilden may do, and what only staff decide.
+- **Rules.** The fee schedule, the owner's rules in words and in the exact form code checks, what Tilden may do, and what only staff decide. Write a rule in plain words: Tilden turns it into an exact rule, code checks it against your words and replays last year under it, and nothing changes until you approve it as the owner on your copy.
 
 Staff decide an open dispute on Today: remove a fee the tenant never signed for, which is a correction and does not use up a waiver, or keep it under review. Each decision goes through the same gate, with a note of what was checked.
 
@@ -63,7 +63,7 @@ A generated year of one facility runs through the same code: 120 units, 121 tena
 
 ## What is built and what is simulated
 
-- **Built:** the books, the gate, Tilden's reading, the FMS screens, the staff decisions, the sign-in and the tests. The earlier reconciliation desk (below) is built too.
+- **Built:** the books, the gate, Tilden's reading, the FMS screens, the staff decisions, owner rules written in plain words, the sign-in and the tests. The earlier reconciliation desk (below) is built too.
 - **Simulated:** the facility, its tenants and its money are generated. Replies are shown, never sent. Taking card payments, gate access, move-ins and lien notices come in later steps.
 - **Not shown yet:** no operator has used it.
 

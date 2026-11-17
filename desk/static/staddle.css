@@ -1096,6 +1096,10 @@ body.fms > main { min-width: 0; }
 .fms-convs li.reading a { background: color-mix(in srgb, var(--blue) 6%, var(--paper)); box-shadow: inset 3px 0 0 var(--blue); }
 .fms-convs li.closed a { box-shadow: inset 3px 0 0 var(--chip-done-ink); }
 .fms-convs li.to-staff a { box-shadow: inset 3px 0 0 var(--chip-act-ink); }
+.fms-rule-form { display: grid; gap: var(--s2); max-width: 60rem; margin-top: var(--s3); }
+.fms-rule-form textarea { font: inherit; padding: var(--s3); border: 1px solid var(--frame); border-radius: 8px; background: var(--paper); color: var(--ink); }
+.fms-rule-form .button { justify-self: start; }
+#rule-result { margin-top: var(--s4); }
 .fms-readall { align-items: center; justify-content: space-between; margin-bottom: var(--s3); }
 .fms-case { padding: var(--s4) var(--s6) var(--s5); border: 1px solid var(--frame); border-radius: 10px; background: var(--paper); }
 .fms-case ul { margin: 0; padding-left: 1.1rem; }

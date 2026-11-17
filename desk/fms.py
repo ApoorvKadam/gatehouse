@@ -18,12 +18,13 @@ from starlette.concurrency import run_in_threadpool
 from core.case import OFF
 from core.books import ADMIN_FEE_CENTS, LATE_FEE_CENTS, RENT, REVIEW_DAYS, lines, local, month_key
 from core.evidence import KIND_WORDS, day, money, month_words
-from core.gate import ACTIONS, STAFF_ACTIONS, Command, execute
+from core.gate import ACTIONS, STAFF_ACTIONS, STAFF_RULE, Command, execute
+from core.rules import staff_words, waiver_words
 from core.seed import story_month
 
 from . import spend
 from .web import AGENT
-from .front_desk import ACTION_WORDS, CLAIM_WORDS, SHIFT, CaseIn, FrontDesk, account_words
+from .front_desk import ACTION_WORDS, CLAIM_WORDS, SHIFT, CaseIn, FrontDesk, RuleIn, account_words
 from .guard import LIFETIME, SLOW_DOWN, UNSET, Unreachable
 
 DEMO_NAME, DEMO_PASSWORD = "dana.reyes", "northstar"
@@ -146,6 +147,8 @@ class Facility:
             done = list(dict.fromkeys(named(o) for o in outcomes if o["allowed"] and o["action"] != "hand_to_staff"))
             # why it went to staff in the records' own words when a claim says so, else the case's reason
             why = next((o["says"] for o in outcomes if o["action"] == "hand_to_staff" and o["says"]), None)
+            if any(o.get("by") == "owner rule" for o in outcomes):      # the owner's own rule sent it: say so, not the records
+                why = p["handed"]
             out.append({"n": e.id, "who": who, "text": p["text"], "handed": p["handed"], "why": why or p["handed"], "reply": p["reply"], "claims": claims,
                         "outcomes": outcomes, "asked": [a for a in p.get("asked", []) if not a["allowed"]], "entries": entries,
                         "summary": ". ".join(done) + "." if done else "Answered from the records.",
@@ -305,7 +308,10 @@ class Facility:
 
     def rules(self) -> dict:
         rule = self.b.rules.get("late_fee_waiver")
-        return {"waiver": rule, "typed": [words(k, v) for k, v in (rule or {}).get("typed", {}).items()],
+        staff_rule = self.b.rules.get(STAFF_RULE)
+        return {"waiver": rule, "typed": [words(k, v) for k, v in (rule or {}).get("typed", {}).items() if not isinstance(v, dict)],
+                "waiver_words": waiver_words(rule["typed"]) if rule else [], "staff_rule": staff_rule,
+                "staff_rule_words": staff_words(staff_rule["typed"]) if staff_rule else [],
                 "late_fee": money(LATE_FEE_CENTS), "admin_fee": money(ADMIN_FEE_CENTS), "review_days": REVIEW_DAYS,
                 "actions": [(MAY_DO[a], a in ("reverse_duplicate", "correct_fee_posted_in_error", "waive_fee")) for a in ACTIONS],
                 "staff": [STAFF_DO[a] for a in STAFF_ACTIONS]}
@@ -483,9 +489,9 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
         return show(request, "fms_billing.html", "billing", f, months=months, month=f.month(key), past=f.past_due())
 
     @app.get("/rules", include_in_schema=False)
-    def rules(request: Request):
+    def rules(request: Request, stale: int = 0):
         f = Facility(fd, need(request))
-        return show(request, "fms_rules.html", "rules", f, **f.rules())
+        return show(request, "fms_rules.html", "rules", f, stale=bool(stale), **f.rules())
 
     # writes ------------------------------------------------------------------------------------------------------------
     @app.post("/api/fms/messages")
@@ -499,6 +505,39 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
             with session_factory() as s:
                 return settings.daily_budget_usd - spend.spent_today(s)
         return fd.run(ident, body, live, settings.visitor_cases_per_day, budget_left)
+
+    @app.post("/api/fms/rules")
+    def propose_rule(body: RuleIn, request: Request, ident: str = Depends(need)):
+        """An owner sentence read into a proposed rule on this session's copy: what it says, what changes, last year replayed."""
+        same_site(request)
+
+        def budget_left() -> float:
+            with session_factory() as s:
+                return settings.daily_budget_usd - spend.spent_today(s)
+        pid, p, effect = fd.rule_proposal(ident, body.sentence, live, budget_left if live else None)
+        f = Facility(fd, ident)
+        names = {t: f.people[t]["name"] for t in f.people}
+        changed = lambda rows: [{"who": names.get(r["tenant"], ""), "due": day(date.fromisoformat(r["due"])), "asked": day(date.fromisoformat(r["asked"])),
+                                 "before": r["old"], "after": r["new"]} for r in rows[:8]]
+        return {"id": pid, "outcome": p.outcome, "kind": p.kind, "words": p.words, "reason": p.reason, "not_expressed": p.not_expressed,
+                "quotes": [q["words"] for q in p.quotes], "cents": round(p.call.cents, 4) if p.call else 0,
+                "replay": {"fees": effect["fees"], "before": effect["old"], "after": effect["new"], "now_allowed": len(effect["to_allowed"]),
+                           "now_refused": len(effect["to_refused"]), "allowed": changed(effect["to_allowed"]), "refused": changed(effect["to_refused"])}
+                if effect else None}
+
+    @app.post("/rules/approve", include_in_schema=False)
+    async def approve_rule(request: Request):
+        """The visitor approves the proposal they were shown, as the owner, on this session's copy only."""
+        same_site(request)
+        ident = need(request)
+        data = await form(request)
+        try:
+            await run_in_threadpool(fd.approve_rule, ident, data.get("proposal", "")[:20])
+        except HTTPException as exc:
+            if exc.status_code != 409:
+                raise
+            return RedirectResponse("/rules?stale=1#h-write", status_code=303)
+        return RedirectResponse("/rules#in-force", status_code=303)
 
     @app.post("/disputes/decide", include_in_schema=False)
     async def decide(request: Request):
