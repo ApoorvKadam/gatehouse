@@ -87,7 +87,7 @@ class FrontDesk:
         starts it at boot). Yesterday's file keeps yesterday's visitor copies: the footer says a copy lasts a day."""
         root, ext = os.path.splitext(self.path)
         store = Store(self.path if self.path == ":memory:" else f"{root}-{today.isoformat()}{ext}")
-        year = build(today=today, cutoff=at_local(today))
+        year = build(today=today, cutoff=at_local(today), standing=True)
         if not store.events(BASE):
             with store.write():
                 store.append(BASE, year.led.pending)

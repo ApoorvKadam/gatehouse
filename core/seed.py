@@ -31,6 +31,7 @@ FIRST = ["Ana", "Ben", "Carla", "Dev", "Elena", "Femi", "Grace", "Hugo", "Ines",
 LAST = ["Alvarez", "Brooks", "Chen", "Diaz", "Evans", "Foster", "Garcia", "Hayes", "Ito", "Jensen", "Khan", "Lopez", "Moreno", "Nguyen",
         "Ortiz", "Patel", "Quinn", "Rivera", "Singh", "Turner", "Usman", "Vargas", "Walsh", "Young", "Zimmer"]
 SCHEDULE = [ADMIN_FEE, LATE_FEE]
+STANDING_QUOTE = "My move-in special said no admin fee. Please take the $25 off."
 WAIVER_RULE = ("We waive one late fee per tenant in any rolling 12 months, up to $25, when the tenant paid on time for each of the six "
                "completed billing months before the fee. It may be offered when the tenant raises the fee.")
 WAIVER_TYPED = {"action": "waive_fee", "fee_kind": LATE_FEE, "per_tenant": 1, "within_days": 365, "cap_cents": 2500,
@@ -63,9 +64,10 @@ def story_month(today: date) -> date:
 class Year:
     """Builds the year. `cast` maps a role name to its tenant, its leases and its unit."""
 
-    def __init__(self, seed: int = SEED, today: date = TODAY, cutoff: datetime | None = None):
+    def __init__(self, seed: int = SEED, today: date = TODAY, cutoff: datetime | None = None, standing: bool = False):
         # everything up to the cutoff happens: 09:00 on the fixed day; the live FMS passes midnight, so nothing is ahead of the clock
         self.today, self.now = today, cutoff or at_local(today, 9, 0)
+        self.standing = standing                         # the live copy's open dispute from last week; never in the fixed books
         self.story = story_month(today)                  # every date below is counted in months from this one
         self.opened = add_months(self.story, -12)
         self.rnd = random.Random(seed)
@@ -133,6 +135,8 @@ class Year:
             habit = self.rnd.choices(["on_time", "sometimes_late", "chronic"], [62, 28, 10])[0]
             self.at(at_local(day, 9 + i % 9, (i * 7) % 60), lambda h=habit, d=day, k=i: self.move_in(at_local(d, 9 + k % 9, (k * 7) % 60), h))
         self.plant()
+        if self.standing:
+            self.standing_dispute()
         for month in months_between(opened, self.story):
             self.plan_month(month, self.rnd)
         self.plan_month(self.key(1), self.later)
@@ -342,6 +346,31 @@ class Year:
         self.role("kemi", m(-6, 4), "Kemi Usman", "+14075550244", row="A", rent=9500)
         self.role("femi", m(-6, 4, 11), "Femi Usman", "+14075550244", row="A", rent=9000)
 
+    def standing_dispute(self) -> None:
+        """The live copy opens with one fee dispute from last week, so a visitor finds a decision waiting.
+        Nora moved in on a special without the admin fee; the desk posted one by hand six days ago and she disputed it at the counter
+        that afternoon, so the review, ten days on, is always four days ahead. She moves in after the last cast member, so every cast
+        unit stays as on the fixed day, and pays her rent on the 1st, never the held fee. Dates count from the day, not the story month."""
+        led = self.led
+        moved = self.m(-1, 22)
+        posted = at_local(self.today - timedelta(days=6), 11, 20)
+        disputed = posted.replace(hour=16, minute=40)
 
-def build(seed: int = SEED, today: date = TODAY, cutoff: datetime | None = None) -> Year:
-    return Year(seed, today, cutoff).build()
+        def go():
+            t, lease = self.move_in(moved, "scripted", name="Nora Feld", phone="+14075550299", row="C", schedule=[LATE_FEE], rent=22500)
+            led.receive_payment(t, self.balance(t), moved + timedelta(minutes=10))
+            self.cast["nora"] = {"tenant": t, "leases": [lease], "name": "Nora Feld", "phone": "+14075550299"}
+            for month in months_between(moved.date(), self.today):
+                first = at_local(_d(month, 1), 9)
+                if first > moved:
+                    self.at(first, lambda w=first: led.receive_payment(t, 22500, w))
+
+        def post():
+            self.cast["nora"]["fee"] = led.charge_by_hand(posted, self.lease("nora"), ADMIN_FEE, 2500, f"admin_fee:{self.lease('nora')}", note="admin fee")
+        self.at(moved, go)
+        self.at(posted, post)
+        self.at(disputed, lambda: led.open_dispute(disputed, self.cast["nora"]["fee"], STANDING_QUOTE, True, "staff:front_desk"))
+
+
+def build(seed: int = SEED, today: date = TODAY, cutoff: datetime | None = None, standing: bool = False) -> Year:
+    return Year(seed, today, cutoff, standing).build()

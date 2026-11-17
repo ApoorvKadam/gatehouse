@@ -19,8 +19,8 @@ Staddle is the FMS itself. It keeps the facility's books, Tilden reads what tena
 The preview opens on an Overview. The FMS is behind a sign-in that comes filled in with a demo login, and each visitor works on a copy of the facility of their own.
 
 - **Home.** The facility this morning: work waiting, units rented by row, the month's billing and collections, who is past due.
-- **Today.** This morning's tenant texts and a button to have Tilden read them; disputes waiting for a decision; what was handed to staff; what Tilden closed.
-- **Messages.** Each conversation with the tenant's words, what Tilden read, what the books show, what was done, the books entries written and the reply. Try a tenant message sends one of your own through the same path. Test results shows how Tilden was measured.
+- **Today.** What waits for a person: disputes to decide, messages handed to staff, what staff decided, and how many messages Tilden closed.
+- **Messages.** This morning's tenant texts, read one at a time or all at once. Each conversation with the tenant's words, what Tilden read, what the books show, what was done, the books entries written and the reply. Try a tenant message sends one of your own through the same path. Test results shows how Tilden was measured.
 - **Units** and **Tenants.** Who rents what at which rent, the account with its rentals and a ledger with a running balance.
 - **Billing and payments.** Each month's billing, payments with the day the card was charged and the day the facility learned of it, declined cards, and who is past due.
 - **Rules.** The fee schedule, the owner's waiver rule in words and in the exact form code checks, what Tilden may do, and what only staff decide.

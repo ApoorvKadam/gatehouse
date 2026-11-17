@@ -11,6 +11,13 @@
 </nav>
 
 {% if part == 'list' %}
+{% if waiting|length > 1 %}
+<div class="fms-bar fms-readall">
+  <p class="muted">{{ waiting|length }} messages from this morning are not read yet.{% if not live %} {{ agent }} is switched off on this copy, so each one goes to staff.{% endif %}</p>
+  <button id="read-all" class="button" type="button">Have {{ agent }} read all {{ waiting|length }}</button>
+</div>
+<p id="read-all-status" class="fms-status" role="status" aria-live="polite"></p>
+{% endif %}
 <div class="fms-split">
   <ol class="fms-convs" aria-label="Conversations">
     {% for c in cases %}
@@ -18,7 +25,7 @@
       {% if c.handed %}<span class="chip act">Waiting for staff</span>{% elif c.waits %}<span class="chip wait">Answered, dispute open</span>{% else %}<span class="chip done">Closed</span>{% endif %}<span class="fms-snip">{{ c.text }}</span></a></li>
     {% endfor %}
     {% for t in waiting %}
-    <li class="fms-unread{{ ' picked' if opened and opened.shift == t.shift }}"><a href="/messages?unread={{ t.shift }}" {% if opened and opened.shift == t.shift %}aria-current="true"{% endif %}><b>{{ t.who.name }}</b> <span class="chip plain">Not read yet</span><span class="fms-snip">{{ t.text }}</span></a></li>
+    <li class="fms-unread{{ ' picked' if opened and opened.shift == t.shift }}" data-role="{{ t.role }}" data-shift="{{ t.shift }}" data-name="{{ t.who.name }}" data-text="{{ t.text }}"><a href="/messages?unread={{ t.shift }}" {% if opened and opened.shift == t.shift %}aria-current="true"{% endif %}><b>{{ t.who.name }}</b> <span class="chip plain">Not read yet</span><span class="fms-snip">{{ t.text }}</span></a></li>
     {% endfor %}
   </ol>
   {% if opened %}
@@ -26,26 +33,9 @@
     <p class="fms-card-head"><a href="/tenants/{{ opened.who.slug }}">{{ opened.who.name }}</a> <span class="muted">unit{{ 's' if opened.units|length > 1 }} {{ opened.units|join(' and ') }}</span> <span class="chip plain">Not read yet</span></p>
     <q class="fms-quote">{{ opened.text }}</q>
     <p class="muted">This text came in overnight. {{ agent }} reads it, code checks it against {{ opened.who.name.split(' ')[0] }}'s books, and the result shows here.{% if not live %} {{ agent }} is switched off on this copy, so it goes to staff.{% endif %}</p>
-    <p><button id="read-one" class="button primary" type="button" data-role="{{ opened.role }}" data-shift="{{ opened.shift }}">Have {{ agent }} read it</button></p>
+    <p><button id="read-one" class="button primary" type="button" data-role="{{ opened.role }}" data-shift="{{ opened.shift }}" data-text="{{ opened.text }}">Have {{ agent }} read it</button></p>
     <p id="read-one-status" class="fms-status" role="status" aria-live="polite"></p>
   </article>
-  <script>
-  (function () {
-    var b = document.getElementById("read-one"), s = document.getElementById("read-one-status");
-    function readRun(fresh) { var r = sessionStorage.getItem("gh-run"); if (fresh || !r) { r = "r" + Date.now().toString(16); sessionStorage.setItem("gh-run", r); } return r; }
-    function send(fresh) {
-      return fetch("/api/fms/messages", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tenant: b.dataset.role, text: document.querySelector(".fms-quote").textContent, shift: b.dataset.shift, run: readRun(fresh) }) });
-    }
-    b.addEventListener("click", function () {
-      b.disabled = true; s.textContent = "{{ agent }} is reading the message.";
-      send(false).then(function (r) { return r.status === 409 ? send(true) : r; })
-        .then(function (r) { return r.ok ? r.json() : r.json().then(function (x) { throw new Error(x && typeof x.detail === "string" ? x.detail : "Something went wrong. Try again."); }); })
-        .then(function () { location.href = "/messages"; })
-        .catch(function (e) { s.textContent = e.message; b.disabled = false; });
-    });
-  })();
-  </script>
   {% elif picked %}
   <article class="fms-case" aria-label="The message">
     <p class="fms-card-head">{% if picked.who %}<a href="/tenants/{{ picked.who.slug }}">{{ picked.who.name }}</a> <span class="muted">unit{{ 's' if picked.who.units|length > 1 }} {{ picked.who.units|join(' and ') }}</span>{% else %}A number that matches no tenant{% endif %}</p>
@@ -74,9 +64,46 @@
     <p class="muted">Shown here, not sent.{% if picked.off %} {{ agent }} is off on this copy.{% endif %}</p>
   </article>
   {% else %}
-  <div class="fms-case empty"><p>No message has been read on this copy yet. <a href="/today">Have {{ agent }} read this morning's messages</a>, or <a href="/messages/try">write one as a tenant</a>.</p></div>
+  <div class="fms-case empty"><p>No message has been read on this copy yet. <a href="/messages/try">Write one as a tenant</a>.</p></div>
   {% endif %}
 </div>
+{% if waiting %}
+<script>
+(function () {
+  function readRun(fresh) { var r = sessionStorage.getItem("gh-run"); if (fresh || !r) { r = "r" + Date.now().toString(16); sessionStorage.setItem("gh-run", r); } return r; }
+  function fail(r) { return r.json().then(function (b) { throw new Error(b && typeof b.detail === "string" ? b.detail : "Something went wrong. Try again."); }, function () { throw new Error("Something went wrong. Try again."); }); }
+  // one morning message through the agent; a run that already read it on an earlier copy reads it again under a fresh one
+  function read(el) {
+    function send() {
+      return fetch("/api/fms/messages", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tenant: el.dataset.role, text: el.dataset.text, shift: el.dataset.shift, run: readRun(false) }) });
+    }
+    return send().then(function (r) { if (r.status !== 409) return r; readRun(true); return send(); })
+      .then(function (r) { return r.ok ? r.json() : fail(r); });
+  }
+  var one = document.getElementById("read-one"), oneStatus = document.getElementById("read-one-status");
+  var all = document.getElementById("read-all"), allStatus = document.getElementById("read-all-status");
+  function busy(on) { if (one) one.disabled = on; if (all) all.disabled = on; }
+  if (one) one.addEventListener("click", function () {
+    busy(true); oneStatus.textContent = "{{ agent }} is reading the message.";
+    read(one).then(function () { location.href = "/messages"; }).catch(function (e) { oneStatus.textContent = e.message; busy(false); });
+  });
+  if (all) all.addEventListener("click", function () {
+    var items = Array.prototype.slice.call(document.querySelectorAll(".fms-unread"));
+    busy(true);
+    items.reduce(function (p, li, i) {
+      return p.then(function () {
+        if (li.classList.contains("closed") || li.classList.contains("to-staff")) return;     // read before a failed try
+        allStatus.textContent = "{{ agent }} is reading " + li.dataset.name + "'s message, " + (i + 1) + " of " + items.length + ".";
+        li.classList.add("reading");
+        return read(li).then(function (c) { li.classList.remove("reading"); li.classList.add(c.handed ? "to-staff" : "closed"); });
+      });
+    }, Promise.resolve()).then(function () { allStatus.textContent = "All read. Loading the results."; location.href = "/messages"; })
+      .catch(function (e) { items.forEach(function (li) { li.classList.remove("reading"); }); allStatus.textContent = e.message; busy(false); });
+  });
+})();
+</script>
+{% endif %}
 
 {% elif part == 'try' %}
 <section class="fms-section fms-try" aria-labelledby="h-try">
