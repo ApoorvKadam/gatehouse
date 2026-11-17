@@ -99,7 +99,7 @@ docker build --target test -t staddle:test . && docker run --rm staddle:test
 
 ## More
 
-- The live preview: [gatehouse-peug.onrender.com](https://gatehouse-peug.onrender.com), on synthetic data.
+- The live preview: [staddle.onrender.com](https://staddle.onrender.com), on synthetic data.
 - The [full write-up](docs/details.md) of the earlier desk: where it fits next to the vendors, each part in depth, the API, the Florida lien rules and the limits.
 
 The FMS simulator is not an official Cubby integration, and `fms_checks` is not an official Stora integration. Lien-law reference data is from the [Stitch Storage dataset](https://stitchstorage.com/self-storage-lien-laws/data), CC BY 4.0. Staddle does not give legal advice, process real payments or authorize property sales.
