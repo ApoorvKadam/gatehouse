@@ -7,6 +7,7 @@
 <section class="fms-section" aria-labelledby="h-write">
   <h2 id="h-write">Write a rule</h2>
   <p class="muted">Write how waivers or hand-offs to staff should work, in your own words. {{ agent }} turns the sentence into an exact rule, code checks it and shows what it would have changed last year. Nothing changes until you approve it. On this copy you approve as the owner.</p>
+  {% if stale %}<p class="fms-status" role="status">That proposal was already approved, or the rules changed since it was read. Write the rule again.</p>{% endif %}
   <form id="rule-form" class="fms-rule-form">
     <label for="rule-text">Your rule</label>
     <textarea id="rule-text" maxlength="400" rows="3" required placeholder="For example: two late fee waivers a year are fine, but only for tenants who have rented with us for a year."></textarea>

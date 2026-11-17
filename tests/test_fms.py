@@ -252,12 +252,35 @@ def test_an_owner_sentence_becomes_an_approved_rule_on_this_copy_and_the_next_ca
         p = c.post("/api/fms/rules", json={"sentence": TWO_MONTHS}).json()
         assert p["outcome"] == "adopt" and any("each of the 2 completed billing months" in w for w in p["words"])
         assert p["replay"]["now_allowed"] >= 1 and p["replay"]["now_refused"] == 0
-        assert c.post("/rules/approve", data={"proposal": p["id"]}, follow_redirects=False).status_code == 303
-        assert c.post("/rules/approve", data={"proposal": p["id"]}, follow_redirects=False).status_code == 409
+        assert c.post("/rules/approve", data={"proposal": p["id"]}, follow_redirects=False).headers["location"] == "/rules#in-force"
+        assert c.post("/rules/approve", data={"proposal": p["id"]}, follow_redirects=False).headers["location"].startswith("/rules?stale=1")
         rules = seen(c.get("/rules").text)
         assert "Version 2" in rules and TWO_MONTHS in rules and "Version 2" not in seen(other.get("/rules").text)
         assert run(c, "maria", shift="s1", run_id="r1").status_code == 200
         assert "Waived under the owner's rule" in seen(c.get("/messages").text)
+
+
+STAFF_COPY_RULE = {**TWO_MONTHS_RULE, "kind": "staff", "staff": {"flags": [], "claim_kinds": [], "actions": ["reverse_duplicate"], "several_units": False},
+                   "quotes": [{"field": "actions", "words": "a second copy of a charge is reversed only by staff"}], "reason": "Second copies go to staff."}
+
+
+def test_an_action_the_owner_leaves_to_staff_hands_the_message_over_and_today_names_the_rule(fms_url, sim):
+    """The design file's own example: after "a second copy of a charge is reversed only by staff", James's message about a fee
+    posted twice goes to staff, nothing is reversed, and Today says the owner's rule sent it; a second Approve lands on Rules."""
+    app = site(fms_url, RuleScript(reader, STAFF_COPY_RULE))
+    with sign_in(app) as c:
+        p = c.post("/api/fms/rules", json={"sentence": "From now on a second copy of a charge is reversed only by staff."}).json()
+        assert p["outcome"] == "adopt" and p["words"] == ["Staff, not the agent, do the removing a second copy of a charge."]
+        assert c.post("/rules/approve", data={"proposal": p["id"]}, follow_redirects=False).status_code == 303
+        again = c.post("/rules/approve", data={"proposal": p["id"]}, follow_redirects=False)
+        assert again.status_code == 303 and again.headers["location"].startswith("/rules?stale=1")
+        assert "already approved" in seen(c.get("/rules?stale=1").text) and "Sent to staff by the owner's rule" in seen(c.get("/rules").text)
+        assert run(c, "james", shift="s2", run_id="r1").status_code == 200
+        today = seen(c.get("/today").text)
+        handed = today.split("Handed to staff", 1)[1].split("Closed by", 1)[0]
+        assert "James Carter" in handed and "owner's rule leaves this action to staff" in handed
+        assert "Reversed the second copy" not in seen(c.get("/messages").text)
+        assert "Waiting for staff" in c.get("/messages").text
 
 
 def test_owner_sentences_are_three_a_day_and_an_unsafe_one_is_never_offered_for_approval(fms_url, sim):
@@ -267,7 +290,7 @@ def test_owner_sentences_are_three_a_day_and_an_unsafe_one_is_never_offered_for_
         for _ in range(3):
             p = c.post("/api/fms/rules", json={"sentence": "Give everyone a month of rent free."}).json()
             assert p["outcome"] == "refuse" and p["replay"] is None
-            assert c.post("/rules/approve", data={"proposal": p["id"]}, follow_redirects=False).status_code == 409
+            assert c.post("/rules/approve", data={"proposal": p["id"]}, follow_redirects=False).headers["location"].startswith("/rules?stale=1")
         r = c.post("/api/fms/rules", json={"sentence": "Give everyone a month of rent free."})
         assert r.status_code == 429 and "3 rule readings" in r.json()["detail"]
         assert run(c, "james", text="charged twice").status_code == 200        # rule readings never use up message tries

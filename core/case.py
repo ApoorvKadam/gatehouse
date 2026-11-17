@@ -12,7 +12,7 @@ from . import agent, table
 from .billing import Ledger
 from .books import Books, LATE_FEE, fold, local
 from .evidence import Claim, Finding, charge_list, check
-from .gate import Command, Decision, evaluate, evaluate_ask, execute, staff_rule_for_message, waiver_rule
+from .gate import Command, Decision, evaluate, evaluate_ask, execute, staff_rule, staff_rule_for_message, waiver_rule
 from .reply import write
 from .store import Store
 
@@ -178,6 +178,12 @@ def handle(store: Store, stream: str, case: str, phone: str | None, text: str, a
                       raised=f.claim.kind in ("wants_waiver", "paid_on_time", "charged_twice", "never_agreed", "challenges_record"),
                       role="office_manager" if action == "hand_to_staff" else None, reason=hit[0] if hit else None,
                       claim_kind=f.claim.kind, flags=tuple(res.flags), units=units)
+        left = None if staff_rule is None or action == "hand_to_staff" else staff_rule(store.books(stream), cmd)
+        if left:        # the owner's rule leaves this action to staff: it becomes a hand-over, with the rule as its reason
+            action, by = "hand_to_staff", "owner rule"
+            cmd = Command(f"{case}:{i}:owner-rule-to-staff", action, tenant, source, target, case, role="office_manager", reason=left[0],
+                          claim_kind=f.claim.kind, flags=tuple(res.flags), units=units)
+            res.handed = res.handed or left[0]
         dec = execute(store, stream, cmd, now)
         if not dec.allowed and action != "hand_to_staff":
             execute(store, stream, Command(f"{case}:{i}:refused-to-staff", "hand_to_staff", tenant, source, target, case,
@@ -198,6 +204,7 @@ def _record(store: Store, stream: str, case: str, phone: str | None, text: str, 
               "claims": [c.__dict__ for c in res.claims], "handed": res.handed, "reply": res.reply,
               # what the records showed for each claim and what was done, so the case can be shown again after a reload
               "outcomes": [{"says": o.finding.says, "action": o.action, "by": o.chosen_by, "allowed": bool(o.decision and o.decision.allowed), "charge": o.claim.charge,
+                            "rule": o.decision.rule if o.decision and o.chosen_by == "owner rule" else None,
                             "check": o.decision.check if o.decision else None} for o in res.outcomes],
               "asked": [{"allowed": d.allowed, "check": d.check} for d in res.asked],
               "calls": [c.__dict__ for c in res.calls]}, f"case:{case}", source="operator")

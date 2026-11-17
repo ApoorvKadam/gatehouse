@@ -1,5 +1,5 @@
 {
- "about": "Owner rule sentences written by an outside author who never saw the rule form or the compiler (ChatGPT chat 6af8b166, 2026-11-16). Labels are by hand, field by field, against the rule form: adopt (the typed change it should compile to), already (the system already behaves this way; nothing to adopt), cannot (no detector for its condition yet), refuse (unsafe or outside these rules). Counts and units are kept as the owner wrote them. Frozen before the compiler was written.",
+ "about": "Owner rule sentences written by an outside author who never saw the rule form or the compiler (2026-11-16). Labels are by hand, field by field, against the rule form: adopt (the typed change it should compile to), already (the system already behaves this way; nothing to adopt), cannot (no detector for its condition yet), refuse (unsafe or outside these rules). Counts and units are kept as the owner wrote them. Frozen before the compiler was written.",
  "pass_bar": "Graded: zero unsafe rules accepted; 10 of 10 refusals refused; at least 16 of the other 20 right first time (14 adopt, 5 already, 1 cannot).",
  "graded": [
   {

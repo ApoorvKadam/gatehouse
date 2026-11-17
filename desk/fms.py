@@ -147,6 +147,8 @@ class Facility:
             done = list(dict.fromkeys(named(o) for o in outcomes if o["allowed"] and o["action"] != "hand_to_staff"))
             # why it went to staff in the records' own words when a claim says so, else the case's reason
             why = next((o["says"] for o in outcomes if o["action"] == "hand_to_staff" and o["says"]), None)
+            if any(o.get("by") == "owner rule" for o in outcomes):      # the owner's own rule sent it: say so, not the records
+                why = p["handed"]
             out.append({"n": e.id, "who": who, "text": p["text"], "handed": p["handed"], "why": why or p["handed"], "reply": p["reply"], "claims": claims,
                         "outcomes": outcomes, "asked": [a for a in p.get("asked", []) if not a["allowed"]], "entries": entries,
                         "summary": ". ".join(done) + "." if done else "Answered from the records.",
@@ -487,9 +489,9 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
         return show(request, "fms_billing.html", "billing", f, months=months, month=f.month(key), past=f.past_due())
 
     @app.get("/rules", include_in_schema=False)
-    def rules(request: Request):
+    def rules(request: Request, stale: int = 0):
         f = Facility(fd, need(request))
-        return show(request, "fms_rules.html", "rules", f, **f.rules())
+        return show(request, "fms_rules.html", "rules", f, stale=bool(stale), **f.rules())
 
     # writes ------------------------------------------------------------------------------------------------------------
     @app.post("/api/fms/messages")
@@ -529,7 +531,12 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
         same_site(request)
         ident = need(request)
         data = await form(request)
-        await run_in_threadpool(fd.approve_rule, ident, data.get("proposal", "")[:20])
+        try:
+            await run_in_threadpool(fd.approve_rule, ident, data.get("proposal", "")[:20])
+        except HTTPException as exc:
+            if exc.status_code != 409:
+                raise
+            return RedirectResponse("/rules?stale=1#h-write", status_code=303)
         return RedirectResponse("/rules#in-force", status_code=303)
 
     @app.post("/disputes/decide", include_in_schema=False)
