@@ -43,11 +43,30 @@ class Ledger:
             raise Refused(f"rule {rule} is already at version {current}")
         if typed.get("action") == "waive_fee":
             bounds = {"per_tenant": (1, 12), "within_days": (1, 3660), "cap_cents": (0, 10000), "on_time_months": (0, 24)}
+            optional = {"min_tenure_days": (0, 3660), "max_fee_age_days": (1, 3660)}
             for key, (lo, hi) in bounds.items():
                 if not isinstance(typed.get(key), int) or not lo <= typed[key] <= hi:
                     raise Refused(f"the rule's {key} is outside the platform's bounds")
+            for key, (lo, hi) in optional.items():
+                if key in typed and not (isinstance(typed[key], int) and lo <= typed[key] <= hi):
+                    raise Refused(f"the rule's {key} is outside the platform's bounds")
+            for key in ("only_when_raised", "no_rent_owed", "current_rent_paid"):
+                if key in typed and not isinstance(typed[key], bool):
+                    raise Refused(f"the rule's {key} must be yes or no")
             if typed.get("fee_kind") not in FEE_KINDS:
                 raise Refused("a waiver rule may only waive a fee, never rent")
+        elif typed.get("action") == "send_to_staff":
+            from .agent import FLAGS
+            from .evidence import CLAIM_KINDS
+            allowed = {"flags": set(FLAGS), "claim_kinds": set(CLAIM_KINDS),
+                       "actions": {"explain_charge", "reverse_duplicate", "correct_fee_posted_in_error", "open_dispute", "waive_fee"}}
+            for key, ok in allowed.items():
+                if not set(typed.get(key, [])) <= ok:
+                    raise Refused(f"the rule names a {key[:-1].replace('_', ' ')} the system does not know")
+            if not (any(typed.get(k) for k in allowed) or typed.get("several_units") is True):
+                raise Refused("a staff rule needs at least one condition")
+        else:
+            raise Refused("not a kind of rule the platform knows")
         self.emit("rule.adopted", at, {"rule": rule, "version": version, "sentence": sentence, "typed": typed, "by": by},
                   f"rule:{rule}:{version}", source=by)
 
