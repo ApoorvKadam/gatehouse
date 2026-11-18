@@ -39,7 +39,9 @@ RULE_MODEL = ("claude-haiku-5-5", "low")
 KEEP_FOR = timedelta(hours=24)
 ACTION_WORDS = {"explain_charge": "Explained from the records", "reverse_duplicate": "Reversed the second copy",
                 "correct_fee_posted_in_error": "Removed as posted in error", "open_dispute": "Dispute recorded for the office manager",
-                "waive_fee": "Waived under the owner's rule", "hand_to_staff": "Handed to staff"}
+                "waive_fee": "Waived under the owner's rule", "hand_to_staff": "Handed to staff",
+                "propose_plan": "Plans worked out under the owner's policy", "offer_plan": "Plans offered to the tenant",
+                "accept_plan": "Plan agreed in the tenant's words", "record_promise": "Promise to pay noted"}
 CLAIM_WORDS = {"paid_on_time": "says they paid in time", "charged_twice": "says a charge appears twice", "never_agreed": "says they never agreed to it",
                "challenges_record": "challenges a record", "wants_waiver": "asks for it to be waived", "wrong_amount": "says the amount is wrong",
                "what_is_this": "asks what it is", "payment_issue": "asks about their card payments", "other": "says something else"}

@@ -274,28 +274,35 @@ def offer(books: Books, tenant: str, now: datetime, instalments, upfront=None) -
     if why:
         return None, why
     pol = state(books).policy
+    charges = owed(books, tenant, now)
+    total = sum(c.open_cents for c in charges)
     up = pol["min_upfront_cents"] if upfront is None else upfront
+    parts, why = split(total, up, instalments, pol, local(now).date())
+    if parts is None:
+        return None, why
+    terms = {"tenant": tenant, "total": total, "upfront": up, "instalments": instalments, "parts": parts, "grace_days": pol["grace_days"],
+             "charges": [{"charge": c.id, "lease": c.lease, "cents": c.open_cents} for c in charges], "policy_version": pol["version"]}
+    return {**terms, "version": hashlib.sha256(json.dumps(terms, sort_keys=True).encode()).hexdigest()[:12]}, ""
+
+
+def split(total: int, up, instalments, pol: dict, today: date) -> tuple[list[dict] | None, str]:
+    """The parts of one plan for a balance, by the owner's policy: the upfront part today, then equal instalments to the cent every
+    STEP_DAYS, the last taking the remainder. Returns (parts, "") or (None, why the policy does not allow it)."""
     if not isinstance(instalments, int) or isinstance(instalments, bool) or not 1 <= instalments <= pol["most_instalments"]:
         return None, f"a plan has 1 to {pol['most_instalments']} instalments after the upfront part"
     if instalments * STEP_DAYS > pol["longest_days"]:
         return None, f"the longest plan is {pol['longest_days']} days, which fits {pol['longest_days'] // STEP_DAYS} instalments two weeks apart"
     if not isinstance(up, int) or isinstance(up, bool) or up < pol["min_upfront_cents"]:
         return None, f"the upfront part is at least {money(pol['min_upfront_cents'])}"
-    charges = owed(books, tenant, now)
-    total = sum(c.open_cents for c in charges)
     rest = total - up
     if rest <= 0:
         return None, "that pays the whole balance now, so no plan is needed"
     each = rest // instalments
-    amounts = [each] * (instalments - 1) + [rest - each * (instalments - 1)]
     if each < pol["min_instalment_cents"]:
         return None, f"each instalment is at least {money(pol['min_instalment_cents'])}"
-    today = local(now).date()
-    parts = ([{"part": 0, "cents": up, "due": today.isoformat()}] if up else []) + [
-        {"part": k, "cents": a, "due": (today + timedelta(days=STEP_DAYS * k)).isoformat()} for k, a in enumerate(amounts, 1)]
-    terms = {"tenant": tenant, "total": total, "upfront": up, "instalments": instalments, "parts": parts, "grace_days": pol["grace_days"],
-             "charges": [{"charge": c.id, "lease": c.lease, "cents": c.open_cents} for c in charges], "policy_version": pol["version"]}
-    return {**terms, "version": hashlib.sha256(json.dumps(terms, sort_keys=True).encode()).hexdigest()[:12]}, ""
+    amounts = [each] * (instalments - 1) + [rest - each * (instalments - 1)]
+    return ([{"part": 0, "cents": up, "due": today.isoformat()}] if up else []) + [
+        {"part": k, "cents": a, "due": (today + timedelta(days=STEP_DAYS * k)).isoformat()} for k, a in enumerate(amounts, 1)], ""
 
 
 def offers(books: Books, tenant: str, now: datetime) -> list[dict]:
