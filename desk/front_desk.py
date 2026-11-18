@@ -17,7 +17,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from core.books import ZONE, at_local, local
-from core.billing import Ledger
+from core.billing import Ledger, Refused
 from core.case import READ_ONLY, handle
 from core.gate import STAFF_RULE
 from core.rules import Proposal, compile_rule, replay
@@ -82,6 +82,7 @@ class FrontDesk:
         # ponytail: the last proposal per visitor, in memory; a restart drops it and the owner asks again
         self._proposals: OrderedDict[str, tuple] = OrderedDict()     # visitor -> (id, proposal, sentence, rule versions, day)
         self._resets: dict[str, int] = {}                            # visitor -> how many times their copy was reset
+        self._notes: dict[str, str] = {}                             # visitor -> why a going back was refused, shown once on the Rules page
         self._facts: dict | None = None
 
     def today(self) -> date:
@@ -229,6 +230,7 @@ class FrontDesk:
         with self.lock:
             self.ready()
             self._proposals.pop(visitor, None)
+            self._notes.pop(visitor, None)
             self._resets[visitor] = self._resets.get(visitor, 0) + 1
             self.store.drop_stream(self.stream(visitor))
             self._views.pop(self.stream(visitor), None)
@@ -310,3 +312,27 @@ class FrontDesk:
                 store.append(stream, led.pending)
             del self._proposals[visitor]
             return version
+
+    def restore_rule(self, visitor: str, name: str, version: int) -> int:
+        """The visitor, acting as the owner on their own copy, goes back to an earlier version of a rule. Returns the new version.
+        A proposal read before this is refused at its approval, since the rules changed."""
+        with self.lock:
+            store = self.ready()
+            stream = self.stream(visitor)
+            led = Ledger(store.books(stream))
+            try:
+                led.restore_rule(self.clock(), name, version, by="owner")
+            except Refused as exc:
+                self._notes[visitor] = f"{str(exc)[:1].upper()}{str(exc)[1:]}."
+                while len(self._notes) > 64:
+                    self._notes.pop(next(iter(self._notes)))
+                raise HTTPException(409, str(exc)) from exc
+            with store.write():
+                store.append(stream, led.pending)
+            self._notes.pop(visitor, None)      # a refusal not yet shown is out of date once a going back succeeds
+            return led.books.rules[name]["version"]
+
+    def take_note(self, visitor: str) -> str:
+        """Why the last going back was refused, once; empty when nothing was."""
+        with self.lock:
+            return self._notes.pop(visitor, "")

@@ -8,6 +8,7 @@ Accounts: receivable:<lease>, income:rent, income:fees, contra:waivers, clearing
 holds for the tenant, a liability)."""
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -183,6 +184,7 @@ class Books:
         self.disputes: dict[str, Dispute] = {}
         self.holds: dict[str, Hold] = {}
         self.rules: dict[str, dict] = {}                  # rule id -> its latest version (sentence, typed form, version)
+        self.rule_history: dict[str, list[dict]] = {}     # rule id -> every version that took effect, oldest first, with when it was adopted
         self.decisions: dict[str, dict] = {}              # command id -> the gate's recorded decision
         self.seq = 0
         self.last_at: datetime | None = None
@@ -206,6 +208,7 @@ class Books:
             # a rule only moves forward: an older or equal version never replaces the one in force
             if p["version"] > self.rules.get(p["rule"], {}).get("version", 0):
                 self.rules[p["rule"]] = dict(p)
+                self.rule_history.setdefault(p["rule"], []).append(deepcopy({**p, "at": at}))     # a copy: the history never shares a dict with the books
         elif kind == "gate.decided":
             self.decisions[p["command"]] = dict(p)
         elif kind == "tenant.added":
