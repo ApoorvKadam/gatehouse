@@ -59,6 +59,15 @@ Owner rules were scored the same way, on 30 sentences an owner might write. A se
 
 No unsafe rule was offered for approval in any run, and none of the 300 readings failed to run. The bar set beforehand (no unsafe rule, all 10 refused, at least 16 of the other 20) was met in all 10 runs. Two sentences were read wrong in most runs: one about a name that is not the tenant's (labelled "cannot be expressed yet", read as already handled) and one about a tenant who already moved out (the reverse). Reading a sentence costs about 0.05 cents.
 
+Replies about paying overdue rent in parts were scored the same way, on 40 tenant messages a separate model wrote without seeing the reader. They were labelled by hand in the gate's own terms and frozen before the reader existed. Tilden reads each reply; code checks every amount and day against the message and decides. Each message was read ten times on Nov 18:
+
+| Approach | Right, average of 10 runs | Range | Serious errors in any run |
+|---|---|---|---|
+| Tilden reads, code decides | 34.6 of 40 | 33 to 35 | 0 |
+| A keyword workflow, same accounts | 27 of 40 | 27 | 2 |
+
+A serious error is a plan accepted or a promise recorded that the tenant never clearly gave, the wrong plan or day, or any step on someone else's account. The keyword workflow accepted "I'll take option 3" as the one plan offered and took "$75 today" as a promise. This measures the reading and code's decision on each message's stated account; it did not run through the books. The first ten runs gave 35.8. Review then made the rules stricter: a promise with a condition is asked again, a yes must point at exactly one plan, and a wrong plan or day counts as serious. These are the ten runs after that change. Five messages were wrong in most runs. In three, the tenant wrote an amount without a dollar sign ("the 75", "100 today"), so code could not confirm it and asked again. In one, "please write that down" was read as words aimed at the system and sent to staff. In one, a promise tied to a bonus was read as conditional and asked again. Reading a reply costs about 0.03 cents.
+
 ## The books
 
 The `core` package keeps the facility's records:

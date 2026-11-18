@@ -39,30 +39,53 @@ def read_amount(quote: str) -> int | None:
     return _cents(m.group(1), m.group(2)) if m else None
 
 
-def _back(today: date, month: int, day: int, year: int | None) -> date | None:
-    """A date without a year is the most recent one not after today."""
+def _back(today: date, month: int, day: int, year: int | None, ahead: bool = False) -> date | None:
+    """A date without a year is the most recent one not after today; ahead (a promise to pay), the next one not before today."""
     try:
         if year:
             return date(year, month, day)
         d = date(today.year, month, day)
+        if ahead:
+            return d if d >= today else date(today.year + 1, month, day)
         return d if d <= today else date(today.year - 1, month, day)
     except ValueError:
         return None
 
 
-def dates(text: str, today: date) -> list[tuple[date, str]]:
+WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+RELATIVE = re.compile(r"\b(today|tonight|tomorrow|(?:this |next |on )?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b", re.I)
+
+
+def _relative(word: str, today: date) -> date | None:
+    """Today, tomorrow, or a weekday ahead. "This Friday" is this week's, today included; a bare "Friday" said on a Friday and
+    any "next Friday" could mean two days, so they are not read and the tenant is asked."""
+    w = word.lower()
+    if w in ("today", "tonight"):
+        return today
+    if w == "tomorrow":
+        return today + timedelta(days=1)
+    if w.startswith("next "):
+        return None
+    ahead = (WEEKDAYS.index(w.split()[-1]) - today.weekday()) % 7
+    if ahead == 0 and not w.startswith("this "):
+        return None
+    return today + timedelta(days=ahead)
+
+
+def dates(text: str, today: date, ahead: bool = False) -> list[tuple[date, str]]:
     """Every calendar date the words name, with the words it was read from. "The 3rd" is this month's 3rd, or last month's
-    if that is still ahead."""
+    if that is still ahead. Ahead (a promise to pay): dates without a year look forward, "the 19th" is the next 19th, and
+    "tomorrow" or "Friday" count too."""
     out = []
     for m in NAMED.finditer(text):
-        out.append((_back(today, MONTHS.index(m.group(1)[:3].lower()) + 1, int(m.group(2)), int(m.group(3)) if m.group(3) else None), m.group(0)))
+        out.append((_back(today, MONTHS.index(m.group(1)[:3].lower()) + 1, int(m.group(2)), int(m.group(3)) if m.group(3) else None, ahead), m.group(0)))
     for m in DAYFIRST.finditer(text):
-        out.append((_back(today, MONTHS.index(m.group(2)[:3].lower()) + 1, int(m.group(1)), int(m.group(3)) if m.group(3) else None), m.group(0)))
+        out.append((_back(today, MONTHS.index(m.group(2)[:3].lower()) + 1, int(m.group(1)), int(m.group(3)) if m.group(3) else None, ahead), m.group(0)))
     for m in NUMERIC.finditer(text):
         mo, dy = int(m.group(1)), int(m.group(2))
         if 1 <= mo <= 12 and 1 <= dy <= 31:
             y = int(m.group(3)) if m.group(3) else None
-            out.append((_back(today, mo, dy, y + 2000 if y is not None and y < 100 else y), m.group(0)))
+            out.append((_back(today, mo, dy, y + 2000 if y is not None and y < 100 else y, ahead), m.group(0)))
     for m in ISO.finditer(text):
         out.append((_back(today, int(m.group(2)), int(m.group(3)), int(m.group(1))), m.group(0)))
     taken = " ".join(q for _, q in out)
@@ -71,20 +94,27 @@ def dates(text: str, today: date) -> list[tuple[date, str]]:
             continue
         dy = int(m.group(1))
         if 1 <= dy <= 31:
-            d = _back(today, today.month, dy, today.year) if dy <= today.day else None
-            if d is None:
-                prev = today.replace(day=1) - timedelta(days=1)
-                d = _back(today, prev.month, dy, prev.year)
+            if ahead:
+                nxt = (today.replace(day=28) + timedelta(days=4)).replace(day=1)
+                d = _back(today, today.month, dy, today.year) if dy >= today.day else _back(today, nxt.month, dy, nxt.year)
+            else:
+                d = _back(today, today.month, dy, today.year) if dy <= today.day else None
+                if d is None:
+                    prev = today.replace(day=1) - timedelta(days=1)
+                    d = _back(today, prev.month, dy, prev.year)
             out.append((d, m.group(0)))
+    if ahead:
+        taken = " ".join(q for _, q in out)
+        out += [(_relative(m.group(1), today), m.group(0)) for m in RELATIVE.finditer(text) if m.group(0) not in taken]
     return [(d, q) for d, q in out if d is not None]
 
 
-def read_date(quote: str, today: date) -> date | None:
-    found = dates(quote, today)
+def read_date(quote: str, today: date, ahead: bool = False) -> date | None:
+    found = dates(quote, today, ahead)
     if found:
         return found[0][0]
     m = re.fullmatch(r"\s*(\d{1,2})(?:st|nd|rd|th)?\s*", quote)
-    return dates(f"the {m.group(1)}", today)[0][0] if m and dates(f"the {m.group(1)}", today) else None
+    return dates(f"the {m.group(1)}", today, ahead)[0][0] if m and dates(f"the {m.group(1)}", today, ahead) else None
 
 
 def _norm(s: str) -> str:
