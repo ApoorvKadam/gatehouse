@@ -37,6 +37,7 @@ RULE_WORST_CENTS = 0.2          # the most reading one owner sentence can cost (
 RULES_PER_DAY = 3               # owner sentences a visitor may have read in a day, apart from the message tries
 RULE_MODEL = ("claude-haiku-5-5", "low")
 KEEP_FOR = timedelta(hours=24)
+HOLD_RETRY = 60                 # seconds before a day that cannot leave its waiting payments asks the processor again
 ACTION_WORDS = {"explain_charge": "Explained from the records", "reverse_duplicate": "Reversed the second copy",
                 "correct_fee_posted_in_error": "Removed as posted in error", "open_dispute": "Dispute recorded for the office manager",
                 "waive_fee": "Waived under the owner's rule", "hand_to_staff": "Handed to staff",
@@ -75,12 +76,12 @@ def as_utc(at: datetime) -> datetime:
 
 
 class FrontDesk:
-    def __init__(self, path: str, client=None, clock=None, processor_path: str | None = None):
+    def __init__(self, path: str, client=None, clock=None, processor_path: str | None = None, processor=None):
         self.path, self.client = path, client
         # the simulated payment processor keeps its records beside the core's database: one per running app, never in the repository
         if processor_path is None and path != ":memory:":
             processor_path = os.path.join(os.path.dirname(os.path.abspath(path)), "processor.json")
-        self.processor = delinquency.SimulatedProcessor(processor_path)
+        self.processor = processor or delinquency.SimulatedProcessor(processor_path)
         self.clock = clock or (lambda: datetime.now(ZONE))      # the real time in Orlando; tests pass a fixed one
         self.day: date | None = None                            # the day the books were made for
         self.lock = threading.RLock()
@@ -94,6 +95,8 @@ class FrontDesk:
         self._resets: dict[str, int] = {}                            # visitor -> how many times their copy was reset
         self._notes: dict[str, str] = {}                             # visitor -> why a going back was refused, shown once on the Rules page
         self._step_notes: dict[str, str] = {}                        # visitor -> why a staff step on a tenant was refused, shown once there
+        self._reset_notes: dict[str, str] = {}                       # visitor -> why Start over was refused, shown once on Home
+        self._hold_until = 0.0                                       # monotonic time before which a held day does not ask the processor again
         self._facts: dict | None = None
 
     def today(self) -> date:
@@ -104,8 +107,49 @@ class FrontDesk:
         with self.lock:
             today = self.today()
             if self.store is None or self.day != today:
+                if self.store is not None and not self._may_leave_the_day():
+                    return self.store       # a payment of the old day is still waiting at the processor: that day stays until it is settled
                 self._seed(today)
         return self.store
+
+    # a payment the processor has not settled is never dropped with its copy: Start over, the new day and the cleaning of idle copies each
+    # ask the processor first and go ahead only when none is left waiting
+    @staticmethod
+    def _unresolved(store: Store, stream: str) -> list:
+        return [i for i in delinquency.state(store.books(stream)).intents.values() if i.state in delinquency.UNSETTLED]
+
+    def _resolve(self, store: Store, streams: list[str]) -> bool:
+        """Ask the processor about each copy's waiting payments: settle what it settled, cancel what it still processes, read again so the
+        cancellation is recorded. Stops at the first answer that does not come, since every further copy would wait out its own timeout
+        with the lock held. True only when no copy has a waiting payment left, judged by the books and not by what the calls returned.
+        ponytail: a processor that never answers again (a revoked key, a payment record deleted there) keeps the copy and the day;
+        the error is logged on every attempt, and an operator settles it by hand."""
+        now = self.clock()
+        for s in streams:
+            try:
+                delinquency.reconcile(store, s, self.processor, now)
+                waiting = self._unresolved(store, s)
+                if any(i.state == "pending" for i in waiting):
+                    delinquency.close_copy(self.processor, s, min(i.created for i in waiting))
+                    delinquency.reconcile(store, s, self.processor, now)
+            except (delinquency.ProcessorTimeout, delinquency.ProcessorRefused) as exc:
+                # the first answer that does not come ends the pass: one wait under the lock per attempt, not one per copy
+                log.error("the processor could not settle the payments of %s: %s", s, type(exc).__name__)
+                break
+            except Exception:           # as sweep() does: a fault in one copy is logged, the copy stays as it is, and no page is taken down
+                log.exception("settling the payments of %s failed", s)
+        return not any(self._unresolved(store, s) for s in streams)
+
+    def _may_leave_the_day(self) -> bool:
+        if time.monotonic() < self._hold_until:         # asked a moment ago and got no answer: pages do not each wait on the processor
+            return False
+        streams = [s for (s,) in self.store.db.execute("SELECT DISTINCT stream FROM events WHERE stream LIKE 'visitor:%'")]
+        waiting = [s for s in streams if self._unresolved(self.store, s)]
+        if not waiting or self._resolve(self.store, waiting):
+            return True
+        self._hold_until = time.monotonic() + HOLD_RETRY
+        log.error("the day of %s stays: %d copies still have a payment the processor has not settled", self.day, len(waiting))
+        return False
 
     def _seed(self, today: date) -> None:
         """The year up to midnight today, written into a database of the day's own (seconds on a small instance; desk/api.py
@@ -188,6 +232,15 @@ class FrontDesk:
                     log.exception("collections sweep failed for %s", s)
         return swept
 
+    def processor_event(self, event: dict) -> str:
+        """A signed processor event on the webhook, applied the way the hourly pass applies one. A payment the processor no longer
+        knows is answered as unknown, so it is not sent again."""
+        with self.lock:
+            try:
+                return delinquency.webhook(self.ready(), self.processor, event, self.clock())
+            except delinquency.ProcessorRefused:
+                return "unknown"
+
     def serve(self) -> None:
         """Run at boot in a thread of its own: build the day's year, catch up, then sweep every SWEEP_EVERY seconds."""
         while True:
@@ -222,6 +275,8 @@ class FrontDesk:
         cutoff = (datetime.now(timezone.utc) - KEEP_FOR).isoformat()
         old = [s for (s,) in self.store.db.execute("SELECT stream FROM events WHERE stream != 'base' GROUP BY stream HAVING MAX(recorded_at) < ?", (cutoff,))]
         for s in old:
+            if self._unresolved(self.store, s):
+                continue                    # a payment the processor has not settled keeps its copy
             self.store.drop_stream(s)
             self._views.pop(s, None)        # event ids can be used again once a copy is gone, so its cached view goes with it
 
@@ -273,15 +328,23 @@ class FrontDesk:
                 self.reserved -= WORST_CASE_CENTS
         return {"case": case, "handed": res.handed, "cents": round(res.cents, 4), "seconds": round(time.monotonic() - started, 1), "off": not live}
 
-    def reset(self, visitor: str) -> None:
+    def reset(self, visitor: str) -> bool:
+        """Throw away this visitor's copy. A copy with a card payment the processor has not settled is kept: the processor is asked first
+        (settle it, or cancel it if it is still processing), and if it cannot say, nothing is thrown away and Home says so once, so the
+        payment is never lost and never taken a second time on a fresh copy. Returns whether the copy was started over."""
         with self.lock:
-            self.ready()
+            store, stream = self.ready(), self.stream(visitor)
+            if self._unresolved(store, stream) and not self._resolve(store, [stream]):
+                self._keep(self._reset_notes, visitor, "Start over waits: a card payment on this copy has not been settled by the card processor "
+                           "yet, so nothing was thrown away. Try again once the card processor has answered.")
+                return False
             self._proposals.pop(visitor, None)
             self._notes.pop(visitor, None)
+            self._reset_notes.pop(visitor, None)
             self._resets[visitor] = self._resets.get(visitor, 0) + 1
-            delinquency.close_copy(self.processor, self.stream(visitor))     # nothing of the old copy is left processing
-            self.store.drop_stream(self.stream(visitor))
-            self._views.pop(self.stream(visitor), None)
+            store.drop_stream(stream)
+            self._views.pop(stream, None)
+            return True
 
 
     # owner rules ------------------------------------------------------------------------------------------------------
@@ -394,6 +457,33 @@ class FrontDesk:
                 self._step_notes.pop(visitor, None)
             else:
                 self._keep(self._step_notes, visitor, d.check)
+
+    def take_card_payment(self, visitor: str, cmd: Command) -> None:
+        """Staff take a card payment on a tenant's page. The gate decides and records; a refusal is kept to be shown once. When it allows
+        a command it has not seen before, the payment goes through the processor on the card the tenant has on file. It counts when the
+        processor confirms it; until then (or when the answer is lost) it shows as waiting, and the hourly pass settles it.
+        ponytail: the decision and the intent are two writes (pay() opens its own transaction); a crash between them leaves a decision
+        with no payment, and staff press the button again on a fresh page."""
+        with self.lock:
+            store, stream = self.ready(), self.stream(visitor)
+            d = execute(store, stream, cmd, self.clock())
+            if not d.allowed:
+                return self._keep(self._step_notes, visitor, d.check)
+            self._step_notes.pop(visitor, None)
+            if d.repeated:          # the same page pressed twice: the first decision comes back and nothing is paid again
+                return
+            token = next(c["token"] for c in delinquency.cards_of(store.books(stream), cmd.tenant) if c["card"] == cmd.form["card"])
+            try:
+                intent = delinquency.pay(store, stream, self.processor, cmd.tenant, cmd.form["cents"], token, self.clock())
+            except Refused as exc:
+                return self._keep(self._step_notes, visitor, str(exc))
+            if intent.state == "closed":
+                self._keep(self._step_notes, visitor, "the card processor did not take the payment")
+
+    def take_reset_note(self, visitor: str) -> str:
+        """Why the last Start over was refused, once; empty when nothing was."""
+        with self.lock:
+            return self._reset_notes.pop(visitor, "")
 
     def take_step_note(self, visitor: str) -> str:
         """Why the last staff step on a tenant was refused, once; empty when nothing was."""

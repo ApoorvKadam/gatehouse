@@ -166,6 +166,7 @@ class Year:
         if self.standing:
             self.plan_breached()
             self.on_a_plan()
+            self.cards_on_file()
         return self
 
     def plan_month(self, month: str, rnd: random.Random) -> None:
@@ -469,6 +470,19 @@ class Year:
             due = at_local(when.date() + timedelta(days=col.STEP_DAYS * k), 10, 30)
             steps.append((due, lambda k=k, due=due: pay_part(k, due)))
         self._play(steps)
+
+    def cards_on_file(self) -> None:
+        """The live copy's tenants on a plan, and the first few who are past due, each have two test cards on file: one that pays and
+        one the issuer declines for insufficient funds, so staff can show a payment that fails and one that goes through. Only a
+        brand, the last four digits and a neutral token are kept, never a card number."""
+        b = self.led.books
+        plan = [x["tenant"] for x in (self.plan_tenant, self.breached_tenant) if x]
+        late = [t for t in sorted(b.tenants) if t not in plan and b.past_due(t, self.now) > 0
+                and any(x.tenant == t and x.ended is None for x in b.leases.values())]
+        for t in plan + late[:3]:
+            col.save_card(self.led, t, self.now, "Visa", "4242", "card_ok")
+            col.save_card(self.led, t, self.now, "Visa", "9995", "card_declined")
+
 
 def build(seed: int = SEED, today: date = TODAY, cutoff: datetime | None = None, standing: bool = False) -> Year:
     return Year(seed, today, cutoff, standing).build()

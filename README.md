@@ -87,7 +87,7 @@ A generated year of one facility runs through the same code: 120 units, 121 tena
 ## What is built and what is simulated
 
 - **Built:** the books, the gate, Tilden's reading, the FMS screens, the staff decisions, owner rules written in plain words, the sign-in and the tests. The earlier reconciliation desk (below) is built too.
-- **Simulated:** the facility, its tenants and its money are generated. Replies are shown, never sent. Taking card payments, gate access, move-ins and lien notices come in later steps.
+- **Simulated:** the facility, its tenants and its money are generated. Replies are shown, never sent. Gate access, move-ins and lien notices come in later steps. Card payments run in the card processor's test mode, and a payment still waiting when the service restarts is not carried over.
 - **Not shown yet:** no operator has used it.
 
 ## The earlier reconciliation desk
