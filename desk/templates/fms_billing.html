@@ -19,10 +19,13 @@
 
 <section class="fms-section" id="past-due" aria-labelledby="h-past">
   <h2 id="h-past">Past due</h2>
-  <p class="muted">{{ past|length }} tenants owe {{ money(past|sum(attribute='past')) }} in charges past their due date. A fee whose collection is paused by a dispute is left out.</p>
+  <p class="muted">{{ past|length }} tenants owe {{ money(past|sum(attribute='past')) }} in charges past their due date. A fee whose collection is paused by a dispute is left out. The overlock column says whether it is due on the owner's schedule, and what holds it.</p>
   <div class="fms-scroll" tabindex="0" role="region" aria-labelledby="h-past"><table class="fms-table">
-    <thead><tr><th>Tenant</th><th>Units</th><th class="num">Past due</th><th class="num">Days late</th><th>Oldest unpaid</th><th>Last payment</th><th>Phone</th></tr></thead>
-    <tbody>{% for r in past %}<tr><td><a href="/tenants/{{ r.slug }}">{{ r.name }}</a></td><td>{{ r.units|join(', ') }}</td><td class="num">{{ money(r.past) }}</td><td class="num">{{ r.days }}</td><td>{{ r.oldest }}</td><td class="muted">{{ r.paid }}</td><td class="muted">{{ r.phone }}</td></tr>{% endfor %}</tbody>
+    <thead><tr><th>Tenant</th><th>Units</th><th class="num">Past due</th><th class="num">Days late</th><th>Oldest unpaid</th><th>Payment plan</th><th>Overlock</th><th>Last payment</th><th>Phone</th></tr></thead>
+    <tbody>{% for r in past %}<tr><td><a href="/tenants/{{ r.slug }}">{{ r.name }}</a></td><td>{{ r.units|join(', ') }}</td><td class="num">{{ money(r.past) }}</td><td class="num">{{ r.days }}</td><td>{{ r.oldest }}</td>
+      <td>{% if r.plan %}<div class="fms-state"><span class="chip {{ r.plan[1] }}">{{ r.plan[0] }}</span></div>{% endif %}</td>
+      <td>{% if r.overlock %}<div class="fms-state overlock"><span class="chip {{ r.overlock.tone }}">{{ r.overlock.words }}</span>{% if r.overlock.why or r.overlock_unit %}<span class="fms-why">{% if r.overlock_unit %}Unit {{ r.overlock_unit }}: {% endif %}{{ r.overlock.why }}</span>{% endif %}</div>{% endif %}</td>
+      <td class="muted">{{ r.paid }}</td><td class="muted">{{ r.phone }}</td></tr>{% endfor %}</tbody>
   </table></div>
 </section>
 

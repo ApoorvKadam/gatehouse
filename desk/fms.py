@@ -7,7 +7,8 @@ from __future__ import annotations
 import hmac
 import json
 import re
-from datetime import date
+import secrets
+from datetime import date, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs
 
@@ -15,9 +16,10 @@ from fastapi import Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from starlette.concurrency import run_in_threadpool
 
+from core import delinquency as col
 from core.case import OFF
 from core.books import ADMIN_FEE_CENTS, LATE_FEE_CENTS, RENT, REVIEW_DAYS, lines, local, month_key
-from core.evidence import KIND_WORDS, day, money, month_words
+from core.evidence import KIND_WORDS, clock, day, money, month_words
 from core.gate import ACTIONS, STAFF_ACTIONS, STAFF_RULE, Command, execute
 from core.rules import staff_words, waiver_words
 from core.seed import story_month
@@ -47,6 +49,45 @@ STAFF_DO = {"remove_disputed_fee": "Remove a fee the tenant never signed for", "
 BY = {"billing": "Billing", "operator": AGENT, "fixed_workflow": "Fixed workflow"}
 JOB_WORDS = {"understand": "Reading", "operate": "Choosing"}
 WRONG = "That name and password do not match the demo login shown on this page."
+# collections, as an FMS shows it: each state in words with its chip colour
+PLAN_WORDS = {"proposed": ("Terms worked out, not yet offered", "plain"), "offered": ("Offered, waiting for the tenant", "plain"),
+              "accepted": ("Accepted, waiting for the first payment", "wait"), "active": ("In good standing", "done"),
+              "breached": ("Breached, waiting for staff", "act"), "review": ("With staff for a decision", "wait"),
+              "completed": ("Completed", "plain"), "cancelled": ("Ended", "plain")}
+PART_WORDS = {"scheduled": ("Scheduled", "plain"), "due": ("Due", "wait"), "paid": ("Paid", "done"), "partly paid": ("Partly paid", "wait"),
+              "missed": ("Missed", "act"), "uncertain": ("Waiting for the card processor", "wait")}
+STEP_WORDS = {"clear": ("Clear", "plain"), "eligible": ("Due", "act"), "blocked": ("Held", "wait"), "waiting for staff": ("Waiting for staff", "act"),
+              "recorded": ("Recorded", "plain")}
+TASK_WORDS = {"plan breached": "Payment plan breached", "plan needs staff": "Payment plan needs a decision",
+              "returned payment needs staff": "Returned payment not applied", "payment uncertain": "Payment waiting for the card processor",
+              "call back": "Promise to pay missed: call back", "exemption ended": "Exemption ended"}
+SCOPE_WORDS = {"overlock": "overlock", "lien": "lien eligibility"}
+STEP_FORMS = ("overlock", "lift_overlock", "review_plan", "grant_exemption", "revoke_exemption")
+# the owner's settings as a form: field, label, unit; dollars are typed as whole dollars and kept in cents
+POLICY_FORM = (("min_tenure_days", "Rented at least", "days"), ("max_debt_cents", "Balance at most", "dollars"),
+               ("longest_days", "Longest plan", "days"), ("most_instalments", "Payments after the first", "payments"),
+               ("min_upfront_cents", "Smallest first payment", "dollars"), ("min_instalment_cents", "Smallest later payment", "dollars"),
+               ("grace_days", "Grace after each due date", "days"))
+SCHEDULE_FORM = (("overlock_days", "Overlock", "days"), ("lien_days", "Lien eligibility", "days"))
+
+
+def upfirst(text: str) -> str:
+    return text[:1].upper() + text[1:]
+
+
+def bounded(data: dict, fields, bounds: dict) -> tuple[dict | None, str]:
+    """A settings form read field by field into whole numbers inside the fixed limits; dollars become cents. Returns (values, "")
+    or (None, why not, in the form's own words)."""
+    out = {}
+    for key, label, unit in fields:
+        lo, hi = bounds[key]
+        if unit == "dollars":
+            lo, hi = -(-lo // 100), hi // 100
+        raw = (data.get(key) or "").strip()
+        if not raw.isdecimal() or not lo <= int(raw) <= hi:
+            return None, f"{label} must be a whole number from {lo:,} to {hi:,} {unit}"
+        out[key] = int(raw) * (100 if unit == "dollars" else 1)
+    return out, ""
 
 
 def slug(name: str, unit: str) -> str:
@@ -240,7 +281,7 @@ class Facility:
         for p in self.people.values():
             if p["past"]:
                 oldest = min((c.due for c in self.b.open_charges(p["id"]) if c.due < self.today), default=self.today)
-                rows.append({**p, "oldest": day(oldest), "days": (self.today - oldest).days})
+                rows.append({**p, "oldest": day(oldest), "days": (self.today - oldest).days, **self.standing(p["id"])})
         return sorted(rows, key=lambda r: (-r["days"], -r["past"]))
 
     def units(self) -> list[tuple[str, list[dict]]]:
@@ -259,6 +300,68 @@ class Facility:
                 item = {"unit": u, "chip": chip, "who": p, "rent": money(lease.rent_cents), "since": f"{day(lease.start)}, {lease.start.year}"}
             rows.setdefault(u[0], []).append(item)
         return sorted(rows.items())
+
+    # collections ----------------------------------------------------------------------------------------------------------
+    def collection_tasks(self) -> list[dict]:
+        """What waits for staff in collections, oldest first, until someone acknowledges it."""
+        return [{"id": k.id, "who": self.people[k.tenant], "what": TASK_WORDS.get(k.kind, upfirst(k.kind)), "why": plain(upfirst(k.why)),
+                 "since": dated(k.due, self.today.year)} for k in col.open_tasks(self.b)]
+
+    def steps(self, lease) -> dict:
+        """The overlock and lien-eligibility steps on one unit: the state in words and why, from the same check the gate makes."""
+        st, out = col.state(self.b), {}
+        for step in col.STEPS:
+            state, why = col.step_state(self.b, lease.id, step, self.now)
+            if state == "recorded":
+                why = f"Since {dated(local((st.overlocks if step == 'overlock' else st.liens)[lease.id]['at']).date(), self.today.year)}, by staff"
+            elif state == "clear" and col.days_past_due(self.b, lease.id, self.now) is None:
+                why = ""                    # nothing past due: nothing to explain
+            text, tone = ("Moved out", "plain") if lease.ended else STEP_WORDS[state]
+            out[step] = {"state": state, "words": text, "tone": tone, "why": plain(upfirst(why))}
+        return out
+
+    def plan_of(self, tenant: str) -> dict | None:
+        """The tenant's latest accepted payment plan as an FMS shows it, or None."""
+        plans = [p for p in col.state(self.b).plans.values() if p.tenant == tenant and p.terms]
+        if not plans:
+            return None
+        p = max(plans, key=lambda x: x.history[0][1])
+        agreed = next(at for s, at in p.history if s == "accepted")
+        parts = []
+        for x in col.instalments(self.b, p, self.now):
+            text, tone = PART_WORDS[x["state"]]
+            if p.state == "cancelled" and x["state"] in ("scheduled", "due", "partly paid"):
+                text, tone = "", ""             # the plan ended before this part came due: it has no state
+            parts.append({"label": "First payment" if x["part"] == 0 else f"Payment {x['part']}", "due": dated(date.fromisoformat(x["due"]), self.today.year),
+                          "amount": money(x["cents"]), "words": text + (f", {money(x['covered'])} so far" if x["state"] == "partly paid" else ""), "tone": tone})
+        text, tone = PLAN_WORDS[p.state]
+        return {"id": p.id, "state": p.state, "words": text, "tone": tone, "total": money(p.terms["total"]), "consent": p.consent["quote"],
+                "agreed": clock(agreed), "policy": p.policy_version, "grace": p.terms["grace_days"], "parts": parts,
+                "review": p.state in col.WITH_STAFF}
+
+    def collections(self, tenant: str) -> dict:
+        """Everything collections holds for one tenant: the plan, each unit's steps, active exemptions, open promises."""
+        st = col.state(self.b)
+        units = [{"lease": x.id, "unit": x.unit, **self.steps(x)} for x in self.leases_of.get(tenant, []) if x.ended is None]
+        exemptions = [{"id": e.id, "lease": e.lease, "unit": self.b.leases[e.lease].unit, "scope": upfirst(" and ".join(SCOPE_WORDS[s] for s in e.scope)),
+                       "reason": e.reason, "until": dated(e.until, self.today.year), "owner": e.owner.replace("_", " ")}
+                      for e in st.exemptions.values() if e.tenant == tenant and col.exemption_state(e, self.today) == "active"]
+        promises = [{"amount": money(p.cents), "by": dated(p.by, self.today.year), "callback": dated(p.callback, self.today.year), "quote": p.quote}
+                    for p in st.promises.values() if p.tenant == tenant and p.state == "open"]
+        plan = self.plan_of(tenant)
+        show = bool(plan or exemptions or promises or self.people[tenant]["past"] or any(u["overlock"]["state"] != "clear" for u in units))
+        return {"plan": plan, "units": units, "exemptions": exemptions, "promises": promises, "show": show and bool(units),
+                "until_max": (self.today + timedelta(days=col.EXEMPTION_DAYS)).isoformat(), "until_min": self.today.isoformat()}
+
+    def standing(self, tenant: str) -> dict:
+        """For the past-due list: the plan's state and the first unit whose overlock is not clear, with why."""
+        plans = [p for p in col.state(self.b).plans.values() if p.tenant == tenant and p.terms]
+        plan = PLAN_WORDS[max(plans, key=lambda x: x.history[0][1]).state] if plans else None
+        leases = self.leases_of.get(tenant, [])
+        # the units still rented; a tenant who moved out with money owed is shown on the unit they left, with why no step applies
+        units = [(x.unit, self.steps(x)["overlock"]) for x in ([x for x in leases if x.ended is None] or leases[-1:])]
+        unit, step = next(((u, s) for u, s in units if s["state"] != "clear"), units[0] if units else (None, None))
+        return {"plan": plan, "overlock": step, "overlock_unit": unit if len(units) > 1 else None}
 
     def ledger(self, tenant: str) -> list[dict]:
         """The tenant's account line by line, newest first, with the balance after each line. Needs everything=True."""
@@ -325,7 +428,23 @@ class Facility:
                 "staff_rule_words": staff_words(staff_rule["typed"]) if staff_rule else [],
                 "late_fee": money(LATE_FEE_CENTS), "admin_fee": money(ADMIN_FEE_CENTS), "review_days": REVIEW_DAYS,
                 "actions": [(MAY_DO[a], a in ("reverse_duplicate", "correct_fee_posted_in_error", "waive_fee")) for a in ACTIONS],
-                "staff": [STAFF_DO[a] for a in STAFF_ACTIONS]}
+                "staff": [STAFF_DO[a] for a in STAFF_ACTIONS], **self.settings()}
+
+    def settings(self) -> dict:
+        """The owner's plan policy and schedule, each as its form fields with the value in force and the fixed limits as bounds."""
+        st = col.state(self.b)
+
+        def fields(spec, held, bounds):
+            out = []
+            for key, label, unit in spec:
+                lo, hi = bounds[key]
+                value = (held or {}).get(key)
+                if unit == "dollars":
+                    lo, hi, value = -(-lo // 100), hi // 100, None if value is None else value // 100
+                out.append({"key": key, "label": label, "unit": unit, "min": lo, "max": hi, "value": value})
+            return out
+        return {"policy": st.policy, "policy_fields": fields(POLICY_FORM, st.policy, col.POLICY_BOUNDS),
+                "schedule": st.schedule, "schedule_fields": fields(SCHEDULE_FORM, st.schedule, col.SCHEDULE_BOUNDS)}
 
 
 async def form(request: Request, limit: int = 8192) -> dict[str, str]:
@@ -431,14 +550,15 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
         cases = f.cases()
         morning = [c for c in cases if c["shift"]]
         return show(request, "fms_home.html", "home", f, rows=f.occupancy(), month=f.month(month_key(f.today)), past=f.past_due(),
-                    waiting=len(f.waiting(cases)), handed=sum(1 for c in cases if c["handed"]), disputes=len(f.disputes()),
+                    waiting=len(f.waiting(cases)), handed=sum(1 for c in cases if c["handed"]), disputes=len(f.disputes()), tasks=len(f.collection_tasks()),
                     morning=len(SHIFT), closed=sum(1 for c in morning if not c["handed"]))
 
     @app.get("/today", include_in_schema=False)
     def today(request: Request):
         f = Facility(fd, need(request))
         cases = f.cases()
-        return show(request, "fms_today.html", "today", f, cases=cases, waiting=f.waiting(cases), disputes=f.disputes(), decisions=f.decisions())
+        return show(request, "fms_today.html", "today", f, cases=cases, waiting=f.waiting(cases), disputes=f.disputes(), decisions=f.decisions(),
+                    tasks=f.collection_tasks())
 
     @app.get("/messages", include_in_schema=False)
     def messages(request: Request, case: int | None = None, unread: str | None = None):
@@ -478,13 +598,15 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
 
     @app.get("/tenants/{key}", include_in_schema=False)
     def tenant(request: Request, key: str):
-        f = Facility(fd, need(request), everything=True)
+        ident = need(request)
+        f = Facility(fd, ident, everything=True)
         p = f.by_slug.get(key)
         if p is None:
             raise HTTPException(404, "no such tenant")
         return show(request, "fms_tenant.html", "tenants", f, p=p, rentals=f.rentals(p["id"]), ledger=f.ledger(p["id"]),
                     cases=[c for c in f.cases() if c["who"] and c["who"]["id"] == p["id"]],
-                    disputes=[d for d in f.disputes() if d["who"]["id"] == p["id"]])
+                    disputes=[d for d in f.disputes() if d["who"]["id"] == p["id"]], col=f.collections(p["id"]),
+                    token=secrets.token_hex(6), step_note=plain(fd.take_step_note(ident)))
 
     @app.get("/billing", include_in_schema=False)
     def billing(request: Request, month: str = ""):
@@ -559,6 +681,63 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
                 raise
             return RedirectResponse("/rules#in-force", status_code=303)     # the page says why nothing changed
         return RedirectResponse("/rules#in-force", status_code=303)
+
+    @app.post("/collections/acknowledge", include_in_schema=False)
+    async def acknowledge(request: Request):
+        """Staff saw a collections task; it leaves Today. A second press changes nothing."""
+        same_site(request)
+        ident = need(request)
+        data = await form(request)
+        await run_in_threadpool(fd.acknowledge, ident, data.get("task", "")[:12], STAFF)
+        return RedirectResponse("/today#collections", status_code=303)
+
+    @app.post("/tenants/{key}/collections", include_in_schema=False)
+    async def collections_step(request: Request, key: str):
+        """A staff step on one tenant's collections, through the gate on this session's copy: record or lift an overlock, reinstate
+        or end a breached plan, grant or revoke an exemption. The tenant comes from the address, never the form; the gate checks the
+        unit, plan or exemption belongs to them. The page's token makes a second press return the first decision."""
+        same_site(request)
+        ident = need(request)
+        data = await form(request)
+        action, token = data.get("action", ""), data.get("token", "")
+        if action not in STEP_FORMS:
+            raise HTTPException(422, "That is not a step staff can take here.")
+        if not re.fullmatch(r"[0-9a-f]{12}", token):
+            raise HTTPException(422, "Reload the page and try again.")
+        p = Facility(fd, ident).by_slug.get(key)
+        if p is None:
+            raise HTTPException(404, "no such tenant")
+        reason = " ".join(data.get("reason", "").split())[:300]
+        typed = {"review_plan": {"outcome": data.get("outcome", "")},
+                 "grant_exemption": {"scope": [s for s in col.STEPS if data.get(f"scope_{s}")], "reason": reason, "until": data.get("until", "")[:10]},
+                 "revoke_exemption": {"exemption": data.get("exemption", "")[:12]}}.get(action)
+        if action == "review_plan" and len(reason) < 3:
+            raise HTTPException(422, "Write what you agreed with the tenant, in a few words.")
+        target = (data.get("lease") or data.get("plan") or data.get("exemption") or "")[:12]
+        if action == "review_plan":
+            target += ":" + typed["outcome"][:10]           # Reinstate and End on one page are two different decisions
+        cmd = Command(f"form:{token}:{action}:{target}", action, p["id"], STAFF, lease=data.get("lease", "")[:12] or None,
+                      plan=data.get("plan", "")[:12] or None, form=typed, reason=reason or None)
+        await run_in_threadpool(fd.staff_step, ident, cmd)
+        return RedirectResponse(f"/tenants/{key}#collections", status_code=303)
+
+    @app.post("/rules/plan-policy", include_in_schema=False)
+    async def plan_policy(request: Request):
+        """The owner adopts a new version of the plan policy on this session's copy; outside the fixed limits nothing changes."""
+        same_site(request)
+        ident = need(request)
+        values, why = bounded(await form(request), POLICY_FORM, col.POLICY_BOUNDS)
+        done = await run_in_threadpool(fd.owner_setting, ident, "policy", values, why)
+        return RedirectResponse("/rules#plan-policy" if done else "/rules#in-force", status_code=303)     # a refusal is said above the panels
+
+    @app.post("/rules/schedule", include_in_schema=False)
+    async def schedule(request: Request):
+        """The owner adopts a new version of the schedule on this session's copy; outside the fixed limits nothing changes."""
+        same_site(request)
+        ident = need(request)
+        values, why = bounded(await form(request), SCHEDULE_FORM, col.SCHEDULE_BOUNDS)
+        done = await run_in_threadpool(fd.owner_setting, ident, "schedule", values, why)
+        return RedirectResponse("/rules#schedule" if done else "/rules#in-force", status_code=303)
 
     @app.post("/disputes/decide", include_in_schema=False)
     async def decide(request: Request):

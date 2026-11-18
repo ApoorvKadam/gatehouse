@@ -6,6 +6,7 @@ records it. Runs count against the visitor's tries and the day's budget."""
 from __future__ import annotations
 
 import glob
+import logging
 import os
 import secrets
 import threading
@@ -16,10 +17,11 @@ from datetime import date, datetime, timedelta, timezone
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
+from core import delinquency
 from core.books import ZONE, at_local, local
 from core.billing import Ledger, Refused
 from core.case import READ_ONLY, handle
-from core.gate import STAFF_RULE
+from core.gate import STAFF_RULE, Command, execute
 from core.rules import Proposal, compile_rule, replay
 from core.cases import load
 from core.seed import build
@@ -28,6 +30,8 @@ from core.store import BASE, Store
 from . import spend
 
 SHIFT = load("shift")["items"]
+SWEEP_EVERY = 3600              # seconds between collections passes; each writes only what is new, so a copy started today is swept today
+log = logging.getLogger("desk.front_desk")
 WORST_CASE_CENTS = 0.1          # the most one message can cost on the live link (one reading call on Haiku, capped)
 RULE_WORST_CENTS = 0.2          # the most reading one owner sentence can cost (one call on Haiku, output capped)
 RULES_PER_DAY = 3               # owner sentences a visitor may have read in a day, apart from the message tries
@@ -69,8 +73,12 @@ def as_utc(at: datetime) -> datetime:
 
 
 class FrontDesk:
-    def __init__(self, path: str, client=None, clock=None):
+    def __init__(self, path: str, client=None, clock=None, processor_path: str | None = None):
         self.path, self.client = path, client
+        # the simulated payment processor keeps its records beside the core's database: one per running app, never in the repository
+        if processor_path is None and path != ":memory:":
+            processor_path = os.path.join(os.path.dirname(os.path.abspath(path)), "processor.json")
+        self.processor = delinquency.SimulatedProcessor(processor_path)
         self.clock = clock or (lambda: datetime.now(ZONE))      # the real time in Orlando; tests pass a fixed one
         self.day: date | None = None                            # the day the books were made for
         self.lock = threading.RLock()
@@ -83,6 +91,7 @@ class FrontDesk:
         self._proposals: OrderedDict[str, tuple] = OrderedDict()     # visitor -> (id, proposal, sentence, rule versions, day)
         self._resets: dict[str, int] = {}                            # visitor -> how many times their copy was reset
         self._notes: dict[str, str] = {}                             # visitor -> why a going back was refused, shown once on the Rules page
+        self._step_notes: dict[str, str] = {}                        # visitor -> why a staff step on a tenant was refused, shown once there
         self._facts: dict | None = None
 
     def today(self) -> date:
@@ -149,6 +158,42 @@ class FrontDesk:
                                "leases": len(b.leases), "charges": len(b.charges), "payments": len(b.payments), "declined": len(b.declined),
                                "past_due": sum(1 for t in b.tenants if b.past_due(t, now)), "past_due_cents": sum(b.past_due(t, now) for t in b.tenants)}
             return self._facts
+
+    def sweep(self) -> list[str]:
+        """The collections pass over every visitor copy. The processor's events that no webhook brought are delivered first; then
+        each copy that has payments is reconciled with the processor (a payment whose answer was lost is settled from its record),
+        and its due parts are noticed, missed ones breached with a staff task, promises and exemptions settled. At boot it catches
+        up on whatever fell due while nothing ran. Every record is keyed, so a pass with nothing new writes nothing. Returns the
+        copies it swept."""
+        with self.lock:
+            store = self.ready()
+            for event in self.processor.take_events():
+                try:
+                    delinquency.webhook(store, self.processor, event, self.clock())
+                except Exception:       # one bad event never stops the others; reconciliation settles it later
+                    log.exception("processor event %s failed", event.get("id"))
+            streams = [s for (s,) in store.db.execute("SELECT DISTINCT stream FROM events WHERE stream LIKE 'visitor:%' ORDER BY stream")]
+        swept = []
+        for s in streams:
+            with self.lock:         # one copy at a time, so pages wait for one copy's pass at most
+                try:                # a fault in one copy never stops the copies after it
+                    now = self.clock()
+                    if delinquency.state(store.books(s)).intents:
+                        delinquency.reconcile(store, s, self.processor, now)
+                    delinquency.sweep(store, s, now)
+                    swept.append(s)
+                except Exception:
+                    log.exception("collections sweep failed for %s", s)
+        return swept
+
+    def serve(self) -> None:
+        """Run at boot in a thread of its own: build the day's year, catch up, then sweep every SWEEP_EVERY seconds."""
+        while True:
+            try:
+                self.sweep()
+            except Exception:       # a failed pass is logged and the next one still runs
+                log.exception("collections sweep failed")
+            time.sleep(SWEEP_EVERY)
 
     @staticmethod
     def stream(visitor: str) -> str:
@@ -232,6 +277,7 @@ class FrontDesk:
             self._proposals.pop(visitor, None)
             self._notes.pop(visitor, None)
             self._resets[visitor] = self._resets.get(visitor, 0) + 1
+            delinquency.close_copy(self.processor, self.stream(visitor))     # nothing of the old copy is left processing
             self.store.drop_stream(self.stream(visitor))
             self._views.pop(self.stream(visitor), None)
 
@@ -331,6 +377,63 @@ class FrontDesk:
                 store.append(stream, led.pending)
             self._notes.pop(visitor, None)      # a refusal not yet shown is out of date once a going back succeeds
             return led.books.rules[name]["version"]
+
+    # collections ------------------------------------------------------------------------------------------------------------
+    def _keep(self, notes: dict[str, str], visitor: str, text: str) -> None:
+        notes[visitor] = f"{text[:1].upper()}{text[1:]}" + ("" if text.endswith(".") else ".")
+        while len(notes) > 64:
+            notes.pop(next(iter(notes)))
+
+    def staff_step(self, visitor: str, cmd: Command) -> None:
+        """A staff step on a tenant's collections, through the gate on this copy. A refusal is kept to be shown once on that page."""
+        with self.lock:
+            d = execute(self.ready(), self.stream(visitor), cmd, self.clock())
+            if d.allowed:
+                self._step_notes.pop(visitor, None)
+            else:
+                self._keep(self._step_notes, visitor, d.check)
+
+    def take_step_note(self, visitor: str) -> str:
+        """Why the last staff step on a tenant was refused, once; empty when nothing was."""
+        with self.lock:
+            return self._step_notes.pop(visitor, "")
+
+    def acknowledge(self, visitor: str, task: str, who: str) -> None:
+        """Staff saw a collections task on this copy; a task already acknowledged, or not here, changes nothing."""
+        with self.lock:
+            store = self.ready()
+            led = Ledger(store.books(self.stream(visitor)))
+            try:
+                delinquency.acknowledge(led, task, who, self.clock())
+            except Refused:
+                return
+            with store.write():
+                store.append(self.stream(visitor), led.pending)
+
+    def owner_setting(self, visitor: str, kind: str, values: dict | None, why: str = "") -> bool:
+        """The visitor, as the owner on their own copy, adopts the next version of the plan policy or the schedule. Values outside
+        the fixed limits, or the same as in force, change nothing, and the Rules page says why once."""
+        with self.lock:
+            store = self.ready()
+            led = Ledger(store.books(self.stream(visitor)))
+            held = getattr(delinquency.state(led.books), "policy" if kind == "policy" else "schedule") or {}
+            if values is not None and all(held.get(k) == v for k, v in values.items()):
+                why = f"that is already the {'plan policy' if kind == 'policy' else 'schedule'} in force"
+            if values is None or why:
+                self._keep(self._notes, visitor, why)
+                return False
+            try:
+                if kind == "policy":
+                    delinquency.adopt_policy(led, self.clock(), held.get("version", 0) + 1, values)
+                else:
+                    delinquency.adopt_schedule(led, self.clock(), held.get("version", 0) + 1, values["overlock_days"], values["lien_days"])
+            except Refused as exc:
+                self._keep(self._notes, visitor, str(exc))
+                return False
+            with store.write():
+                store.append(self.stream(visitor), led.pending)
+            self._notes.pop(visitor, None)
+            return True
 
     def take_note(self, visitor: str) -> str:
         """Why the last going back was refused, once; empty when nothing was."""
