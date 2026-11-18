@@ -42,7 +42,9 @@
     <h3>What {{ agent }} read</h3>
     <ul>
       {% for c in picked.claims %}<li>{% if c.about %}About the {{ c.about }}: the tenant{% else %}The tenant{% endif %} {{ c.what }}, in their words: <mark>{{ c.quote }}</mark></li>
-      {% else %}<li>{{ 'Nothing: ' ~ agent ~ ' is off on this copy.' if picked.off else 'No claim about a charge.' }}</li>{% endfor %}
+      {% endfor %}
+      {% if picked.plan_read %}<li>About paying in parts: the tenant {{ picked.plan_read.what }}{% if picked.plan_read.quote %}, in their words: <mark>{{ picked.plan_read.quote }}</mark>{% else %}.{% endif %}</li>
+      {% elif not picked.claims %}<li>{{ 'Nothing: ' ~ agent ~ ' is off on this copy.' if picked.off else 'No claim about a charge.' }}</li>{% endif %}
     </ul>
     {% for k in picked.calls %}<p class="muted">{% if k.ok %}{{ k.job }} cost {{ '%.3f'|format(k.cents) }} cents: {{ "{:,}".format(k.tokens_in) }} tokens read, {{ "{:,}".format(k.tokens_out) }} written, in {{ '%.1f'|format(k.seconds) }} seconds.{% else %}{{ k.job }} did not finish, so the message went to staff; up to {{ '%.3f'|format(k.cents) }} cents was counted for it.{% endif %}</p>{% endfor %}
     {% if picked.outcomes %}

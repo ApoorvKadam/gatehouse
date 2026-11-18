@@ -12,7 +12,8 @@ from datetime import date, timedelta
 
 from .agent import Budget, _claude, wrap
 from .delinquency import split
-from .reader import found_in, read_amount, read_date
+from .evidence import day, money
+from .reader import amount_in, amounts, bare_amount, dates, found_in, read_date
 
 KINDS = ("ask_plan", "accept", "counter", "promise", "other")
 FLAGS = ("conditional", "unsure", "withheld", "someone_else", "access", "legal", "asks_for_person", "waive_rent", "mark_paid",
@@ -59,7 +60,7 @@ quote: the tenant's exact words for what they ask, copied character for characte
 
 Flags for the whole message:
 - conditional: agreement depends on something ("if my paycheck hits", "as long as you stop the fees").
-- unsure: maybe, probably, "I'll try", "depends".
+- unsure: their own words hedge: maybe, probably, "I'll try", "hopefully", "depends". A plain "I'll send", "I will pay" or "I can pay" is not unsure.
 - withheld: says they are not agreeing yet ("let me talk to my wife first").
 - someone_else: about another person's account, or the sender is not the tenant.
 - access: asks for gate access, a code, or a lock to be lifted.
@@ -131,7 +132,14 @@ def check(raw: dict, text: str, offered: list[str], today: date) -> Reading:
         if not found_in(q, text):
             dropped.append(f"{key}: not in the message")
             return None
-        return read_amount(q)
+        cents = amount_in(q)
+        if cents is not None and not amounts(q):          # a bare number: never one the whole message uses in a date
+            bare = bare_amount(q)
+            digits = bare[1] if bare else q.strip()
+            if any(re.search(rf"(?<![\d.,]){re.escape(digits)}(?![\d])", words) for _, words in dates(text, today, ahead=True)):
+                dropped.append(f"{key}: the number is not clearly an amount")
+                return None
+        return cents
 
     kind = raw.get("kind") if raw.get("kind") in KINDS else "other"
     offer = raw.get("offer") if raw.get("offer") in offered else None
@@ -149,6 +157,21 @@ def check(raw: dict, text: str, offered: list[str], today: date) -> Reading:
                    n if isinstance(n, int) and not isinstance(n, bool) and 0 < n < 60 else None,
                    raw.get("every") if raw.get("every") in EVERY else None, money("promise_amount_quote"), day,
                    [f for f in raw.get("flags", []) if f in FLAGS], dropped, text)
+
+
+def said(r: Reading | None) -> dict | None:
+    """What the reply was read as, in plain words for staff, with the tenant's words only when code finds them in the message."""
+    if r is None or r.kind == "other":
+        return None
+    what = {"ask_plan": "asked to pay what they owe in parts",
+            "accept": f"agreed to {r.offer}" if r.offer else "said yes without naming one plan that was offered",
+            "counter": "suggested terms of their own" + "".join(x for x in (f", {money(r.upfront)} first" if r.upfront else "",
+                                                                         f", then {r.instalments} payments" if r.instalments else "") if x),
+            "promise": f"promised {money(r.promise_cents)} by {day(r.promise_day)}" if r.promise_cents and r.promise_day
+                       else "promised to pay, without both an amount and a day"}[r.kind]
+    if any(f in NOT_AGREEMENT for f in r.flags):
+        what += ", but not for certain"
+    return {"what": what, "quote": r.quote if r.quote and found_in(r.quote, r.text_seen) else None}
 
 
 def read(client, model: str, effort: str, text: str, ctx: Context, budget: Budget):

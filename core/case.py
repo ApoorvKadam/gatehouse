@@ -63,6 +63,7 @@ class Result:
     calls: list[agent.Call] = field(default_factory=list)
     repeated: bool = False
     plan: list[dict] = field(default_factory=list)     # steps taken on a reply about paying in parts, through the gate
+    plan_read: dict | None = None       # what that reply was read as, in plain words
 
     @property
     def cents(self) -> float:
@@ -134,9 +135,10 @@ def handle(store: Store, stream: str, case: str, phone: str | None, text: str, a
         p = plan_case.context(books, tenant, now)
         r, call = plan_reading.read(client, arm.read_model, arm.read_effort, text, p.ctx, budget)
         res.calls.append(call)
+        res.plan_read = plan_reading.said(r)
         acts = plan_reading.decide(r, p.ctx)
         res.plan, res.handed = plan_case.act(store, stream, case, tenant, text, r, acts, p, now)
-        res.reply = plan_case.reply(store.books(stream), tenant, acts, res.handed, now, res.plan)
+        res.reply = plan_case.reply(store.books(stream), tenant, acts, res.handed, now, res.plan, r)
         _record(store, stream, case, phone, text, res, now)
         return res
     if not res.claims or res.dropped:
@@ -232,7 +234,7 @@ def _record(store: Store, stream: str, case: str, phone: str | None, text: str, 
     led = Ledger(store.books(stream))
     led.emit("case.closed" if not res.handed else "case.handed_over", now,
              {"case": case, "phone": phone, "text": text, "tenant": res.tenant, "flags": res.flags, "dropped": res.dropped,
-              "claims": [c.__dict__ for c in res.claims], "handed": res.handed, "reply": res.reply,
+              "claims": [c.__dict__ for c in res.claims], "plan_read": res.plan_read, "handed": res.handed, "reply": res.reply,
               # what the records showed for each claim and what was done, so the case can be shown again after a reload
               "outcomes": [{"says": o.finding.says, "action": o.action, "by": o.chosen_by, "allowed": bool(o.decision and o.decision.allowed), "charge": o.claim.charge,
                             "rule": o.decision.rule if o.decision and o.chosen_by == "owner rule" else None,

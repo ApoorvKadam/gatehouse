@@ -47,7 +47,7 @@ MAY_DO = {"explain_charge": "Explain a charge from the records", "reverse_duplic
           "waive_fee": "Waive a late fee under the owner's rule", "hand_to_staff": "Hand a message to staff, with the reason"}
 STAFF_DO = {"remove_disputed_fee": "Remove a fee the tenant never signed for", "keep_under_review": "Keep a dispute under review until its date"}
 BY = {"billing": "Billing", "operator": AGENT, "fixed_workflow": "Fixed workflow"}
-JOB_WORDS = {"understand": "Reading", "operate": "Choosing"}
+JOB_WORDS = {"understand": "Reading", "operate": "Choosing", "plan reply": "Reading the reply about paying in parts"}
 WRONG = "That name and password do not match the demo login shown on this page."
 # collections, as an FMS shows it: each state in words with its chip colour
 PLAN_WORDS = {"proposed": ("Terms worked out, not yet offered", "plain"), "offered": ("Offered, waiting for the tenant", "plain"),
@@ -174,6 +174,8 @@ class Facility:
             who = self.people.get(p["tenant"] or "")
             claims = []
             for c in p["claims"]:
+                if p.get("plan_read") and c["kind"] == "other":       # the plan reading says it better
+                    continue
                 ch = b.charges.get(c.get("charge") or "")
                 about = None
                 if ch is not None:
@@ -191,7 +193,7 @@ class Facility:
             why = next((o["says"] for o in outcomes if o["action"] == "hand_to_staff" and o["says"]), None)
             if any(o.get("by") in ("owner rule", "staff rule") for o in outcomes):      # a rule sent it: say which, not the records
                 why = p["handed"]
-            out.append({"n": e.id, "who": who, "text": p["text"], "handed": p["handed"], "why": why or p["handed"], "reply": p["reply"], "claims": claims,
+            out.append({"n": e.id, "who": who, "text": p["text"], "handed": p["handed"], "why": why or p["handed"], "reply": p["reply"], "claims": claims, "plan_read": p.get("plan_read"),
                         "outcomes": outcomes, "asked": [a for a in p.get("asked", []) if not a["allowed"]], "entries": entries,
                         "summary": ". ".join(done) + "." if done else "Answered from the records.",
                         # a message can be answered while the work it started still waits: a dispute stays open for staff
