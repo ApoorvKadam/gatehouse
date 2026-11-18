@@ -80,6 +80,10 @@ class Settings:
     live_check_units: tuple[str, str] | None = None
     live_check_client_id: str | None = field(default=None, repr=False)
     live_check_client_secret: str | None = field(default=None, repr=False)
+    # the card processor's test-mode key, and the secret that signs its webhooks; read only from the environment, never shown. With no
+    # key the simulated processor stays; a live-mode key stops the desk at startup (desk/api.py)
+    stripe_secret_key: str | None = field(default=None, repr=False)
+    stripe_webhook_secret: str | None = field(default=None, repr=False)
 
     @staticmethod
     def from_env() -> "Settings":
@@ -108,4 +112,6 @@ class Settings:
             live_check_units=_two_units(os.environ.get("FMS_CHECKS_LIVE_UNITS")),
             live_check_client_id=os.environ.get("STORA_READ_CLIENT_ID") or None,
             live_check_client_secret=os.environ.get("STORA_READ_CLIENT_SECRET") or None,
+            stripe_secret_key=os.environ.get("STRIPE_SECRET_KEY") or None,
+            stripe_webhook_secret=os.environ.get("STRIPE_WEBHOOK_SECRET") or None,
         )

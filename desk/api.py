@@ -20,6 +20,8 @@ from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from core.stripe_processor import from_key as stripe_from_key
+
 from . import missed_calls
 from .adapter import FMSAdapter, FMSError, InboundText
 from .adapter.cubby import CubbyAdapter
@@ -131,6 +133,7 @@ class ReviewIn(BaseModel):
 def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = None, start_worker: bool = True,
                chat_client=None, live_reader=None) -> FastAPI:
     settings = settings or Settings.from_env()
+    card_processor = stripe_from_key(settings.stripe_secret_key)       # a live-mode key stops the desk here, before anything is served
     if settings.public_view and not (settings.demo_seed and urlsplit(settings.fms_base_url).hostname in ("127.0.0.1", "localhost")):
         # anyone can read the preview without a token, so it may only ever hold the synthetic world
         raise RuntimeError("the public preview runs only on the synthetic world against the local simulator")
@@ -762,9 +765,11 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         # the public site: the Overview and the agentic FMS on the core's own books (core/), in a database of its own for this process
         from .fms import mount as mount_fms
         from .front_desk import FrontDesk
+        from .stripe_hook import mount as mount_stripe_hook
         core_path = os.environ.get("CORE_DATABASE_PATH") or os.path.join(tempfile.mkdtemp(prefix="staddle-core-"), "core.db")
-        front_desk = app.state.front_desk = FrontDesk(core_path, chat_client)
+        front_desk = app.state.front_desk = FrontDesk(core_path, chat_client, processor=card_processor)
         mount_fms(app, front_desk, settings, guard, from_elsewhere, factory, live=chat_client is not None and settings.public_investigate)
+        mount_stripe_hook(app, front_desk, settings.stripe_webhook_secret)
         if start_worker:
             # the year is built while the site starts, so no visitor waits for it on their first page; the same thread then sweeps
             # the visitor copies for collections at boot and every hour

@@ -38,8 +38,11 @@ MENU = (("Run the facility", (("home", "Home", "house"), ("today", "Today", "lis
         ("Facility and tenants", (("units", "Units", "warehouse"), ("tenants", "Tenants", "users"))),
         ("Money", (("billing", "Billing and payments", "credit-card"),)),
         ("Setup", (("rules", "Rules", "scale"),)))
-# the only addresses that answer without a session; tests/test_fms.py walks every route against this list
-PUBLIC = {"/", "/film", "/sign-in", "/sign-out", "/static", "/health/live", "/health/ready", "/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
+# the only addresses that answer without a session; tests/test_fms.py walks every route against this list. The card processor's
+# webhook is the one write among them: the processor calls it, no session exists, its signature is the check, and without a signing
+# secret it answers 503 (desk/stripe_hook.py)
+PUBLIC = {"/", "/film", "/sign-in", "/sign-out", "/static", "/health/live", "/health/ready", "/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc",
+          "/webhooks/stripe"}
 SCORE = Path(__file__).parent / "static" / "first_shift.json"
 STAFF_WORDS = {"remove_disputed_fee": "Removed the fee", "keep_under_review": "Kept under review"}
 MAY_DO = {"explain_charge": "Explain a charge from the records", "reverse_duplicate": "Reverse the second copy of a charge posted twice",
@@ -62,7 +65,9 @@ TASK_WORDS = {"plan breached": "Payment plan breached", "plan needs staff": "Pay
               "returned payment needs staff": "Returned payment not applied", "payment uncertain": "Payment waiting for the card processor",
               "call back": "Promise to pay missed: call back", "exemption ended": "Exemption ended"}
 SCOPE_WORDS = {"overlock": "overlock", "lien": "lien eligibility"}
-STEP_FORMS = ("overlock", "lift_overlock", "review_plan", "grant_exemption", "revoke_exemption")
+STEP_FORMS = ("overlock", "lift_overlock", "review_plan", "grant_exemption", "revoke_exemption", "take_payment")
+PAYMENT_WORDS = {"open": ("Waiting for the card processor", "wait"), "pending": ("Waiting for the card processor", "wait"), "succeeded": ("Paid", "done"),
+                 "failed": ("Declined", "act"), "returned": ("Returned by the bank", "act"), "closed": ("Not taken", "plain")}
 # the owner's settings as a form: field, label, unit; dollars are typed as whole dollars and kept in cents
 POLICY_FORM = (("min_tenure_days", "Rented at least", "days"), ("max_debt_cents", "Balance at most", "dollars"),
                ("longest_days", "Longest plan", "days"), ("most_instalments", "Payments after the first", "payments"),
@@ -88,6 +93,12 @@ def bounded(data: dict, fields, bounds: dict) -> tuple[dict | None, str]:
             return None, f"{label} must be a whole number from {lo:,} to {hi:,} {unit}"
         out[key] = int(raw) * (100 if unit == "dollars" else 1)
     return out, ""
+
+
+def dollars(text: str) -> int | None:
+    """An amount typed in dollars and cents, to whole cents without floats; None when it is not one."""
+    m = re.fullmatch(r"\$?(\d{1,7})(?:\.(\d{1,2}))?", text.strip().replace(",", ""))
+    return int(m[1]) * 100 + int((m[2] or "0").ljust(2, "0")) if m else None
 
 
 def slug(name: str, unit: str) -> str:
@@ -363,8 +374,13 @@ class Facility:
         promises = [{"amount": money(p.cents), "by": dated(p.by, self.today.year), "callback": dated(p.callback, self.today.year), "quote": p.quote}
                     for p in st.promises.values() if p.tenant == tenant and p.state == "open"]
         plan = self.plan_of(tenant)
+        cards = [{"id": c["card"], "label": f"{c['brand']} ending {c['last4']}" + (", a test card that declines" if c["token"] == "card_declined" else "")}
+                 for c in col.cards_of(self.b, tenant)]
+        payments = [{"when": clock(i.created), "amount": money(i.cents), "words": PAYMENT_WORDS[i.state][0], "tone": PAYMENT_WORDS[i.state][1]}
+                    for i in sorted((i for i in st.intents.values() if i.tenant == tenant), key=lambda i: i.created, reverse=True)[:6]]
         show = bool(plan or exemptions or promises or self.people[tenant]["past"] or any(u["overlock"]["state"] != "clear" for u in units))
         return {"plan": plan, "units": units, "exemptions": exemptions, "promises": promises, "show": show and bool(units),
+                "cards": cards, "card_payments": payments, "owing": col.owing(self.b, tenant),
                 "until_max": (self.today + timedelta(days=col.EXEMPTION_DAYS)).isoformat(), "until_min": self.today.isoformat()}
 
     def standing(self, tenant: str) -> dict:
@@ -560,12 +576,14 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
 
     @app.get("/home", include_in_schema=False)
     def home(request: Request):
-        f = Facility(fd, need(request))
+        ident = need(request)
+        f = Facility(fd, ident)
         cases = f.cases()
         morning = [c for c in cases if c["shift"]]
         return show(request, "fms_home.html", "home", f, rows=f.occupancy(), month=f.month(month_key(f.today)), past=f.past_due(),
                     waiting=len(f.waiting(cases)), handed=sum(1 for c in cases if c["handed"]), disputes=len(f.disputes()), tasks=len(f.collection_tasks()),
-                    overlocks=len(f.overlocks_due()), morning=len(SHIFT), closed=sum(1 for c in morning if not c["handed"]))
+                    overlocks=len(f.overlocks_due()), morning=len(SHIFT), closed=sum(1 for c in morning if not c["handed"]),
+                    note=plain(fd.take_reset_note(ident)))
 
     @app.get("/today", include_in_schema=False)
     def today(request: Request):
@@ -724,7 +742,11 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
         if p is None:
             raise HTTPException(404, "no such tenant")
         reason = " ".join(data.get("reason", "").split())[:300]
-        typed = {"review_plan": {"outcome": data.get("outcome", "")},
+        cents = dollars(data.get("amount", "")) if action == "take_payment" else None
+        if action == "take_payment" and cents is None:
+            raise HTTPException(422, "Type the amount in dollars and cents, for example 25.00.")
+        typed = {"take_payment": {"cents": cents, "card": data.get("card", "")[:12]},
+                 "review_plan": {"outcome": data.get("outcome", "")},
                  "grant_exemption": {"scope": [s for s in col.STEPS if data.get(f"scope_{s}")], "reason": reason, "until": data.get("until", "")[:10]},
                  "revoke_exemption": {"exemption": data.get("exemption", "")[:12]}}.get(action)
         if action == "review_plan" and len(reason) < 3:
@@ -734,7 +756,7 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
             target += ":" + typed["outcome"][:10]           # Reinstate and End on one page are two different decisions
         cmd = Command(f"form:{token}:{action}:{target}", action, p["id"], STAFF, lease=data.get("lease", "")[:12] or None,
                       plan=data.get("plan", "")[:12] or None, form=typed, reason=reason or None)
-        await run_in_threadpool(fd.staff_step, ident, cmd)
+        await run_in_threadpool(fd.take_card_payment if action == "take_payment" else fd.staff_step, ident, cmd)
         if data.get("next") == "today" and action == "overlock":
             return RedirectResponse("/today#overlocks", status_code=303)       # pressed on Today's list: back to the list
         return RedirectResponse(f"/tenants/{key}#collections", status_code=303)

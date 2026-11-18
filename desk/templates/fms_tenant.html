@@ -62,6 +62,26 @@
   </table></div>
   <p class="muted">The days come from the owner's schedule on the Rules page. Recording an overlock marks the unit in the FMS; staff put the lock on, and lift it only after a payment the card processor confirmed.</p>
 
+  <h3 id="h-card-payments">Card payments</h3>
+  {% if col.card_payments %}
+  <div class="fms-scroll" tabindex="0" role="region" aria-label="Card payments on this tenant's account"><table class="fms-table">
+    <thead><tr><th>Taken</th><th class="num">Amount</th><th>State</th></tr></thead>
+    <tbody>{% for x in col.card_payments %}<tr><td>{{ x.when }}</td><td class="num">{{ x.amount }}</td><td><span class="chip {{ x.tone }}">{{ x.words }}</span></td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% endif %}
+  {% if col.cards and col.owing %}
+  <form method="post" action="/tenants/{{ p.slug }}/collections" class="fms-exempt">
+    <input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="action" value="take_payment">
+    <label for="pay-amount">Take a card payment</label>
+    <input id="pay-amount" name="amount" inputmode="decimal" required pattern="[0-9]{1,7}(\.[0-9]{1,2})?" aria-label="Amount in dollars" placeholder="Amount, up to {{ money(col.owing) }}">
+    <select name="card" aria-label="Card on file">{% for c in col.cards %}<option value="{{ c.id }}">{{ c.label }}</option>{% endfor %}</select>
+    <button class="button primary" type="submit">Take the payment</button>
+  </form>
+  <p class="muted">A card payment counts toward what the tenant owes once the card processor confirms it. Until then it shows as waiting, and no second payment starts.</p>
+  {% elif not col.cards %}
+  <p class="muted">No card is on file for this tenant.</p>
+  {% endif %}
+
   <h3>Exemptions</h3>
   {% for e in col.exemptions %}
   <div class="fms-line fms-task">

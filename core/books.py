@@ -21,7 +21,7 @@ CUTOFF_DAY = 6          # the late fee is posted at 00:00 local on this day when
 REVIEW_DAYS = 10
 # the collections records (core/delinquency.py), folded into Books.collections
 COLLECTION_RECORDS = ("plan_policy", "schedule", "plan", "promise", "exemption", "overlock", "lien", "intent", "webhook", "notice",
-                      "task", "sweep", "reconcile")
+                      "task", "sweep", "reconcile", "card")
 
 
 def local(t: datetime) -> datetime:
