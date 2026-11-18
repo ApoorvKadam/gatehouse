@@ -20,6 +20,76 @@
   </table></div>
 </section>
 
+{% if col.show %}{% set plan = col.plan %}
+<section class="fms-section" id="collections" aria-labelledby="h-collections">
+  <h2 id="h-collections">Collections</h2>
+  {% if step_note %}<p class="fms-status" role="status">Nothing changed. {{ step_note }}</p>{% endif %}
+  {% if plan %}
+  <article class="fms-card">
+    <p class="fms-card-head"><b>Payment plan</b> <span class="chip {{ plan.tone }}">{{ plan.words }}</span> <span class="muted">{{ plan.total }} in all, under plan policy version {{ plan.policy }}</span></p>
+    <q>{{ plan.consent }}</q>
+    <p class="muted">The tenant's own words, agreed {{ plan.agreed }}. A payment counts once the card processor confirms it, and each has {{ plan.grace }} grace days after its due date.</p>
+    <div class="fms-scroll" tabindex="0" role="region" aria-label="Payments in the plan"><table class="fms-table">
+      <thead><tr><th>Payment</th><th>Due</th><th class="num">Amount</th><th>State</th></tr></thead>
+      <tbody>{% for x in plan.parts %}<tr><td>{{ x.label }}</td><td>{{ x.due }}</td><td class="num">{{ x.amount }}</td><td>{% if x.words %}<span class="chip {{ x.tone }}">{{ x.words }}</span>{% endif %}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    {% if plan.review %}
+    <form method="post" action="/tenants/{{ p.slug }}/collections" class="fms-decide">
+      <input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="action" value="review_plan"><input type="hidden" name="plan" value="{{ plan.id }}">
+      <label for="plan-reason">What you agreed with the tenant</label>
+      <input id="plan-reason" name="reason" required minlength="3" maxlength="300" placeholder="For example: she pays the missed part on Friday">
+      <button class="button primary" name="outcome" value="reinstate" type="submit">Reinstate the plan</button>
+      <button class="button" name="outcome" value="end" type="submit">End the plan</button>
+    </form>
+    <p class="muted">Until staff decide, the overlock and lien eligibility wait. Ending the plan lets them go ahead on the owner's schedule.</p>
+    {% endif %}
+  </article>
+  {% endif %}
+
+  <h3>Overlock and lien eligibility</h3>
+  <div class="fms-scroll" tabindex="0" role="region" aria-label="Overlock and lien eligibility by unit"><table class="fms-table">
+    <thead><tr><th>Unit</th><th>Overlock</th><th>Lien eligibility</th><th></th></tr></thead>
+    <tbody>{% for u in col.units %}<tr>
+      <td>{{ u.unit }}</td>
+      <td><span class="chip {{ u.overlock.tone }}">{{ u.overlock.words }}</span>{% if u.overlock.why %} <span class="muted">{{ u.overlock.why }}</span>{% endif %}</td>
+      <td><span class="chip {{ u.lien.tone }}">{{ u.lien.words }}</span>{% if u.lien.why %} <span class="muted">{{ u.lien.why }}</span>{% endif %}</td>
+      <td class="num">{% if u.overlock.state in ('eligible', 'recorded') %}<form method="post" action="/tenants/{{ p.slug }}/collections">
+        <input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="lease" value="{{ u.lease }}">
+        {% if u.overlock.state == 'eligible' %}<button class="button primary" name="action" value="overlock" type="submit">Record an overlock</button>
+        {% else %}<button class="button" name="action" value="lift_overlock" type="submit">Lift the overlock</button>{% endif %}
+      </form>{% endif %}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  <p class="muted">The days come from the owner's schedule on the Rules page. Recording an overlock marks the unit in the FMS; staff put the lock on, and lift it only after a payment the card processor confirmed.</p>
+
+  <h3>Exemptions</h3>
+  {% for e in col.exemptions %}
+  <div class="fms-line fms-task">
+    <p>Unit {{ e.unit }}: {{ e.scope }} held until {{ e.until }}</p>
+    <p class="muted">{{ e.reason }}. Granted by the {{ e.owner }}.</p>
+    <form method="post" action="/tenants/{{ p.slug }}/collections"><input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="lease" value="{{ e.lease }}"><input type="hidden" name="exemption" value="{{ e.id }}"><button class="button" name="action" value="revoke_exemption" type="submit">Revoke</button></form>
+  </div>
+  {% else %}
+  <p class="muted">No exemption on this tenant's units.</p>
+  {% endfor %}
+  <form method="post" action="/tenants/{{ p.slug }}/collections" class="fms-exempt">
+    <input type="hidden" name="token" value="{{ token }}">
+    <label for="ex-unit">Grant an exemption</label>
+    <select id="ex-unit" name="lease" aria-label="Unit">{% for u in col.units %}<option value="{{ u.lease }}">Unit {{ u.unit }}</option>{% endfor %}</select>
+    <span class="fms-checks"><label><input type="checkbox" name="scope_overlock" value="1" checked> Overlock</label> <label><input type="checkbox" name="scope_lien" value="1" checked> Lien eligibility</label></span>
+    <input name="reason" aria-label="Reason" required minlength="3" maxlength="300" placeholder="Reason, for example: tenant in hospital until the 20th">
+    <input type="date" name="until" aria-label="Until" required min="{{ col.until_min }}" max="{{ col.until_max }}">
+    <button class="button" name="action" value="grant_exemption" type="submit">Grant</button>
+  </form>
+
+  {% if col.promises %}
+  <h3>Promises to pay</h3>
+  {% for x in col.promises %}<p class="fms-line">{{ x.amount }} by {{ x.by }}{% if x.quote %} <q>{{ x.quote }}</q>{% endif %} <span class="muted">Call back on {{ x.callback }} if it has not come.</span></p>{% endfor %}
+  <p class="muted">A promise brings a call-back. It does not hold the overlock.</p>
+  {% endif %}
+</section>
+{% endif %}
+
 {% if disputes %}
 <section class="fms-section" aria-labelledby="h-disputes">
   <h2 id="h-disputes">Open disputes</h2>

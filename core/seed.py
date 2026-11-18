@@ -11,8 +11,9 @@ import random
 import re
 from datetime import date, datetime, timedelta
 
+from . import delinquency as col
 from .billing import Ledger
-from .books import ADMIN_FEE, LATE_FEE, at_local
+from .books import ADMIN_FEE, LATE_FEE, LATE_FEE_CENTS, RENT, at_local, cutoff
 from .evidence import month_words
 
 SEED = 20261114
@@ -36,6 +37,12 @@ WAIVER_RULE = ("We waive one late fee per tenant in any rolling 12 months, up to
                "completed billing months before the fee. It may be offered when the tenant raises the fee.")
 WAIVER_TYPED = {"action": "waive_fee", "fee_kind": LATE_FEE, "per_tenant": 1, "within_days": 365, "cap_cents": 2500,
                 "on_time_months": 6, "only_when_raised": True}
+# the live copy's plan policy and schedule (the owner's settings, never law); the fixed books have neither
+PLAN_POLICY = {"min_tenure_days": 14, "max_debt_cents": 150000, "longest_days": 90, "most_instalments": 6, "min_upfront_cents": 5000,
+               "min_instalment_cents": 2500, "grace_days": 3}
+OVERLOCK_DAYS, LIEN_DAYS = 10, 45
+PLAN_CONSENT = "Yes, $50 today and the rest in three payments works for me."
+BREACHED_CONSENT = "OK, $50 now and five payments after that. I can do that."
 
 
 def months_between(a: date, b: date):
@@ -68,6 +75,8 @@ class Year:
         # everything up to the cutoff happens: 09:00 on the fixed day; the live FMS passes midnight, so nothing is ahead of the clock
         self.today, self.now = today, cutoff or at_local(today, 9, 0)
         self.standing = standing                         # the live copy's open dispute from last week; never in the fixed books
+        self.plan_tenant: dict | None = None             # the live copy's tenant on a payment plan; kept out of the cast
+        self.breached_tenant: dict | None = None         # the live copy's tenant whose plan breached; kept out of the cast
         self.story = story_month(today)                  # every date below is counted in months from this one
         self.opened = add_months(self.story, -12)
         self.rnd = random.Random(seed)
@@ -130,6 +139,9 @@ class Year:
         opened = self.opened
         led.set_up(at_local(opened - timedelta(days=10)), "Northstar Storage", "Orlando, FL", UNITS)
         led.adopt_rule(at_local(opened - timedelta(days=10), 9), "late_fee_waiver", 1, WAIVER_RULE, WAIVER_TYPED)
+        if self.standing:
+            col.adopt_policy(led, at_local(opened - timedelta(days=10), 9, 5), 1, PLAN_POLICY)
+            col.adopt_schedule(led, at_local(opened - timedelta(days=10), 9, 5), 1, OVERLOCK_DAYS, LIEN_DAYS)
         for i in range(78):        # the first tenants move in over the first two weeks
             day = opened + timedelta(days=i % 14)
             habit = self.rnd.choices(["on_time", "sometimes_late", "chronic"], [62, 28, 10])[0]
@@ -151,6 +163,9 @@ class Year:
                 done.add(n)
                 fn()
             day += timedelta(days=1)
+        if self.standing:
+            self.plan_breached()
+            self.on_a_plan()
         return self
 
     def plan_month(self, month: str, rnd: random.Random) -> None:
@@ -371,6 +386,89 @@ class Year:
         self.at(posted, post)
         self.at(disputed, lambda: led.open_dispute(disputed, self.cast["nora"]["fee"], STANDING_QUOTE, True, "staff:front_desk"))
 
+    # the live copy's tenants in collections -----------------------------------------------------------------------------
+    # Each story is written after the rest of the year, every event on its own date, in a unit nobody rents in that time: it takes
+    # nothing from the draws the year is made of, so every other tenant is as it would be without it.
+    def _newcomer(self, moved: datetime, name: str, phone: str, rent: int) -> tuple[str, str]:
+        b = self.led.books
+        busy = {x.unit for x in b.leases.values() if x.ended is None or x.ended >= moved.date()}
+        unit = next(u for u in sorted(UNITS, key=lambda u: u[0] != "B") if u not in busy)
+        t = self.led.add_tenant(moved - timedelta(minutes=5), name, phone)
+        lease = self.led.sign_lease(moved, t, unit, rent, list(SCHEDULE))
+        self.led.receive_payment(t, self.balance(t), moved + timedelta(minutes=10))
+        return t, lease
+
+    def _bills(self, lease: str, rent: int, months: range) -> list:
+        """Billing ran before the lease existed, so its rent (on the 1st) and late fees (from the 6th, when rent is still open)
+        are posted on their own days here."""
+        led, b = self.led, self.led.books
+
+        def post(month: str, first: datetime) -> None:
+            led._charge(first, lease, RENT, rent, f"rent:{lease}:{month}", first.date())
+
+        def fee(month: str) -> None:
+            if any(c.open_cents for c in b.live(f"rent:{lease}:{month}")):
+                led._charge(cutoff(month), lease, LATE_FEE, LATE_FEE_CENTS, f"late_fee:{lease}:{month}", cutoff(month).date())
+        steps = []
+        for n in months:
+            month = self.key(n)
+            steps += [(self.m(n, 1, 0), lambda month=month, first=self.m(n, 1, 0): post(month, first)), (cutoff(month), lambda month=month: fee(month))]
+        return steps
+
+    def _agree(self, t: str, when: datetime, instalments: int, consent: str) -> dict:
+        led = self.led
+        pid = col.propose(led, t, when, "operator")
+        o = col.put_offer(led, pid, instalments, None, when, "operator")
+        col.accept(led, pid, o["version"], consent, when, "operator")
+        led.receive_payment(t, o["upfront"], when + timedelta(minutes=20))
+        col.recheck(led, t, when + timedelta(minutes=20))
+        return {"plan": pid, "offer": o}
+
+    def _play(self, steps: list) -> None:
+        for when, step in sorted(steps, key=lambda s: s[0]):
+            if when <= self.now:
+                step()
+
+    def plan_breached(self) -> None:
+        """The live copy opens with one tenant whose plan already breached, so Today has an open staff task and her overlock waits
+        for staff. Rhea moves in two months before the story month; her card declines on the 2nd of the next month, the late fee
+        posts on the 6th, and on the 8th she accepts five instalments and pays the upfront part. She pays nothing more: the first
+        part, due on the 22nd, is missed, and the sweep breaches the plan when its grace days end. On any day the live copy can fall
+        on, that breach is behind her and at least one part is still ahead, so staff may reinstate the plan or end it."""
+        m = self.m
+        t, lease = self._newcomer(m(-2, 15), "Rhea Mills", "+14075550302", 16000)
+        self.breached_tenant = {"tenant": t, "leases": [lease], "name": "Rhea Mills", "phone": "+14075550302"}
+        when = m(-1, 8, 11)
+        first_due = when.date() + timedelta(days=col.STEP_DAYS)
+        sweep_at = at_local(first_due + timedelta(days=PLAN_POLICY["grace_days"] + 1), 6)
+        steps = self._bills(lease, 16000, range(-1, 2)) + [
+            (m(-1, 2, 9, 30), lambda: self.led.decline(m(-1, 2, 9, 30), t, 16000)),
+            (when, lambda: self.breached_tenant.update(self._agree(t, when, 5, BREACHED_CONSENT))),
+            (sweep_at, lambda: col.run_sweep(self.led, sweep_at))]
+        self._play(steps)
+
+    def on_a_plan(self) -> None:
+        """The live copy also opens with one tenant on a payment plan, so the overlock step is due and held by the plan on every
+        day. Iris moves in on the 23rd of the month before the story month; her card declines on the 2nd of the story month, the late
+        fee posts on the 6th, and on the 10th she accepts three instalments and pays the upfront part. She pays each part on its day.
+        On any day the live copy can fall on (the 11th of the story month to the 10th of the next) the story month's rent is still
+        partly open, 10 to 40 days past due: the overlock (10 days on the owner's schedule) is due and held, and lien eligibility
+        (45 days) is not yet due."""
+        m, led = self.m, self.led
+        t, lease = self._newcomer(m(-1, 23), "Iris Nolan", "+14075550301", 16000)
+        self.plan_tenant = {"tenant": t, "leases": [lease], "name": "Iris Nolan", "phone": "+14075550301"}
+        when = m(0, 10, 11)
+
+        def pay_part(k: int, due: datetime) -> None:
+            led.receive_payment(t, self.plan_tenant["offer"]["parts"][k]["cents"], due)
+            col.recheck(led, t, due)
+        steps = self._bills(lease, 16000, range(0, 2)) + [
+            (m(0, 2, 9, 30), lambda: led.decline(m(0, 2, 9, 30), t, 16000)),
+            (when, lambda: self.plan_tenant.update(self._agree(t, when, 3, PLAN_CONSENT)))]
+        for k in (1, 2, 3):                 # the parts fall every two weeks from the day she agreed
+            due = at_local(when.date() + timedelta(days=col.STEP_DAYS * k), 10, 30)
+            steps.append((due, lambda k=k, due=due: pay_part(k, due)))
+        self._play(steps)
 
 def build(seed: int = SEED, today: date = TODAY, cutoff: datetime | None = None, standing: bool = False) -> Year:
     return Year(seed, today, cutoff, standing).build()

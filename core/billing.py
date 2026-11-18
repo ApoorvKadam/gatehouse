@@ -162,15 +162,18 @@ class Ledger:
         n = len(self.books.declined) + 1
         self.emit("payment.declined", at, {"tenant": tenant, "cents": cents, "method": method}, f"declined:{tenant}:{n}", source="processor")
 
-    def receive_payment(self, tenant: str, cents: int, effective_at: datetime, known_at: datetime | None = None, method: str = "card") -> str:
+    def receive_payment(self, tenant: str, cents: int, effective_at: datetime, known_at: datetime | None = None, method: str = "card",
+                        ref: dict | None = None) -> str:
         """A payment the processor confirmed at `effective_at`, which we learned of at `known_at` (the same moment unless the
-        news came late). Its applications are written now and never moved afterwards."""
+        news came late). Its applications are written now and never moved afterwards. `ref` names the processor's own payment
+        and the copy it was made on, when it came through one."""
         if cents <= 0:
             raise Refused("a payment must be more than zero")
         p = self.books.next_id("P")
         apps, left = self._spread(tenant, cents)
         self.emit("payment.received", known_at or effective_at, {"payment": p, "tenant": tenant, "cents": cents, "method": method,
-                  "effective_at": effective_at.isoformat(), "applications": apps, "credit_cents": left}, f"payment:{p}", source="processor")
+                  "effective_at": effective_at.isoformat(), "applications": apps, "credit_cents": left, **(ref or {})}, f"payment:{p}",
+                  source="processor")
         return p
 
     def apply_credit(self, at: datetime, tenant: str) -> None:

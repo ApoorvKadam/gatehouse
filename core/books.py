@@ -19,6 +19,9 @@ FEE_KINDS = (LATE_FEE, ADMIN_FEE)
 LATE_FEE_CENTS, ADMIN_FEE_CENTS = 2000, 2500
 CUTOFF_DAY = 6          # the late fee is posted at 00:00 local on this day when rent due on the 1st is still unpaid
 REVIEW_DAYS = 10
+# the collections records (core/delinquency.py), folded into Books.collections
+COLLECTION_RECORDS = ("plan_policy", "schedule", "plan", "promise", "exemption", "overlock", "lien", "intent", "webhook", "notice",
+                      "task", "sweep", "reconcile")
 
 
 def local(t: datetime) -> datetime:
@@ -186,6 +189,7 @@ class Books:
         self.rules: dict[str, dict] = {}                  # rule id -> its latest version (sentence, typed form, version)
         self.rule_history: dict[str, list[dict]] = {}     # rule id -> every version that took effect, oldest first, with when it was adopted
         self.decisions: dict[str, dict] = {}              # command id -> the gate's recorded decision
+        self.collections = None                           # plans, promises, exemptions, payments in flight (core/delinquency.py)
         self.seq = 0
         self.last_at: datetime | None = None
         self.counters: dict[str, int] = {}
@@ -292,6 +296,9 @@ class Books:
                 d.hold = p["hold"]
                 self.holds[p["hold"]] = Hold(p["hold"], d.charge, d.id, date.fromisoformat(p["review_by"]))
                 self._seen("H", p["hold"])
+        elif kind.split(".", 1)[0] in COLLECTION_RECORDS:
+            from .delinquency import fold_event      # delinquency reads these books, so it cannot be imported at the top
+            fold_event(self, kind, at, p)
 
     # reads ------------------------------------------------------------------------------------------------------------
     def held(self, charge: str) -> bool:
