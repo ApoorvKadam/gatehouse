@@ -126,3 +126,39 @@ def test_a_promise_without_the_hand_over_its_set_needs_is_critical():
     item = next(i for i in DOC["practice"] if i["id"] == "p12")
     assert grade(item, ["record_promise:10000:2026-11-24"])["critical"] == ["record_promise:10000:2026-11-24"]
     assert grade(item, ["record_promise:10000:2026-11-24", "hand_to_staff"]) == {"id": "p12", "right": True, "critical": [], "got": ["record_promise:10000:2026-11-24", "hand_to_staff"]}
+
+
+def test_an_amount_written_without_a_dollar_sign_is_read_when_it_is_the_only_number_in_the_quote():
+    from core.reader import amount_in
+    assert amount_in("the 75") == 7500 and amount_in("100 today") == 10000 and amount_in("$70") == 7000 and amount_in("1,200.50") == 120050
+    assert amount_in("100 on December 1") == 10000 and amount_in("the 75 on the 19th") == 7500
+    assert amount_in("I can pay 100.") == 10000 and amount_in("50.50 today") == 5050
+    for not_money in ("2 payments", "in 14 days", "5:30", "12/1", "the 19th", "soon", "3 times", "50%", "on the 19", "by the 5", "Dec 2",
+                      "December 10", "in 2026", "Plan 2", "unit 335", "the 1st of 3", "#4", "100 or 150", "a payment of 30", "50.5%", "1.5 payments", "19 November",
+                      "apartment 335"):
+        assert amount_in(not_money) is None, not_money
+    text = "I didn't forget the 75. I can pay that installment on the 19th."
+    raw = {"kind": "promise", "quote": text, "promise_amount_quote": "the 75", "promise_day_quote": "the 19th", "flags": []}
+    r = check(raw, text, [], TODAY)
+    assert r.promise_cents == 7500 and r.promise_day == date(2026, 11, 19) and not r.dropped
+
+
+def test_staff_see_what_a_plan_reply_was_read_as_with_the_words_only_when_they_are_in_the_message():
+    from core.plan_reading import said
+    text = "I agree to Plan 2"
+    assert said(Reading("accept", text, "Plan 2", text_seen=text)) == {"what": "agreed to Plan 2", "quote": text}
+    assert said(Reading("accept", "I accept plan two please", None, text_seen=text))["quote"] is None
+    assert said(Reading("promise", "70 Friday", promise_cents=7000, promise_day=date(2026, 11, 20), flags=["unsure"], text_seen="70 Friday"))["what"] == \
+        "promised $70.00 by Nov 20, but not for certain"
+    assert said(Reading("other", text_seen=text)) is None and said(None) is None
+
+
+def test_a_bare_number_the_message_uses_in_a_date_is_never_an_amount():
+    text = "I can pay on 19 November"
+    for quote in ("19 November", "19"):
+        raw = {"kind": "promise", "quote": text, "promise_amount_quote": quote, "promise_day_quote": "19 November", "flags": []}
+        r = check(raw, text, [], TODAY)
+        assert r.promise_cents is None and r.promise_day == date(2026, 11, 19), quote
+    text = "I can send 1,200.50 on the 19th"
+    r = check({"kind": "promise", "quote": text, "promise_amount_quote": "1,200.50", "promise_day_quote": "the 19th", "flags": []}, text, [], TODAY)
+    assert r.promise_cents == 120050 and not r.dropped
