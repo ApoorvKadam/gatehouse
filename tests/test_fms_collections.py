@@ -163,3 +163,26 @@ def test_no_record_id_or_test_wording_on_the_collections_pages(fms_url, sim):
             text = seen(c.get(url).text)
             assert not re.search(r"\b(?:PL|PR|EX|PI|TK|L|T|C)\d{4}\b", text), url
             assert not re.search(r"simulat|sim_pay|test mode", text, re.I), url
+
+
+def test_today_lists_every_due_overlock_and_records_one_from_the_list(fms_url, sim):
+    with sign_in(site(fms_url)) as c:
+        page = c.get("/today").text
+        text = seen(page)
+        assert "Overlocks due on the owner's schedule" in text
+        assert "The owner's schedule makes an overlock due 10 days after the due date." in text
+        due = re.findall(r'name="lease" value="([A-Z0-9]+)"><input type="hidden" name="next" value="today">', page)
+        assert len(due) >= 2
+        section = lambda t: t.split("Overlocks due on the owner's schedule")[1].split("Handed to staff")[0]
+        assert "Tom Becker" in section(text) and "Record an overlock" in section(text)
+        assert "Iris Nolan" not in section(text)     # held by her plan
+        home = seen(c.get("/home").text)
+        assert f"{len(due)} overlocks due on the owner's schedule" in home
+        tom = record_of(c, "Tom Becker").rstrip("/")
+        lease = re.search(r'>Tom Becker</a></td>\s*<td>[A-Z0-9]+</td>.*?name="lease" value="([A-Z0-9]+)"', page, re.S).group(1)
+        r = c.post(tom + "/collections", data={"token": token(page), "action": "overlock", "lease": lease, "next": "today"}, follow_redirects=False)
+        assert (r.status_code, r.headers["location"]) == (303, "/today#overlocks")
+        after = seen(c.get("/today").text)
+        assert "Tom Becker" not in section(after) and "Nothing changed" not in after
+        assert f"{len(due) - 1} overlock" in seen(c.get("/home").text)
+        assert "Recorded Since" in seen(c.get(tom).text)

@@ -45,6 +45,25 @@
   {% endfor %}
 </section>
 
+<section class="fms-section" id="overlocks" aria-labelledby="h-overlocks">
+  <h2 id="h-overlocks">Overlocks due on the owner's schedule</h2>
+  {% if step_note %}<p class="fms-status" role="status">Nothing changed. {{ step_note }}</p>{% endif %}
+  {% if overlocks %}
+  <p class="muted">The owner's schedule makes an overlock due {{ overlock_days }} days after the due date. Nothing holds these: no payment plan, exemption or open dispute. Recording an overlock marks the unit in the FMS; staff put the lock on.</p>
+  <div class="fms-scroll" tabindex="0" role="region" aria-label="Overlocks due"><table class="fms-table">
+    <thead><tr><th>Tenant</th><th>Unit</th><th>Days past due</th><th></th></tr></thead>
+    <tbody>{% for o in overlocks %}<tr>
+      <td><a href="/tenants/{{ o.who.slug }}#collections">{{ o.who.name }}</a></td>
+      <td>{{ o.unit }}</td>
+      <td class="num">{{ o.days }}</td>
+      <td class="num"><form method="post" action="/tenants/{{ o.who.slug }}/collections"><input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="lease" value="{{ o.lease }}"><input type="hidden" name="next" value="today"><button class="button primary" name="action" value="overlock" type="submit">Record an overlock</button></form></td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}
+  <p class="muted">No overlock is due.</p>
+  {% endif %}
+</section>
+
 {% set handed = cases|selectattr('handed')|list %}
 <section class="fms-section" aria-labelledby="h-handed">
   <h2 id="h-handed">Handed to staff</h2>

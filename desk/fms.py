@@ -307,6 +307,18 @@ class Facility:
         return [{"id": k.id, "who": self.people[k.tenant], "what": TASK_WORDS.get(k.kind, upfirst(k.kind)), "why": plain(upfirst(k.why)),
                  "since": dated(k.due, self.today.year)} for k in col.open_tasks(self.b)]
 
+    def overlocks_due(self) -> list[dict]:
+        """Every rented unit whose overlock is due on the owner's schedule with nothing holding it, longest past due first, so a due
+        step reaches staff on Today instead of waiting unseen on the tenant's page."""
+        rows = []
+        for x in self.b.leases.values():
+            if x.ended is None:
+                o = self.steps(x)["overlock"]
+                if o["state"] == "eligible":
+                    rows.append({"who": self.people[x.tenant], "unit": x.unit, "lease": x.id, "days": col.days_past_due(self.b, x.id, self.now),
+                                 "why": o["why"]})
+        return sorted(rows, key=lambda r: (-r["days"], r["unit"]))
+
     def steps(self, lease) -> dict:
         """The overlock and lien-eligibility steps on one unit: the state in words and why, from the same check the gate makes."""
         st, out = col.state(self.b), {}
@@ -551,14 +563,16 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
         morning = [c for c in cases if c["shift"]]
         return show(request, "fms_home.html", "home", f, rows=f.occupancy(), month=f.month(month_key(f.today)), past=f.past_due(),
                     waiting=len(f.waiting(cases)), handed=sum(1 for c in cases if c["handed"]), disputes=len(f.disputes()), tasks=len(f.collection_tasks()),
-                    morning=len(SHIFT), closed=sum(1 for c in morning if not c["handed"]))
+                    overlocks=len(f.overlocks_due()), morning=len(SHIFT), closed=sum(1 for c in morning if not c["handed"]))
 
     @app.get("/today", include_in_schema=False)
     def today(request: Request):
-        f = Facility(fd, need(request))
+        ident = need(request)
+        f = Facility(fd, ident)
         cases = f.cases()
         return show(request, "fms_today.html", "today", f, cases=cases, waiting=f.waiting(cases), disputes=f.disputes(), decisions=f.decisions(),
-                    tasks=f.collection_tasks())
+                    tasks=f.collection_tasks(), overlocks=f.overlocks_due(), overlock_days=(col.state(f.b).schedule or {}).get("overlock_days"),
+                    token=secrets.token_hex(6), step_note=plain(fd.take_step_note(ident)))
 
     @app.get("/messages", include_in_schema=False)
     def messages(request: Request, case: int | None = None, unread: str | None = None):
@@ -719,6 +733,8 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
         cmd = Command(f"form:{token}:{action}:{target}", action, p["id"], STAFF, lease=data.get("lease", "")[:12] or None,
                       plan=data.get("plan", "")[:12] or None, form=typed, reason=reason or None)
         await run_in_threadpool(fd.staff_step, ident, cmd)
+        if data.get("next") == "today" and action == "overlock":
+            return RedirectResponse("/today#overlocks", status_code=303)       # pressed on Today's list: back to the list
         return RedirectResponse(f"/tenants/{key}#collections", status_code=303)
 
     @app.post("/rules/plan-policy", include_in_schema=False)
