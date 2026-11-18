@@ -766,6 +766,7 @@ def create_app(settings: Settings | None = None, adapter: FMSAdapter | None = No
         front_desk = app.state.front_desk = FrontDesk(core_path, chat_client)
         mount_fms(app, front_desk, settings, guard, from_elsewhere, factory, live=chat_client is not None and settings.public_investigate)
         if start_worker:
-            # the year is built while the site starts, so no visitor waits for it on their first page
-            threading.Thread(target=front_desk.ready, name="core-seed", daemon=True).start()
+            # the year is built while the site starts, so no visitor waits for it on their first page; the same thread then sweeps
+            # the visitor copies for collections at boot and every hour
+            threading.Thread(target=front_desk.serve, name="core-seed", daemon=True).start()
     return app

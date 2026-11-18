@@ -32,6 +32,19 @@
   {% endfor %}
 </section>
 
+<section class="fms-section" id="collections" aria-labelledby="h-collections">
+  <h2 id="h-collections">Collections waiting for staff</h2>
+  {% for k in tasks %}
+  <article class="fms-line fms-task">
+    <p><a href="/tenants/{{ k.who.slug }}#collections">{{ k.who.name }}</a> <span class="chip act">{{ k.what }}</span> <span class="muted">since {{ k.since }}</span></p>
+    <p class="muted">{{ k.why }}{{ '' if k.why.endswith('.') else '.' }}</p>
+    <form method="post" action="/collections/acknowledge"><input type="hidden" name="task" value="{{ k.id }}"><button class="button" type="submit">Acknowledge</button></form>
+  </article>
+  {% else %}
+  <p class="muted">Nothing in collections is waiting for staff.</p>
+  {% endfor %}
+</section>
+
 {% set handed = cases|selectattr('handed')|list %}
 <section class="fms-section" aria-labelledby="h-handed">
   <h2 id="h-handed">Handed to staff</h2>

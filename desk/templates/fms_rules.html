@@ -51,6 +51,41 @@
       <div><dt>A dispute</dt><dd>Reviewed by the office manager within {{ review_days }} days; a fee the tenant never signed for is not collected meanwhile</dd></div>
     </dl>
   </section>
+  <section class="panel" id="plan-policy" aria-labelledby="h-policy">
+    <h2 id="h-policy">Payment plans{% if policy and policy.version > 1 %} <span class="chip done">Policy version {{ policy.version }}</span>{% endif %}</h2>
+    {% if policy %}
+    <dl class="fms-defs">
+      <div><dt>Who may have one</dt><dd>Tenants who have rented at least {{ policy.min_tenure_days }} days and owe at most {{ money(policy.max_debt_cents) }}</dd></div>
+      <div><dt>Longest plan</dt><dd>{{ policy.longest_days }} days, with at most {{ policy.most_instalments }} payments after the first, two weeks apart</dd></div>
+      <div><dt>First payment</dt><dd>At least {{ money(policy.min_upfront_cents) }}, due the day the tenant agrees</dd></div>
+      <div><dt>Each later payment</dt><dd>At least {{ money(policy.min_instalment_cents) }}</dd></div>
+      <div><dt>Grace</dt><dd>{{ policy.grace_days }} days after each due date before a payment counts as missed</dd></div>
+    </dl>
+    {% else %}<p class="muted">No plan policy is set, so no payment plan is offered.</p>{% endif %}
+    <p class="muted">Code works out every plan offered from these settings, to the cent. {{ agent }} never changes a term, and a plan starts only when the tenant accepts it in their own words.</p>
+    <details class="fms-change"><summary>Change the plan policy</summary>
+      <form method="post" action="/rules/plan-policy" class="fms-settings">
+        {% for x in policy_fields %}<label for="pp-{{ x.key }}">{{ x.label }}</label><input id="pp-{{ x.key }}" name="{{ x.key }}" type="number" required step="1" min="{{ x.min }}" max="{{ x.max }}" value="{{ x.value if x.value is not none else '' }}"><span class="muted">{{ x.unit }}</span>
+        {% endfor %}<button class="button primary" type="submit">Adopt as the owner</button>
+      </form>
+    </details>
+  </section>
+  <section class="panel" id="schedule" aria-labelledby="h-schedule">
+    <h2 id="h-schedule">Overlock and lien eligibility{% if schedule and schedule.version > 1 %} <span class="chip done">Schedule version {{ schedule.version }}</span>{% endif %}</h2>
+    {% if schedule %}
+    <dl class="fms-defs">
+      <div><dt>Overlock</dt><dd>{{ schedule.overlock_days }} days after the due date</dd></div>
+      <div><dt>Lien eligibility</dt><dd>{{ schedule.lien_days }} days after the due date</dd></div>
+    </dl>
+    {% else %}<p class="muted">No schedule is set, so neither step comes due.</p>{% endif %}
+    <p class="muted">These are the owner's settings, not legal deadlines. A payment plan in good standing, an exemption or an open dispute on the unit holds both steps; a breached plan holds them until staff decide.</p>
+    <details class="fms-change"><summary>Change the schedule</summary>
+      <form method="post" action="/rules/schedule" class="fms-settings">
+        {% for x in schedule_fields %}<label for="sc-{{ x.key }}">{{ x.label }}</label><input id="sc-{{ x.key }}" name="{{ x.key }}" type="number" required step="1" min="{{ x.min }}" max="{{ x.max }}" value="{{ x.value if x.value is not none else '' }}"><span class="muted">days after the due date</span>
+        {% endfor %}<button class="button primary" type="submit">Adopt as the owner</button>
+      </form>
+    </details>
+  </section>
   {% if waiver %}
   <section class="panel" aria-labelledby="h-owner">
     <h2 id="h-owner">The owner's waiver rule{% if waiver.version > 1 %} <span class="chip done">Version {{ waiver.version }}</span>{% endif %}</h2>

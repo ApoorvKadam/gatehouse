@@ -4,12 +4,14 @@
 writer: inside one write transaction it folds the current state, runs the same checks in the same order, and either records
 the action with its money, or records the refusal with the check that refused it. A command id makes a retry return the first
 decision. The checks, in order: the action exists and is in scope; safety (fixed in code); the owner's rules; disputes and
-holds."""
+holds. Collections commands (plans, promises, exemptions, the overlock and lien-eligibility steps) run the same order in
+core/delinquency.py, whose last check is the hold on the whole tenancy."""
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 
+from . import delinquency
 from .billing import Ledger
 from .books import FEE_KINDS, LATE_FEE, RENT, Books, cutoff, fold, local
 from .store import Store
@@ -36,6 +38,10 @@ class Command:
     claim_kind: str | None = None   # what the reader said the tenant claims, for the owner's staff rules
     flags: tuple[str, ...] = ()     # the reader's flags for the whole message
     units: int = 1                  # how many units the message's claims are about
+    lease: str | None = None        # the unit an overlock, lien-eligibility or exemption command is about
+    plan: str | None = None
+    offer: str | None = None        # the offer version a tenant accepts
+    form: dict | None = None        # the typed form a collections command carries (instalments, promise, exemption, review)
 
 
 @dataclass
@@ -146,7 +152,7 @@ def evaluate(books: Books, cmd: Command, now: datetime) -> Decision:
     d = lambda ok, check, rule=None, hold=False: Decision(ok, cmd.action, check, rule, hold, cmd.id)
     staff = cmd.source.startswith("staff:")
     # 1. exists and in scope
-    if cmd.action not in ACTIONS + STAFF_ACTIONS:
+    if cmd.action not in ACTIONS + STAFF_ACTIONS + delinquency.ACTIONS:
         return d(False, "not an action the system knows")
     if cmd.action in STAFF_ACTIONS and not staff:
         return d(False, "only staff decide a dispute")
@@ -159,6 +165,8 @@ def evaluate(books: Books, cmd: Command, now: datetime) -> Decision:
             return d(False, hit[0], hit[1])
     if cmd.tenant not in books.tenants:
         return d(False, "no identified tenant, so nothing on any account changes")
+    if cmd.action in delinquency.ACTIONS:
+        return d(*delinquency.check(books, cmd, now))
     ch = books.charges.get(cmd.charge or "")
     if ch is None:
         return d(False, "no such charge")
@@ -222,6 +230,8 @@ def evaluate(books: Books, cmd: Command, now: datetime) -> Decision:
         if not staff and any(x.charge == ch.id and x.outcome is not None for x in books.disputes.values()):
             return d(False, "staff already decided a dispute on this charge; only staff reopen it, with new evidence")
         hold = ch.kind in FEE_KINDS and ch.kind not in lease.schedule
+        if not hold and delinquency.in_plan(books, ch.id):
+            return d(True, "dispute recorded and held: the charge is in a payment plan, so its collection waits for staff", hold=True)
         return d(True, "dispute recorded and held: the fee is not in the tenant's signed schedule" if hold
                  else "dispute recorded for staff; the records back the charge, so collection is not held", hold=hold)
     return d(True, "the records support it")
@@ -264,10 +274,13 @@ def execute(store: Store, stream: str, cmd: Command, now: datetime) -> Decision:
                 led.waive(now, cmd.charge, dec.check, cmd.source, command=cmd.id)
             elif cmd.action == "open_dispute":
                 led.open_dispute(now, cmd.charge, cmd.quote, dec.hold, cmd.source, command=cmd.id)
+            elif cmd.action in delinquency.ACTIONS:
+                delinquency.act(led, cmd, now)
             elif cmd.action == "remove_disputed_fee":
                 led.reverse(now, cmd.charge, "not in the signed schedule", cmd.source, command=cmd.id)
                 led.decide_dispute(now, open_dispute_on(books, cmd.charge).id, "fee removed: not in the signed schedule",
                                    cmd.source.removeprefix("staff:"))
+            delinquency.recheck(led, cmd.tenant, now)           # a waiver, reversal or dispute may change a plan's standing
         record = {**{k: v for k, v in asdict(cmd).items() if v is not None}, "command": cmd.id, "allowed": dec.allowed, "check": dec.check,
                   "rule": dec.rule, "hold": dec.hold}
         led.emit("gate.decided", now, record, f"gate:{cmd.id}", source=cmd.source, command=cmd.id)
