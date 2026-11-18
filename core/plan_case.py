@@ -4,7 +4,7 @@ staff, and the tenant is past due or has plans offered or a plan open."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from . import delinquency as col
 from . import plan_reading as pr
@@ -118,7 +118,8 @@ STAFF_WORDS = {"someone_else": "it is about someone else's account", "access": "
              "instructions_to_system": "it has words aimed at the system"}
 
 
-def reply(books: Books, tenant: str, acts: list[str], handed: str | None, now: datetime, outcomes: list[dict] | None = None) -> str:
+def reply(books: Books, tenant: str, acts: list[str], handed: str | None, now: datetime, outcomes: list[dict] | None = None,
+          reading: pr.Reading | None = None) -> str:
     """The reply, written by code from what was recorded: the plans put to the tenant, the plan agreed, the promise noted, or a
     plain question when nothing could be taken as agreement."""
     name = books.tenants[tenant].name.split()[0]
@@ -147,6 +148,12 @@ def reply(books: Books, tenant: str, acts: list[str], handed: str | None, now: d
     if first == "record_promise":
         _, cents, by = acts[0].split(":")
         return f"Hi {name}, noted: {money(int(cents))} by {day(date.fromisoformat(by))}. We will check in the day after if it has not arrived."
+    if reading is not None and reading.kind == "promise":         # a promise not taken is asked about as a promise, not as a plan
+        limit = local(now).date() + timedelta(days=pr.PROMISE_DAYS)
+        if reading.promise_day and reading.promise_day > limit:
+            return f"Hi {name}, a promise to pay can be noted for a day up to {day(limit)}. Reply with the amount and a day by then."
+        ex = f' For example: "I will pay {money(reading.promise_cents)} by {day(reading.promise_day)}".' if reading.promise_cents and reading.promise_day else ""
+        return f"Hi {name}, to note a promise to pay, reply with the amount and the day you will pay.{ex}"
     if p.ctx.offered:
         return f"Hi {name}, to set up a plan, reply with the plan you choose: " + ", ".join(label for label, _, _ in p.ctx.offered) + "."
     return f"Hi {name}, to note a promise to pay, reply with the amount and the day you will pay."

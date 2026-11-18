@@ -39,6 +39,34 @@ def read_amount(quote: str) -> int | None:
     return _cents(m.group(1), m.group(2)) if m else None
 
 
+BARE = re.compile(r"(?<![\d.,/:$#])\b(\d[\d,]*)(?:\.(\d{1,2}))?\b(?![\d/:]|\.\d|\s*(?:%|st\b|nd\b|rd\b|th\b|[ap]\.?m\b|days?\b|weeks?\b|"
+                  r"months?\b|years?\b|hours?\b|minutes?\b|payments?\b|instal+ments?\b|parts?\b|times?\b|x\b|(?:of\s+)?" + _MONTH + r"\b))", re.I)
+NOT_MONEY_BEFORE = re.compile(rf"\b(?:plan|option|unit|units|number|no|door|space|apt|apartment|room|locker|suite|{_MONTH})\.?\s*$", re.I)
+DAY_BEFORE = re.compile(r"\b(?:the|on|by|until|till|til|before|after|of)\s*$", re.I)
+
+
+def bare_amount(quote: str) -> tuple[int, str] | None:
+    """The one bare number in a short amount quote ("the 75", "100 today"), in cents, with the digits it was read from. A number
+    that names a plan, a unit, a date ("Dec 2", "19 November", "on the 19", "in 2026"), or counts days, payments or a time is not
+    money; with no number or two left, there is none."""
+    hits = []
+    for m in BARE.finditer(quote):
+        before, whole = quote[:m.start()], int(m.group(1).replace(",", ""))
+        if NOT_MONEY_BEFORE.search(before) or (not m.group(2) and (1900 <= whole <= 2100 or (whole <= 31 and DAY_BEFORE.search(before)))):
+            continue
+        hits.append(m)
+    return (_cents(hits[0].group(1), hits[0].group(2)), hits[0].group(0)) if len(hits) == 1 else None
+
+
+def amount_in(quote: str) -> int | None:
+    """read_amount, and also the one bare number in a short amount quote; otherwise nothing, and the reply is asked again."""
+    cents = read_amount(quote)
+    if cents is not None:
+        return cents
+    bare = bare_amount(quote)
+    return bare[0] if bare else None
+
+
 def _back(today: date, month: int, day: int, year: int | None, ahead: bool = False) -> date | None:
     """A date without a year is the most recent one not after today; ahead (a promise to pay), the next one not before today."""
     try:

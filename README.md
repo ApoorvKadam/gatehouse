@@ -63,10 +63,15 @@ Replies about paying overdue rent in parts were scored the same way, on 40 tenan
 
 | Approach | Right, average of 10 runs | Range | Serious errors in any run |
 |---|---|---|---|
-| Tilden reads, code decides | 34.6 of 40 | 33 to 35 | 0 |
+| Tilden reads, code decides | 36.4 of 40 | 35 to 37 | 0 |
 | A keyword workflow, same accounts | 27 of 40 | 27 | 2 |
 
-A serious error is a plan accepted or a promise recorded that the tenant never clearly gave, the wrong plan or day, or any step on someone else's account. The keyword workflow accepted "I'll take option 3" as the one plan offered and took "$75 today" as a promise. This measures the reading and code's decision on each message's stated account; it did not run through the books. The first ten runs gave 35.8. Review then made the rules stricter: a promise with a condition is asked again, a yes must point at exactly one plan, and a wrong plan or day counts as serious. These are the ten runs after that change. Five messages were wrong in most runs. In three, the tenant wrote an amount without a dollar sign ("the 75", "100 today"), so code could not confirm it and asked again. In one, "please write that down" was read as words aimed at the system and sent to staff. In one, a promise tied to a bonus was read as conditional and asked again. Reading a reply costs about 0.03 cents.
+A serious error is a plan accepted or a promise recorded that the tenant never clearly gave, the wrong plan or day, or any step on someone else's account. The keyword workflow accepted "I'll take option 3" as the one plan offered and took "$75 today" as a promise. This measures the reading and code's decision on each message's stated account; it did not run through the books. The first ten runs gave 35.8. Review then made the rules stricter: a promise with a condition is asked again, a yes must point at exactly one plan, and a wrong plan or day counts as serious. Ten runs after that gave 34.6. In three of the five messages wrong in most runs, the tenant wrote an amount without a dollar sign ("the 75", "100 today"). Code now reads such an amount when it is the only number in the tenant's quoted words, and never a number that names a date, a plan or a unit. A check on a local copy also showed a plain "I'll send $70 Friday" read as unsure, so the instructions now say that a plain "I'll send" is not unsure. The table shows the ten runs after both changes. Because the first change came from these 40 messages, they are no longer a fresh test. Three messages are still wrong in most runs:
+- "Please write that down" was read as words aimed at the system and sent to staff.
+- "Can you note that?" after a promise tied to a bonus was read the same way, and the promise as conditional.
+- In "the 75 ... on the 19th", code could not confirm the day, so it asked again.
+
+Reading a reply costs about 0.03 cents.
 
 ## The books
 

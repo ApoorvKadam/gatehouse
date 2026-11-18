@@ -65,6 +65,7 @@ def test_asking_for_a_plan_offers_every_plan_the_policy_allows_and_agreeing_to_p
     plan = col.state(store.books("visitor:p1")).plans[plan.id]
     assert plan.state in ("accepted", "active") and plan.consent["quote"] == yes and plan.consent["version"] == plan.offered[1]["version"]
     assert "your plan is agreed" in r2.reply
+    assert r2.plan_read == {"what": "agreed to Plan 2", "quote": yes}
 
 
 def test_an_unsure_yes_or_an_unknown_plan_changes_nothing(world):
@@ -90,6 +91,14 @@ def test_a_promise_with_a_day_is_recorded_and_one_without_is_asked_again(world):
                client=Script(NO_CLAIMS, plan_reading(kind="promise", quote=text, promise_amount_quote="$70", promise_day_quote="tomorrow")))
     assert [o["action"] for o in r.plan] == ["record_promise"] and r.plan[0]["allowed"], r.plan
     assert any(p.tenant == t and p.cents == 7000 for p in col.state(store.books("visitor:p6")).promises.values())
+    maybe = "I'll probably send $70 Friday"
+    r = handle(store, "visitor:p6", "p6b", phone, maybe, OPERATOR, NOW, client=Script(NO_CLAIMS, plan_reading(
+        kind="promise", quote=maybe, promise_amount_quote="$70", promise_day_quote="Friday", flags=["unsure"])))
+    assert r.plan == [] and "to note a promise to pay" in r.reply and "Plan 1" not in r.reply and 'I will pay $70.00 by' in r.reply, r.reply
+    late = "I will pay $70 on December 25"
+    r = handle(store, "visitor:p6", "p6c", phone, late, OPERATOR, NOW, client=Script(NO_CLAIMS, plan_reading(
+        kind="promise", quote=late, promise_amount_quote="$70", promise_day_quote="December 25")))
+    assert r.plan == [] and "up to" in r.reply and "I will pay" not in r.reply, r.reply
     vague = "I'll pay early next month"
     r = handle(store, "visitor:p6", "p7", phone, vague, OPERATOR, NOW, client=Script(NO_CLAIMS, plan_reading(kind="promise", quote=vague)))
     assert r.plan == [] and "the amount and the day" in r.reply
