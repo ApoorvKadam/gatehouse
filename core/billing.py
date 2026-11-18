@@ -6,6 +6,7 @@ computed here, never taken from a model."""
 from __future__ import annotations
 
 import calendar
+from copy import deepcopy
 from datetime import date, datetime, timedelta
 
 from .books import (ADMIN_FEE, ADMIN_FEE_CENTS, FEE_KINDS, LATE_FEE, LATE_FEE_CENTS, RENT, REVIEW_DAYS, Books, at_local, cutoff,
@@ -33,9 +34,10 @@ class Ledger:
     def set_up(self, at: datetime, name: str, city: str, units: list[str]) -> None:
         self.emit("facility.set_up", at, {"name": name, "city": city, "time_zone": "America/New_York", "units": units}, "facility")
 
-    def adopt_rule(self, at: datetime, rule: str, version: int, sentence: str, typed: dict, by: str = "owner") -> None:
+    def adopt_rule(self, at: datetime, rule: str, version: int, sentence: str, typed: dict, by: str = "owner",
+                   restores: int | None = None) -> None:
         """Record an owner rule. Only the owner adopts rules (step 2 adds the approval path); the typed form is checked here so a
-        rule outside the platform's bounds is never stored."""
+        rule outside the platform's bounds is never stored. `restores` names the earlier version a going back repeats."""
         if by != "owner":
             raise Refused("only the owner adopts rules")
         current = self.books.rules.get(rule, {}).get("version", 0)
@@ -67,8 +69,23 @@ class Ledger:
                 raise Refused("a staff rule needs at least one condition")
         else:
             raise Refused("not a kind of rule the platform knows")
-        self.emit("rule.adopted", at, {"rule": rule, "version": version, "sentence": sentence, "typed": typed, "by": by},
-                  f"rule:{rule}:{version}", source=by)
+        payload = {"rule": rule, "version": version, "sentence": sentence, "typed": typed, "by": by}
+        if restores is not None:
+            payload["restores"] = restores
+        self.emit("rule.adopted", at, payload, f"rule:{rule}:{version}", source=by)
+
+    def restore_rule(self, at: datetime, rule: str, version: int, by: str = "owner") -> None:
+        """Go back to an earlier version: its typed form is adopted again as the next version, so history is never rewritten.
+        Refused for anyone but the owner, for a version that was never adopted, and for one that says what is in force already."""
+        if by != "owner":
+            raise Refused("only the owner can go back to an earlier version")
+        held = self.books.rules.get(rule)
+        old = next((h for h in self.books.rule_history.get(rule, []) if h["version"] == version), None)
+        if held is None or old is None:
+            raise Refused(f"there is no version {version} of that rule")
+        if old["typed"] == held["typed"]:
+            raise Refused("that version already says what is in force")
+        self.adopt_rule(at, rule, held["version"] + 1, old["sentence"], deepcopy(old["typed"]), by, restores=version)
 
     def add_tenant(self, at: datetime, name: str, phone: str) -> str:
         t = self.books.next_id("T")

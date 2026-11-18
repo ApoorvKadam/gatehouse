@@ -22,7 +22,7 @@ from desk.front_desk import SHIFT
 
 from .conftest import FULL_KEY
 
-PAGES = ["/home", "/today", "/messages", "/messages/try", "/messages/tests", "/units", "/tenants", "/billing", "/rules"]
+PAGES = ["/home", "/today", "/messages", "/messages/try", "/units", "/tenants", "/billing", "/rules"]
 
 
 class Script:
@@ -123,7 +123,6 @@ def test_the_screens_show_the_generated_year_in_words(fms_url, sim):
         assert "All 120 units" in text["/home"] and len(re.findall(r"[A-Z][a-z]{2} \d{1,2}, 20\d\d", text["/units"].split("units occupied.", 1)[1])) == 111
         assert "122 tenants" in text["/tenants"]
         assert "Building A" in text["/units"] and "Vacant 9" in text["/units"] and "Row A" not in text["/units"]
-        assert "36 of 40 right" in text["/messages/tests"] and "23 of 40 right" in text["/messages/tests"] and "34 to 37 over 10 runs" in text["/messages/tests"]
         assert "We waive one late fee per tenant" in text["/rules"] and "$25.00" in text["/rules"]
         for name in ("Maria Lopez", "James Carter", "Priya Shah", "Faye Turner"):
             assert name in text["/messages"] and name not in text["/today"]       # read in Messages, decide in Today

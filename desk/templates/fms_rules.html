@@ -1,5 +1,18 @@
 {% extends "fms.html" %}
 {% block page %}Rules{% endblock %}
+{% macro versions(rows) %}
+    <h3 class="fms-versions-head">Versions</h3>
+    <ol class="fms-versions">
+      {% for v in rows %}
+      <li>
+        <p class="fms-card-head"><b>Version {{ v.version }}</b>{% if v.now %}<span class="chip done">In force</span>{% endif %}<span class="muted">Adopted {{ v.when }} by the {{ v.by }}{% if v.restores %}, going back to version {{ v.restores }}{% endif %}.</span></p>
+        {% if not v.now %}<ul class="fms-may">{% for w in v.words %}<li><span>{{ w }}</span></li>{% endfor %}</ul>{% endif %}
+        {% if not v.same %}<form method="post" action="/rules/restore"><input type="hidden" name="rule" value="{{ v.rule }}"><input type="hidden" name="version" value="{{ v.version }}"><button class="button" type="submit">Go back to this version</button></form>
+        {% elif not v.now %}<p class="muted">This version says the same as the one in force.</p>{% endif %}
+      </li>
+      {% endfor %}
+    </ol>
+{% endmacro %}
 {% block body %}
 <header class="head">
   <h1>Rules</h1>
@@ -27,6 +40,7 @@
     </form>
   </article>
 </section>
+{% if note %}<p class="fms-status" role="status">Nothing changed. {{ note }}</p>{% endif %}
 <div class="fms-grid" id="in-force">
   <section class="panel" aria-labelledby="h-fees">
     <h2 id="h-fees">Fees and schedule</h2>
@@ -44,6 +58,7 @@
     <ul class="fms-may">{% for w in waiver_words %}<li><span>{{ w }}</span></li>{% endfor %}</ul>
     <p class="muted">The exact form code checks before any waiver is written:</p>
     <dl class="fms-defs">{% for k, v in typed %}<div><dt>{{ k|upfirst }}</dt><dd>{{ v }}</dd></div>{% endfor %}</dl>
+    {% if waiver_versions %}{{ versions(waiver_versions) }}{% endif %}
   </section>
   {% endif %}
   {% if staff_rule %}
@@ -51,6 +66,7 @@
     <h2 id="h-staff-rule">Sent to staff by the owner's rule <span class="chip done">Version {{ staff_rule.version }}</span></h2>
     <blockquote class="fms-rule">{{ staff_rule.sentence }}</blockquote>
     <ul class="fms-may">{% for w in staff_rule_words %}<li><span>{{ w }}</span></li>{% endfor %}</ul>
+    {% if staff_versions %}{{ versions(staff_versions) }}{% endif %}
   </section>
   {% endif %}
   <section class="panel" aria-labelledby="h-agent">
