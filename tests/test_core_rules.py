@@ -1,6 +1,7 @@
 """The owner-rule compiler's checks, with the model's answer written by hand: code keeps only what the owner's words support,
 inside the platform's bounds, and says the rule back in words from the typed form."""
-from core.rules import check, days, waiver_words
+from core.case import PERSON_FLAGS
+from core.rules import ALWAYS_STAFF_FLAGS, SYSTEM, check, days, waiver_words
 from core.seed import WAIVER_TYPED
 
 NONE_W = {"per_tenant": None, "window": None, "cap_dollars": None, "on_time_months": None, "only_when_raised": None,
@@ -74,3 +75,9 @@ def test_the_seeded_rule_reads_back_as_the_owner_wrote_it():
     words = waiver_words(WAIVER_TYPED)
     assert words[0] == "At most 1 late-fee waiver per tenant in any rolling 1 year, each up to $25."
     assert words[-1] == "Offered only when the tenant raises the fee."
+
+
+def test_the_prompt_names_every_flag_that_always_goes_to_staff_exactly_as_the_code_does():
+    flags = list(PERSON_FLAGS)
+    assert tuple(flags) == ALWAYS_STAFF_FLAGS
+    assert f"a message flagged {', '.join(flags[:-1])} or {flags[-1]} goes to staff;" in SYSTEM

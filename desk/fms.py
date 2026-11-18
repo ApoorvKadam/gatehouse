@@ -26,6 +26,7 @@ from . import spend
 from .web import AGENT
 from .front_desk import ACTION_WORDS, CLAIM_WORDS, SHIFT, CaseIn, FrontDesk, RuleIn, account_words
 from .guard import LIFETIME, SLOW_DOWN, UNSET, Unreachable
+from .wording import plain
 
 DEMO_NAME, DEMO_PASSWORD = "dana.reyes", "northstar"
 SESSION = "staddle_session"
@@ -306,10 +307,20 @@ class Facility:
                  "schedule": ", ".join(KIND_WORDS.get(k, k) for k in x.schedule) or "no fees", "owed": money(self.b.receivable(x.id))}
                 for x in self.leases_of.get(tenant, [])]
 
+    def versions(self, name: str, say) -> list[dict]:
+        """Every version of a rule on this copy, newest first, in the words code writes from each typed form. Nothing to list
+        until a second version exists: the rule in force is already shown by its own panel."""
+        held = self.b.rules[name]
+        rows = [{"rule": name, "version": h["version"], "words": say(h["typed"]), "when": dated(local(h["at"]).date(), self.today.year),
+                 "by": h["by"], "restores": h.get("restores"), "now": h["version"] == held["version"], "same": h["typed"] == held["typed"]}
+                for h in reversed(self.b.rule_history[name])]
+        return rows if len(rows) > 1 else []
+
     def rules(self) -> dict:
         rule = self.b.rules.get("late_fee_waiver")
         staff_rule = self.b.rules.get(STAFF_RULE)
-        return {"waiver": rule, "typed": [words(k, v) for k, v in (rule or {}).get("typed", {}).items() if not isinstance(v, dict)],
+        return {"waiver": rule, "waiver_versions": self.versions("late_fee_waiver", waiver_words) if rule else [],
+                "staff_versions": self.versions(STAFF_RULE, staff_words) if staff_rule else [], "typed": [words(k, v) for k, v in (rule or {}).get("typed", {}).items() if not isinstance(v, dict)],
                 "waiver_words": waiver_words(rule["typed"]) if rule else [], "staff_rule": staff_rule,
                 "staff_rule_words": staff_words(staff_rule["typed"]) if staff_rule else [],
                 "late_fee": money(LATE_FEE_CENTS), "admin_fee": money(ADMIN_FEE_CENTS), "review_days": REVIEW_DAYS,
@@ -445,12 +456,6 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
         f = Facility(fd, need(request))
         return show(request, "fms_messages.html", "messages", f, tenants=fd.tenants(), part="try")
 
-    @app.get("/messages/tests", include_in_schema=False)
-    def tests(request: Request):
-        f = Facility(fd, need(request))
-        score = json.loads(SCORE.read_text())
-        return show(request, "fms_messages.html", "messages", f, score=score, ran=date.fromisoformat(score["ran_at"]), part="tests")
-
     @app.get("/units", include_in_schema=False)
     def units(request: Request):
         f = Facility(fd, need(request))
@@ -490,8 +495,9 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
 
     @app.get("/rules", include_in_schema=False)
     def rules(request: Request, stale: int = 0):
-        f = Facility(fd, need(request))
-        return show(request, "fms_rules.html", "rules", f, stale=bool(stale), **f.rules())
+        ident = need(request)
+        f = Facility(fd, ident)
+        return show(request, "fms_rules.html", "rules", f, stale=bool(stale), note=plain(fd.take_note(ident)), **f.rules())
 
     # writes ------------------------------------------------------------------------------------------------------------
     @app.post("/api/fms/messages")
@@ -537,6 +543,21 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
             if exc.status_code != 409:
                 raise
             return RedirectResponse("/rules?stale=1#h-write", status_code=303)
+        return RedirectResponse("/rules#in-force", status_code=303)
+
+    @app.post("/rules/restore", include_in_schema=False)
+    async def restore_rule(request: Request):
+        """The visitor, as the owner, goes back to an earlier version of a rule on this session's copy only."""
+        same_site(request)
+        ident = need(request)
+        data = await form(request)
+        version = data.get("version", "")[:4]
+        try:
+            await run_in_threadpool(fd.restore_rule, ident, data.get("rule", "")[:40], int(version) if version.isdecimal() else 0)
+        except HTTPException as exc:
+            if exc.status_code != 409:
+                raise
+            return RedirectResponse("/rules#in-force", status_code=303)     # the page says why nothing changed
         return RedirectResponse("/rules#in-force", status_code=303)
 
     @app.post("/disputes/decide", include_in_schema=False)
