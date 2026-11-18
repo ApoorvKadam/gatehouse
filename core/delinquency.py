@@ -51,7 +51,8 @@ IN_FLIGHT = timedelta(minutes=15)   # a request still on its way: only an intent
 PROCESSOR_STATES = {"processing": "pending", "succeeded": "succeeded", "failed": "failed", "canceled": "closed", "returned": "returned"}
 
 ENFORCE = ("overlock", "flag_lien_eligible")
-STAFF_ONLY = ("lift_overlock", "review_plan", "grant_exemption", "revoke_exemption")
+STAFF_ONLY = ("lift_overlock", "review_plan", "grant_exemption", "revoke_exemption", "take_payment")
+MIN_CARD_CENTS = 50             # the card processor takes no payment smaller than this
 ACTIONS = ("propose_plan", "offer_plan", "accept_plan", "record_promise") + ENFORCE + STAFF_ONLY
 
 
@@ -136,6 +137,7 @@ class State:
     tasks: dict[str, Task] = field(default_factory=dict)
     sweeps: list[date] = field(default_factory=list)
     reconciled: list[dict] = field(default_factory=list)
+    cards: dict[str, list[dict]] = field(default_factory=dict)   # tenant -> the test cards on file: our id, brand, last four, the processor-neutral token
     nonce: str | None = None            # this copy's mark at the processor; a reset copy keeps its name and gets a new mark
 
 
@@ -203,6 +205,9 @@ def fold_event(b: Books, kind: str, at: datetime, p: dict) -> None:
         st.sweeps.append(date.fromisoformat(p["day"]))
     elif kind == "reconcile.ran":
         st.reconciled.append({**p, "at": at})
+    elif kind == "card.saved":
+        st.cards.setdefault(p["tenant"], []).append({k: p[k] for k in ("card", "brand", "last4", "token")})
+        b._seen("CD", p["card"])
 
 
 # the owner's settings ------------------------------------------------------------------------------------------------
@@ -416,6 +421,22 @@ def paid_toward(books: Books, plan: Plan, by: datetime | None = None) -> int:
     gone = {p.id for p in books.payments.values() if p.returned}
     return sum(c for cov in plan.covered for t, c, src in books.charges[cov["charge"]].paid_effective[cov["seen"]:]
                if src not in gone and (by is None or t < by))
+
+
+def cards_of(books: Books, tenant: str) -> list[dict]:
+    """The test cards on file for the tenant. Only a brand, the last four digits and a token the processor adapter knows are kept."""
+    return list(state(books).cards.get(tenant, []))
+
+
+def save_card(led: Ledger, tenant: str, at: datetime, brand: str, last4: str, token: str) -> str:
+    cid = led.books.next_id("CD")
+    led.emit("card.saved", at, {"card": cid, "tenant": tenant, "brand": brand, "last4": last4, "token": token}, f"card:{cid}", source=SYSTEM)
+    return cid
+
+
+def owing(books: Books, tenant: str) -> int:
+    """What a payment can pay: the tenant's open charges, held ones left out as billing leaves them out."""
+    return sum(c.open_cents for c in books.open_charges(tenant))
 
 
 def unsettled(books: Books, tenant: str) -> bool:
@@ -639,6 +660,17 @@ def check(books: Books, cmd, now: datetime) -> tuple[bool, str]:
             return False, why
         return True, ("due on the owner's schedule and nothing holds it; recorded in the FMS only, no lock was touched" if step == "overlock"
                       else "due on the owner's schedule and nothing holds it; lien eligibility recorded, no lien step taken")
+    if a == "take_payment":
+        cents = form.get("cents")
+        if not isinstance(cents, int) or isinstance(cents, bool) or cents < MIN_CARD_CENTS:
+            return False, f"a card payment is at least {money(MIN_CARD_CENTS)}"
+        if cents > owing(books, cmd.tenant):
+            return False, f"the tenant owes {money(owing(books, cmd.tenant))}, and a card payment is never more than that"
+        if not any(c["card"] == form.get("card") for c in cards_of(books, cmd.tenant)):
+            return False, "that card is not on file for this tenant"
+        if unsettled(books, cmd.tenant):
+            return False, "an earlier payment's outcome is not known yet; it is checked with the processor, never paid again"
+        return True, f"a card payment of {money(cents)} goes to the card processor; it counts when the processor confirms it"
     if a == "lift_overlock":
         rec = st.overlocks.get(lease.id)
         if rec is None:
@@ -793,14 +825,20 @@ class ProcessorTimeout(Exception):
     """The request went out and no answer came back: the payment may or may not exist."""
 
 
+class ProcessorRefused(Exception):
+    """The processor refused the request outright (a bad amount, an unknown card or key): no payment exists, so the intent is closed."""
+
+
 class Processor(Protocol):
     """A payment processor adapter. One payment per idempotency key; the processor's own record is the truth."""
     simulated: bool
 
     def create(self, key: str, cents: int, card: str, metadata: dict, now: datetime) -> dict: ...
     def retrieve(self, outside: str) -> dict: ...
-    def find(self, key: str) -> dict | None: ...
-    def for_copy(self, copy: str) -> list[dict]: ...
+    # `since` is how far back a lookup that has to list payments must read: the creation time of the oldest intent still waiting, so a
+    # payment made while a hold kept its intent open is never missed because the adapter's default window has passed
+    def find(self, key: str, since: datetime | None = None) -> dict | None: ...
+    def for_copy(self, copy: str, since: datetime | None = None) -> list[dict]: ...
     def cancel(self, outside: str) -> dict: ...
     def take_events(self) -> list[dict]: ...      # events no webhook has brought yet, each handed over once
 
@@ -862,10 +900,10 @@ class SimulatedProcessor:
         out, self.outbox = self.outbox, []
         return out
 
-    def find(self, key: str) -> dict | None:
+    def find(self, key: str, since: datetime | None = None) -> dict | None:
         return dict(self.payments[self.by_key[key]]) if key in self.by_key else None
 
-    def for_copy(self, copy: str) -> list[dict]:
+    def for_copy(self, copy: str, since: datetime | None = None) -> list[dict]:
         return [dict(p) for p in self.payments.values() if p["metadata"].get("copy") == copy]
 
     def cancel(self, outside: str) -> dict:
@@ -894,7 +932,8 @@ def _settle(led: Ledger, intent: Intent, p: dict, now: datetime) -> None:
             # billing cannot apply it: the intent stays as it was, so every reconciliation reports it until the books are corrected
             _task(led, "returned payment needs staff", intent.tenant, f"return:{intent.id}", str(e), local(now).date(), now)
             return
-    led.emit("intent.updated", now, payload, f"intent:{intent.id}:{to}", source="processor")
+    # keyed by the move, not just where it ends: a payment that turns up after its intent was closed and is then cancelled closes it twice
+    led.emit("intent.updated", now, payload, f"intent:{intent.id}:{intent.state}:{to}", source="processor")
     recheck(led, intent.tenant, now)
 
 
@@ -928,6 +967,14 @@ def send(store: Store, stream: str, processor: Processor, intent_id: str, card: 
         p = processor.create(intent.key, intent.cents, card, {"copy": stream, "intent": intent_id, "nonce": state(store.books(stream)).nonce}, now)
     except ProcessorTimeout:
         return intent           # unknown: a webhook or the reconciliation settles it
+    except ProcessorRefused as e:
+        with store.write():
+            books = store.books(stream)
+            led = Ledger(books)
+            led.emit("intent.updated", now, {"intent": intent_id, "state": "closed", "why": f"the processor refused the request: {e}"},
+                     f"intent:{intent_id}:closed", source="processor")
+            store.append(stream, led.pending)
+            return state(books).intents[intent_id]
     with store.write():
         books = store.books(stream)
         led = Ledger(books)
@@ -963,9 +1010,9 @@ def reconcile(store: Store, stream: str, processor: Processor, now: datetime) ->
     any processor payment for this copy with no intent here is listed."""
     st = state(store.books(stream))
     # open intents, posted payments, and intents closed for want of a payment (one may still have turned up)
-    answers = {i.id: (processor.find(i.key) if i.outside is None else processor.retrieve(i.outside))
+    answers = {i.id: (processor.find(i.key, since=i.created) if i.outside is None else processor.retrieve(i.outside))
                for i in st.intents.values() if i.state in UNSETTLED + ("succeeded",) or (i.state == "closed" and i.outside is None)}
-    theirs = [p for p in processor.for_copy(stream) if not _earlier_copy(p, stream, st.nonce)]
+    theirs = [p for p in processor.for_copy(stream, since=oldest_waiting(st)) if not _earlier_copy(p, stream, st.nonce)]
     with store.write():
         books = store.books(stream)
         st = state(books)
@@ -990,7 +1037,7 @@ def reconcile(store: Store, stream: str, processor: Processor, now: datetime) ->
         last = st.reconciled[-1] if st.reconciled else None
         # recorded once a day, and again whenever something settled or the differences changed; a pass that finds the same writes nothing
         if settled or last is None or last["day"] != result["day"] or last["mismatches"] != mismatches:
-            led.emit("reconcile.ran", now, result, f"reconcile:{now.isoformat()}", source="processor")
+            led.emit("reconcile.ran", now, result, f"reconcile:{now.isoformat()}:{len(st.reconciled)}", source="processor")
         store.append(stream, led.pending)
     return result
 
@@ -1004,6 +1051,11 @@ def _earlier_copy(p: dict, stream: str, nonce: str | None) -> bool:
     return bool(mark) and mark != nonce and key.startswith(f"{stream}:") and key.endswith(f":{mark}")
 
 
-def close_copy(processor: Processor, stream: str) -> list[str]:
+def oldest_waiting(st: State) -> datetime | None:
+    """When the oldest intent still waiting for the processor was made, or None: how far back a listing has to read."""
+    return min((i.created for i in st.intents.values() if i.state in UNSETTLED), default=None)
+
+
+def close_copy(processor: Processor, stream: str, since: datetime | None = None) -> list[str]:
     """Before a visitor copy is reset: its payments still processing are cancelled, so none is left behind at the processor."""
-    return [processor.cancel(p["id"])["id"] for p in processor.for_copy(stream) if p["status"] == "processing"]
+    return [processor.cancel(p["id"])["id"] for p in processor.for_copy(stream, since=since) if p["status"] == "processing"]
