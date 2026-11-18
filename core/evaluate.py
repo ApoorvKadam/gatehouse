@@ -207,6 +207,41 @@ def owner_rules(client, runs: int) -> dict:
     return summarize_rules([grade(client) for _ in range(runs)])
 
 
+def plan_replies(client, which: str, runs: int, model: str, effort: str) -> dict:
+    """Tenant replies about paying in parts (core/graded/collections.json), read by the model and decided by code, `runs` times,
+    against the keyword workflow on the same context. Each run is graded item by item; a failed call counts as wrong."""
+    from pathlib import Path
+    from . import plan_reading as pr
+    from .agent import Budget
+    doc = json.loads((Path(__file__).parent / "graded" / "collections.json").read_text())
+    items, pol = doc[which], doc["policy"]
+    fixed = [pr.grade(i, pr.fixed_workflow(i["text"], pr.context_of(i, pol))) for i in items]
+    per_run = []
+    for _ in range(runs):
+        rows = []
+        for i in items:
+            ctx = pr.context_of(i, pol)
+            r, call = pr.read(client, model, effort, i["text"], ctx, Budget())
+            g = pr.grade(i, pr.decide(r, ctx))
+            g["failed"] = call.outcome != "ok"
+            g["right"] = g["right"] and not g["failed"]
+            g["cents"] = call.cents
+            g["reading"] = None if r is None else {"kind": r.kind, "offer": r.offer, "upfront": r.upfront, "instalment": r.instalment,
+                                                   "instalments": r.instalments, "every": r.every, "promise": [r.promise_cents, r.promise_day and r.promise_day.isoformat()],
+                                                   "flags": r.flags, "dropped": r.dropped}
+            rows.append(g)
+        per_run.append(rows)
+    rights = [sum(g["right"] for g in rows) for rows in per_run]
+    return {"which": which, "items": len(items), "runs": runs, "right_mean": round(statistics.mean(rights), 1), "right_low": min(rights),
+            "right_high": max(rights), "critical": sorted({(g["id"], c) for rows in per_run for g in rows for c in g["critical"]}),
+            "failed_calls": sum(g["failed"] for rows in per_run for g in rows),
+            "cents_median": round(statistics.median(g["cents"] for rows in per_run for g in rows), 4),
+            "fixed_right": sum(g["right"] for g in fixed), "fixed_critical": sorted({(g["id"], c) for g in fixed for c in g["critical"]}),
+            "wrong_most_runs": [{"id": i["id"], "text": i["text"], "right": i["right"],
+                                 **{k: [g[k] for rows in per_run for g in rows if g["id"] == i["id"] and not g["right"]][0] for k in ("got", "reading")}}
+                                for i in items if sum(not g["right"] for rows in per_run for g in rows if g["id"] == i["id"]) * 2 > runs]}
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--split", choices=["dev", "held", "outside"], default="dev")
@@ -217,8 +252,17 @@ def main(argv=None) -> int:
     ap.add_argument("--op", default="claude-haiku-5-5:low", help="model:effort for the choosing call")
     ap.add_argument("--choosers", default="", help="comma list of model:effort compared on one shared reading")
     ap.add_argument("--owner-rules", action="store_true", help="grade the owner sentences --runs times; --out is the public result the Tests page reads")
+    ap.add_argument("--plan-replies", choices=["practice", "graded"], help="grade the payment-plan replies --runs times; --out is a local file")
     ap.add_argument("--out", required=True)
     a = ap.parse_args(argv)
+    if a.plan_replies:
+        import anthropic
+        report = plan_replies(anthropic.Anthropic(max_retries=1), a.plan_replies, a.runs, a.read_model, a.read_effort)
+        with open(a.out, "w") as f:
+            json.dump(report, f, indent=1, default=list)
+        print(f"{a.plan_replies}: {report['right_mean']} of {report['items']} right ({report['right_low']} to {report['right_high']} over {a.runs} runs); "
+              f"critical {report['critical']}; failed calls {report['failed_calls']}; fixed workflow {report['fixed_right']} right, critical {report['fixed_critical']}")
+        return 0
     if a.owner_rules:
         import anthropic
         report = owner_rules(anthropic.Anthropic(max_retries=1), a.runs)

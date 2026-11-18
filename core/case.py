@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from . import agent, table
+from . import agent, plan_case, plan_reading, table
 from .billing import Ledger
 from .books import Books, LATE_FEE, fold, local
 from .evidence import Claim, Finding, charge_list, check
@@ -62,6 +62,7 @@ class Result:
     reply: str = ""
     calls: list[agent.Call] = field(default_factory=list)
     repeated: bool = False
+    plan: list[dict] = field(default_factory=list)     # steps taken on a reply about paying in parts, through the gate
 
     @property
     def cents(self) -> float:
@@ -124,6 +125,20 @@ def handle(store: Store, stream: str, case: str, phone: str | None, text: str, a
             _record(store, stream, case, phone, text, res, now)
             return res
         res.claims, res.flags, res.dropped = claims, flags, dropped
+    # a reply about paying in parts: no claim about a charge, nothing that sends it to staff, and the tenant past due or with plans
+    # (a claim of kind "other" naming no charge, such as "I agree to Plan 2", is not about a charge either)
+    if (arm.reader == "model" and all(c.kind == "other" and not c.charge for c in res.claims) and not res.dropped
+            and not any(fl in PERSON_FLAGS for fl in res.flags)
+            and "other_account" not in res.flags and not staff_rule_for_message(books, [], tuple(res.flags), 1)
+            and plan_case.applies(books, tenant, now)):
+        p = plan_case.context(books, tenant, now)
+        r, call = plan_reading.read(client, arm.read_model, arm.read_effort, text, p.ctx, budget)
+        res.calls.append(call)
+        acts = plan_reading.decide(r, p.ctx)
+        res.plan, res.handed = plan_case.act(store, stream, case, tenant, text, r, acts, p, now)
+        res.reply = plan_case.reply(store.books(stream), tenant, acts, res.handed, now, res.plan)
+        _record(store, stream, case, phone, text, res, now)
+        return res
     if not res.claims or res.dropped:
         res.handed = "a claim could not be confirmed in the tenant's words" if res.dropped else "no claim about a charge was found"
     # what the records say, and what the tenant literally asked to have waived (checked, never executed)
@@ -221,7 +236,7 @@ def _record(store: Store, stream: str, case: str, phone: str | None, text: str, 
               # what the records showed for each claim and what was done, so the case can be shown again after a reload
               "outcomes": [{"says": o.finding.says, "action": o.action, "by": o.chosen_by, "allowed": bool(o.decision and o.decision.allowed), "charge": o.claim.charge,
                             "rule": o.decision.rule if o.decision and o.chosen_by == "owner rule" else None,
-                            "check": o.decision.check if o.decision else None} for o in res.outcomes],
+                            "check": o.decision.check if o.decision else None} for o in res.outcomes] + res.plan,
               "asked": [{"allowed": d.allowed, "check": d.check} for d in res.asked],
               "calls": [c.__dict__ for c in res.calls]}, f"case:{case}", source="operator")
     with store.write():
