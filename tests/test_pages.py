@@ -313,15 +313,12 @@ def test_access_shows_on_today_and_its_own_page_without_any_credential(fms_url, 
         assert visitor.get("/access/99999").status_code == 404
 
 
-def test_the_overview_plays_the_whole_walkthrough_and_the_sound_is_the_visitors_to_start(fms_url, sim):
+def test_no_second_page_offers_a_film(fms_url, sim):
+    """The live Overview has no video until the complete FMS is filmed (tests/test_fms.py checks it); no page links a film page either."""
     with TestClient(preview(fms_url)) as visitor:
         page = visitor.get("/").text
-        video = page.split('<video id="film"')[1].split(">")[0]
-        assert "controls" in video and "autoplay" not in video and "muted" not in video and "loop" not in video
-        assert "film/staddle-walkthrough.mp4" in page and "film-play" not in page     # the player's own controls start it, with its sound
-        moved = visitor.get("/film", follow_redirects=False)                                 # no second page to find the film on
+        moved = visitor.get("/film", follow_redirects=False)
         assert 'href="/film"' not in page and moved.status_code == 301 and moved.headers["location"] == "/"
-        assert "staddle-teaser" not in page and "staddle-film" not in page
 
 
 def test_the_film_files_are_there_and_small_enough_to_ship():

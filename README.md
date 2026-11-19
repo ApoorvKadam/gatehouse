@@ -2,10 +2,6 @@
 
 A self-storage FMS where Tilden, the agent inside it, works the front desk and code checks every change against the books.
 
-https://github.com/user-attachments/assets/67a0989c-5b1c-4498-85c2-c66cc36d178d
-
-The walkthrough shows the earlier screens, from before Staddle kept its own books; the live preview shows the FMS described below. The music is "Closer" from Mixkit, used under Mixkit's free music licence.
-
 ## Why it exists
 
 Operators run a facility management system (FMS), a payment processor, a gate system and reminder tools. The costly failures sit between them: work one system reports done that another never finished. A card is charged and the FMS never shows it. A tenant pays and is still locked out, or still listed for auction.
@@ -86,22 +82,18 @@ A generated year of one facility runs through the same code: 120 units, 121 tena
 
 ## What is built and what is simulated
 
-- **Built:** the books, the gate, Tilden's reading, the FMS screens, renting records (reservations, move-ins with a signed agreement, transfers, and move-outs with a final bill), the staff decisions, owner rules written in plain words, the sign-in and the tests. The earlier reconciliation desk (below) is built too.
+- **Built:** the books, the gate, Tilden's reading, the FMS screens, renting records (reservations, move-ins with a signed agreement, transfers, and move-outs with a final bill), the staff decisions, owner rules written in plain words, the sign-in and the tests.
 - **Simulated:** the facility, its tenants and its money are generated. Replies are shown, never sent. Tenants rent a unit online on the made-up facility's rental page, reached from Online rentals in the FMS menu, with a test card. Transfers and move-outs run in the code and its tests. On the screens, staff price, hold, block and unblock units and follow each rental. Gate codes go to a simulated gate system, and lien notices come in a later step. Card payments run in the card processor's test mode, and a payment still waiting when the service restarts is not carried over.
 - **Not shown yet:** no operator has used it.
 
-## The earlier reconciliation desk
-
-Before Staddle kept its own books, the project watched an FMS simulator that follows Cubby's public API and checked unfinished work against it. Its screens are off the preview now; its code and tests stay until the simulator is retired.
+## Screens
 
 | | |
 |---|---|
-| ![Today, every open item at a facility](docs/screens/today.png) **Today.** Every open item at a facility, worst first, with who acts and what proves it done. A task marked done is never that proof. | ![A held payment](docs/screens/payment.png) **Payments.** A card payment whose answer was lost is held and looked up, never charged twice. A payment the bank sends back reopens the account. |
-| ![The account record in four lanes](docs/screens/record.png) **The record.** Each item opens to four lanes: what the FMS said, what Staddle observed, what it concluded, and what a person decided. | ![A tenant locked out after paying](docs/screens/access.png) **Access.** A tenant who paid and is still locked out goes to the top of Today, checked against the facility's own lockout rule. |
-| ![A Florida lien file](docs/screens/lien.png) **Lien files and sales.** Every Florida requirement with its basis and evidence. A paid unit still listed for auction gets one FMS task, and an outside listing needs its own proof. | ![A tenant's text with our agent's case notes](docs/screens/messages.png) **Messages.** Every text is matched to a tenant through the FMS. Our agent reads the case; the desk writes the reply from verified records. STOP always wins. |
-| ![Missed calls, with a voicemail read by our agent](docs/screens/calls-and-reminders.png) **Calls and reminders.** Every missed caller with a usable number gets one call back, asked for in the FMS. Our agent reads a voicemail, and staff see only what the caller stated, in the caller's own words. The same page shows which past-due tenants a collections text must not reach, and why. | ![The Overview](docs/screens/overview.png) **Overview.** What Staddle watches, with live counts from the desk's own records and the film. |
+| ![Home](docs/screens/home.png) **Home.** The day at a glance: occupancy, money collected, past due, and what needs a person. | ![Units](docs/screens/units.png) **Units.** Every unit on the site map and in a table: rented, reserved, blocked or vacant, with past due and disputes marked. Staff price, hold, block and unblock units here. |
+| ![A tenant's page](docs/screens/tenant.png) **A tenant.** Balance, ledger, rentals step by step and collections on one page. | ![Billing and payments](docs/screens/billing.png) **Billing and payments.** The month's totals and every tenant past due, with payment plans and the overlocks due on the owner's schedule. |
+| ![Online rentals](docs/screens/online-rentals.png) **Online rentals.** Where tenants rent a unit online: pick a size, accept the agreement, pay with a test card, and get a gate code that is read back. | |
 
-Every build still replays that desk's failures against the running system and fails at the first red line, such as a duplicate charge or a sale called cancelled without proof.
 
 ## Checks against a real FMS
 
