@@ -142,6 +142,22 @@ def test_typed_details_never_pick_an_existing_tenant_or_spend_their_credit(fms_u
         assert rent_of(fd, ident).rentals[rental.id].state != 'active'
 
 
+def test_the_size_links_show_only_units_of_that_size(fms_url, sim):
+    app = site(fms_url)
+    with sign_in(app) as c:
+        fd, ident = desk_of(app, c)
+        units = rent_of(fd, ident).units
+        offered = lambda html: set(re.findall(r'href="/website/rent/([^"]+)"', html))
+        everything = offered(c.get('/website').text)
+        sizes = {units[u].size for u in everything}
+        assert len(sizes) > 1
+        for size in sizes:
+            page = c.get('/website', params={'size': size}).text
+            assert offered(page) == {u for u in everything if units[u].size == size}
+            assert re.search(r'href="/website\?size=[^"]*" aria-current="page">' + re.escape(size) + '<', page)
+        assert offered(c.get('/website', params={'size': 'no such size'}).text) == everything
+
+
 def test_website_needs_sign_in(fms_url, sim):
     with TestClient(site(fms_url)) as c:
         r = c.get('/website', follow_redirects=False)

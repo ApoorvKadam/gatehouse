@@ -837,7 +837,10 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
                 units.append(record)
         units.sort(key=lambda u: (area(u.size), u.rent_cents, u.id))
         sizes = sorted({u.size for u in units}, key=lambda size: (area(size), size))
-        return site_show(request, "site_store.html", f, units=units, sizes=sizes)
+        size = request.query_params.get("size")
+        size = size if size in sizes else None        # an unknown size shows every unit
+        shown = [u for u in units if u.size == size] if size else units
+        return site_show(request, "site_store.html", f, units=shown, sizes=sizes, size=size)
 
     @app.get("/website/rent/{unit}", include_in_schema=False)
     def website_rent(request: Request, unit: str):

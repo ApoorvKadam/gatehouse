@@ -1328,6 +1328,8 @@ body.website > main { flex: 1 0 auto; }
 .website-sizes { display: flex; flex-wrap: wrap; gap: var(--s2); margin: var(--s5) 0; }
 .website-sizes a { padding: 6px 14px; border: 1px solid var(--frame); border-radius: 999px; color: var(--ink); font-size: var(--t-sm); }
 .website-sizes a:hover { background: var(--bar); text-decoration: none; }
+.website-sizes a[aria-current="page"] { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+.website-lede { margin-top: var(--s2); color: var(--ink-2); }
 .website-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: var(--s4); }
 .website-card, .website-summary, .website-result { border: 1px solid var(--frame); border-radius: 10px; background: var(--paper); }
 .website-card { padding: var(--s5); display: flex; flex-direction: column; }
