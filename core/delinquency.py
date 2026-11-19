@@ -525,6 +525,8 @@ def recheck(led: Ledger, tenant: str, at: datetime) -> None:
                 _task(led, "plan breached", tenant, f"breached:{plan.id}:{missed['part']}", why, due + timedelta(days=grace + 1), at)
             else:
                 _move(led, plan, "plan.completed", "completed", at, {"why": "nothing the plan covers is still owed"}, SYSTEM)
+    from . import liens             # a lien file reads these books too, and liens imports this module, so it cannot be imported at the top
+    liens.recheck(led, tenant, at)  # a payment, waiver or reversal may have changed what an open lien case was approved on
 
 
 def promise(led: Ledger, tenant: str, cents: int, by: date, quote: str | None, at: datetime, source: str, command: str | None = None) -> str:
@@ -584,15 +586,16 @@ def enforcement_hold(books: Books, lease: str, step: str, now: datetime) -> tupl
     return None
 
 
-def step_state(books: Books, lease: str, step: str, now: datetime) -> tuple[str, str]:
+def step_state(books: Books, lease: str, step: str, now: datetime, ignore_recorded: bool = False) -> tuple[str, str]:
     """Where the lease stands for the step, and why: clear, eligible, blocked, waiting for staff or recorded. The gate allows the
     step only when this says eligible, so what a page shows and what the gate does cannot differ. A lease that is not due on the
-    owner's schedule is clear, whatever else is going on: staff never see it waiting for them."""
+    owner's schedule is clear, whatever else is going on: staff never see it waiting for them. `ignore_recorded` asks the same
+    question of a unit whose step is already recorded (a lien case is opened on what is due now, never on the old flag)."""
     st = state(books)
     ended = books.leases[lease].ended
     if ended:                   # the tenant moved out: no unit to hold or overlock, whatever is still owed
         return "clear", f"the lease ended {day(ended)}, so there is no unit to overlock; staff handle what is still owed"
-    if (st.overlocks if step == "overlock" else st.liens).get(lease):
+    if not ignore_recorded and (st.overlocks if step == "overlock" else st.liens).get(lease):
         return "recorded", "that step is already recorded on this unit"
     if st.schedule is None:
         return "clear", "the owner has set no schedule for this step"
@@ -755,7 +758,9 @@ def run_sweep(led: Ledger, now: datetime) -> None:
     running it twice, or late, records each thing once; a late run dates each task by the day it fell due."""
     b, today = led.books, local(now).date()
     st = state(b)
-    for tenant in sorted({p.tenant for p in st.plans.values() if p.state in ("accepted", "active", "completed")}):
+    from . import liens             # see recheck: liens imports this module
+    for tenant in sorted({p.tenant for p in st.plans.values() if p.state in ("accepted", "active", "completed")}
+                         | {c.tenant for c in liens.state(b).cases.values() if not c.closed}):     # an open lien case is rechecked with or without a plan
         recheck(led, tenant, now)
     for plan in [p for p in st.plans.values() if p.state in OPEN_PLAN]:
         grace = timedelta(days=plan.terms["grace_days"])

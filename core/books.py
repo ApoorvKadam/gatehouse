@@ -22,6 +22,8 @@ REVIEW_DAYS = 10
 # the collections records (core/delinquency.py), folded into Books.collections
 COLLECTION_RECORDS = ("plan_policy", "schedule", "plan", "promise", "exemption", "overlock", "lien", "intent", "webhook", "notice",
                       "task", "sweep", "reconcile", "card")
+# the lien case records (core/liens.py), folded into Books.liens; the "lien" record above is only the eligibility flag
+LIEN_RECORDS = ("lien_case",)
 
 
 def local(t: datetime) -> datetime:
@@ -197,6 +199,7 @@ class Books:
         self.rule_history: dict[str, list[dict]] = {}     # rule id -> every version that took effect, oldest first, with when it was adopted
         self.decisions: dict[str, dict] = {}              # command id -> the gate's recorded decision
         self.collections = None                           # plans, promises, exemptions, payments in flight (core/delinquency.py)
+        self.liens = None                                 # lien cases, their evidence, copies, approvals and stops (core/liens.py)
         self.seq = 0
         self.last_at: datetime | None = None
         self.counters: dict[str, int] = {}
@@ -320,6 +323,9 @@ class Books:
         elif kind.split(".", 1)[0] in COLLECTION_RECORDS:
             from .delinquency import fold_event      # delinquency reads these books, so it cannot be imported at the top
             fold_event(self, kind, at, p)
+        elif kind.split(".", 1)[0] in LIEN_RECORDS:
+            from .liens import fold_event as fold_lien_event
+            fold_lien_event(self, kind, at, p)
 
     # reads ------------------------------------------------------------------------------------------------------------
     def held(self, charge: str) -> bool:
