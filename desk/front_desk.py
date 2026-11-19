@@ -569,14 +569,11 @@ class FrontDesk:
             return led.books.rules[name]["version"]
 
     # renting ------------------------------------------------------------------------------------------------------------------
-    def find_or_add_tenant(self, visitor: str, name: str, phone: str) -> str:
-        """Find an exact match or add a tenant to this copy."""
+    def add_renter(self, visitor: str, name: str, phone: str) -> str:
+        """A new tenant for someone renting on the website. Typed details never pick an existing tenant: nothing on the website proves
+        who someone is, and an existing tenant's account credit can start a rental with no card."""
         with self.lock:
             store, stream = self.ready(), self.stream(visitor)
-            books = store.books(stream)
-            match = next((t.id for t in books.tenants.values() if t.name == name and t.phone == phone), None)
-            if match:
-                return match
             with store.write():
                 led = Ledger(store.books(stream))
                 tenant = led.add_tenant(self.clock(), name, phone)

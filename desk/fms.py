@@ -862,7 +862,7 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
                 record = rent.units.get(unit)
                 if not record or not record.rent_cents or not record.size:
                     return None
-                tenant = fd.find_or_add_tenant(ident, name, phone)
+                tenant = fd.add_renter(ident, name, phone)
                 held = fd.rent_step(ident, renting.Act(f"site:{token}:reserve", "reserve", "renter", unit, tenant))
                 if not held.allowed:
                     return None

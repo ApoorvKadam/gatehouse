@@ -74,7 +74,9 @@ def pay(store, tenant, rental, cents, now=NOW):
 def accept(store, tenant, rental, now=NOW, sha=None):
     r = rent(store)
     sha = sha or r.agreements[r.rentals[rental].agreement].sha256
-    return go(store, act("accept_agreement", "renter", rental, tenant, sha256=sha), now)
+    new = r.rentals[rental]
+    extra = {"amount_cents": r.short(new, now, r.rentals[r.transfers[new.transfer].rental])} if new.transfer else {}
+    return go(store, act("accept_agreement", "renter", rental, tenant, sha256=sha, **extra), now)
 
 
 def checkout(store, tenant, unit, now=NOW):
@@ -299,9 +301,9 @@ def test_the_final_bill_is_exact_to_the_cent_on_eastern_days():
     r, b = rent(store), books(store)
     bill = r.moveouts[mo_paid].bill
     assert bill["last_day"] == "2026-11-20"
-    assert bill["rent"] == [{"month": "2026-11", "billed_cents": 10000, "kept_cents": 6666}]   # 20 of 30 days
-    assert (bill["owed_cents"], bill["credit_cents"], bill["refund_cents"], bill["refund"]) == (0, 0, 3334, "pending")
-    assert b.refunds[dana] == 3334 and b.credit.get(dana, 0) == 0     # owed back on the books, not paid out, not spendable
+    assert bill["rent"] == [{"month": "2026-11", "billed_cents": 10000, "kept_cents": 6667}]   # 20 of 30 days
+    assert (bill["owed_cents"], bill["credit_cents"], bill["refund_cents"], bill["refund"]) == (0, 0, 3333, "pending")
+    assert b.refunds[dana] == 3333 and b.credit.get(dana, 0) == 0     # owed back on the books, not paid out, not spendable
     other = r.moveouts[mo_unpaid].bill
     assert other["rent"] == [{"month": "2026-11", "billed_cents": 9000, "kept_cents": 6000}]
     assert (other["owed_cents"], other["refund_cents"], other["refund"]) == (6000 + 2000, 0, "none")
@@ -354,8 +356,8 @@ def half_done_transfer(store, dana, system):
     tr = ok(store, act("request_transfer", "renter", old, dana, unit="B201"), NOV11)
     ok(store, act("approve_transfer", "staff:manager", tr, until=(NOV11 + timedelta(days=2)).isoformat()), NOV11)
     new = rent(store).transfers[tr].target
-    accept(store, dana, new, NOV11)
     billing(store, lambda led: led.receive_payment(dana, 3333, NOV11))
+    assert accept(store, dana, new, NOV11).allowed
     ok(store, act("complete_transfer", "staff:manager", tr), NOV11)
     system.hide.add("unit B201")
     advance(store, BASE, system, NOV11)
@@ -386,6 +388,8 @@ def test_a_transfer_keeps_the_old_unit_and_code_until_the_new_code_works():
     # the old unit's unused days (Nov 11 to 30) come back as credit, $66.67, and B201 from Nov 11 is $100.00
     assert "$33.33 short" in go(store, act("complete_transfer", "staff:manager", tr), nov11).check
     billing(store, lambda led: led.receive_payment(dana, 3333, nov11))
+    assert "amount to pay changed" in go(store, act("complete_transfer", "staff:manager", tr), nov11).check
+    assert accept(store, dana, new, nov11).allowed
     ok(store, act("complete_transfer", "staff:manager", tr), nov11)
     r, b = rent(store), books(store)
     assert b.receivable(r.rentals[new].lease) == 0 and b.credit.get(dana, 0) == 0
@@ -883,8 +887,8 @@ def test_a_repeat_of_an_accepted_command_under_a_new_id_is_a_refusal_never_an_er
     tr = step("request_transfer", "renter", rn, dana, now=nov11, unit="B201")
     step("approve_transfer", "staff:manager", tr, now=nov11, until=(nov11 + timedelta(days=2)).isoformat())
     new = rent(store).transfers[tr].target
-    step("accept_agreement", "renter", new, dana, now=nov11, sha256=rent(store).agreements[rent(store).rentals[new].agreement].sha256)
     billing(store, lambda led: led.receive_payment(dana, 3333, nov11))
+    step("accept_agreement", "renter", new, dana, now=nov11, sha256=rent(store).agreements[rent(store).rentals[new].agreement].sha256, amount_cents=0)
     step("complete_transfer", "staff:manager", tr, now=nov11)
     advance(store, BASE, system, nov11)                 # the new code is read back: the transfer is complete and the old code goes
     mo = step("request_move_out", "renter", new, dana, now=nov11)
@@ -948,8 +952,8 @@ def test_a_transfer_leaves_a_rent_charge_with_no_month_on_the_old_lease():
     tr = ok(store, act("request_transfer", "renter", old, dana, unit="B201"), NOV11)
     ok(store, act("approve_transfer", "staff:manager", tr, until=(NOV11 + timedelta(days=2)).isoformat()), NOV11)
     new = rent(store).transfers[tr].target
-    assert accept(store, dana, new, NOV11).allowed
     billing(store, lambda led: led.receive_payment(dana, 3333 + 5000, NOV11))
+    assert accept(store, dana, new, NOV11).allowed
     ok(store, act("complete_transfer", "staff:manager", tr), NOV11)
     assert not books(store).charges[extra].closed and rent(store).rentals[new].state == "active"
 

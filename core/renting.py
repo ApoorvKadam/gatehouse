@@ -208,6 +208,8 @@ class Agreement:
     state: str = "presented"        # presented, accepted
     by: str | None = None
     at: datetime | None = None
+    amount_cents: int | None = None
+    payments: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -362,6 +364,9 @@ class Rent:
     def _on_rental_activated(self, at, p):
         self.rentals[p["rental"]].lease = p["lease"]
 
+    def _on_rental_funded(self, at, p):
+        self.rentals[p["rental"]].lease = p["lease"]
+
     def _on_agreement_presented(self, at, p):
         self.agreements[p["agreement"]] = Agreement(p["agreement"], p["rental"], p["version"], p["sha256"], p["text"])
         self.rentals[p["rental"]].agreement = p["agreement"]
@@ -369,9 +374,16 @@ class Rent:
     def _on_agreement_accepted(self, at, p):
         a = self.agreements[p["agreement"]]
         a.state, a.by, a.at = "accepted", p["by"], at
+        a.amount_cents = p.get("amount_cents")
         r = self.rentals[p["rental"]]
+        a.payments = list(r.payments)
         r.accepted = True
         r.state = self._waiting(r)
+
+    def _on_agreement_requoted(self, at, p):
+        r = self.rentals[p["rental"]]
+        r.accepted = False
+        self.agreements[r.agreement].state = "presented"
 
     def _on_transfer_requested(self, at, p):
         self.transfers[p["transfer"]] = Transfer(p["transfer"], p["rental"], p["target"], p["unit"])
@@ -478,7 +490,8 @@ class Rent:
     # reads ------------------------------------------------------------------------------------------------------------
     def paid(self, r: Rental) -> bool:
         """A confirmed payment for the rental that has not come back."""
-        return any(not self.books.payments[p].returned for p in r.payments)
+        return (any(not self.books.payments[p].returned for p in r.payments)
+                or bool(r.lease and not self.books.receivable(r.lease)))
 
     def uncertain(self, r: Rental) -> bool:
         """A checkout payment was started and the processor's answer has not come."""
@@ -486,8 +499,8 @@ class Rent:
 
     def holder(self, unit: str, now: datetime) -> tuple[str, str] | None:
         """The record holding the unit at `now`, or None. A hold past its deadline still holds while a payment for it is
-        unconfirmed, or paid for (until the rental starts or staff refund and release it); a rental that ended holds until its
-        old code is revoked."""
+        unconfirmed, paid for, or a lease was already signed (until the rental starts or staff release it); a rental that ended
+        holds until its old code is revoked."""
         u = self.units.get(unit)
         if u is None or u.holder is None:
             return None
@@ -503,7 +516,7 @@ class Rent:
         else:
             r = self.rentals[rid]
             if r.state in WAITING:
-                live = now < r.expires_at or self.uncertain(r) or self.paid(r)
+                live = now < r.expires_at or self.uncertain(r) or self.paid(r) or bool(r.lease)
             elif r.state == "ended":
                 live = r.access is not None and self.access[r.access].state != "revoked"
             else:
@@ -539,6 +552,8 @@ class Rent:
     def short(self, r: Rental, now: datetime, old: Rental | None = None) -> int:
         """What the rental's lease would still owe if signed now, on a copy of the books: the money on the account pays older
         charges first. For a transfer, the old lease ends the day before the new one starts."""
+        if r.lease and r.state in WAITING:
+            return self.books.receivable(r.lease)
         sim = Ledger(pickle.loads(pickle.dumps(self.books)))     # a copy of our own folded books, never outside data
         if old is not None:
             end_lease(sim, old.lease, _d(r.quote["start"]) - timedelta(days=1), now, "code")
@@ -623,10 +638,17 @@ class Rent:
         if a == "accept_agreement":
             if rec.state not in WAITING:
                 return f"the rental is {rec.state.replace('_', ' ')}"
+            if self.holder(rec.unit, now) != ("rental", rec.id):
+                return "the rental no longer holds the unit"
             if rec.accepted:
                 return "the agreement is already accepted"
             if args.get("sha256") != self.agreements[rec.agreement].sha256:
                 return "the text accepted is not the agreement shown; show it again"
+            if rec.kind == "transfer":
+                old = self.rentals[self.transfers[rec.transfer].rental]
+                amount = self.short(rec, now, old)
+                if type(args.get("amount_cents")) is not int or args["amount_cents"] != amount:
+                    return f"the amount to pay is now {money(amount)}; show it and accept again"
             return None
         if a == "confirm_payment":
             pay = b.payments.get(args.get("payment", ""))
@@ -650,10 +672,12 @@ class Rent:
                 return "the rental no longer holds the unit"
             if not rec.accepted:
                 return "the agreement is not accepted"
-            if not self.paid(rec):
-                return "no confirmed payment"
             if _d(rec.quote["start"]) > today:
                 return "the move-in day has not come"
+            if rec.lease and any(b.pending_return(src) for cid in b.of_lease.get(rec.lease, [])
+                                 if not b.charges[cid].closed and b.charges[cid].due == b.leases[rec.lease].start
+                                 for _, _, src in b.charges[cid].paid_effective):
+                return "a payment for the move-in charges has a return waiting for staff"
             short = self.short(rec, now)
             return f"the move-in charges are {money(short)} short (money on the account pays older charges first)" if short else None
         if a == "request_transfer":
@@ -685,6 +709,15 @@ class Rent:
             if _d(new.quote["start"]) > today:
                 return "the transfer day has not come"
             short = self.short(new, now, old)
+            accepted = self.agreements[new.agreement].amount_cents
+            if accepted is None:
+                return "the transfer amount needs the tenant's acceptance"
+            agreement = self.agreements[new.agreement]
+            paid = min(accepted, sum(b.payments[p].cents for p in new.payments
+                                     if p not in agreement.payments and not b.payments[p].returned))
+            obligation = short + paid
+            if accepted != obligation:
+                return f"the amount to pay changed from {money(accepted)} to {money(obligation)}; the tenant accepts the new amount first"
             return f"the new unit's first charges are {money(short)} short after the old unit's unused days are credited" if short else None
         if a == "request_move_out":
             if rec.state != "active":
@@ -777,6 +810,9 @@ class Rent:
             if self.uncertain(r):
                 self.task(led, now, r.id, "payment", f"The hold on unit {r.unit} ran out while a payment is unconfirmed; the unit stays held "
                                                      "until the processor answers.")
+            elif r.lease and self.books.receivable(r.lease):
+                self.task(led, now, r.id, "hold", f"Unit {r.unit} has a signed lease but its move-in charges are short. "
+                                                  "The unit stays held until the charges are paid or staff release it.")
             elif self.paid(r):
                 if r.accepted and _d(r.quote["start"]) > local(now).date():
                     continue        # signed and paid for a later day: it waits for that day, and that is no task
@@ -793,6 +829,11 @@ class Rent:
         """Cancel a rental that never started. What is left of its payments as credit is set aside as a refund, pending until
         the processor confirms it went out, and staff get a task to make it."""
         p = {"rental": r.id, "reason": reason}
+        if r.lease:
+            for cid in list(self.books.of_lease[r.lease]):
+                if not self.books.charges[cid].closed:
+                    led.reverse(now, cid, "rental cancelled", source)
+            led.end_lease(now, r.lease)
         if self.paid(r):
             left = sum(lot[1] for lot in self.books.lots.get(r.tenant, []) if lot[0] in r.payments)    # its payments' unspent credit
             cents = led.reserve_refund(now, r.tenant, left, f"refund:{r.id}", tuple(r.payments), source)
@@ -893,11 +934,12 @@ def sign(led: Ledger, r: Rental, now: datetime) -> str:
 
 def end_lease(led: Ledger, lease: str, last_day: date, now: datetime, source: str) -> list[dict]:
     """End a lease after `last_day` through billing. Each month's rent from that month on is reversed and, where part of it was
-    used, posted again for the Eastern calendar days used, rounded down to the cent; money it released becomes credit."""
+    used, posted again for the Eastern calendar days used, rounded half up; money it released becomes credit."""
     b = led.books
     out = []
     for ch, y, m, used, covered in rent_changes(b, lease, last_day):
-        keep = ch.cents * used // covered
+        days = calendar.monthrange(y, m)[1]
+        keep = min(ch.cents, (b.leases[lease].rent_cents * used * 2 + days) // (2 * days))
         led.reverse(now, ch.id, "move-out", source)
         if keep:
             led._charge(now, lease, RENT, keep, ch.obligation, ch.due, key=f"final:{ch.id}")
@@ -952,8 +994,12 @@ def _checkout(rent, led, act, now):
 
 def _accept(rent, led, act, now):
     r = rent.rentals[act.about]
-    led.emit("agreement.accepted", now, {"agreement": r.agreement, "rental": r.id, "by": f"renter:{act.tenant}", "sha256": act.args["sha256"]},
-             f"accepted:{r.agreement}", source=act.source)
+    led.emit("agreement.accepted", now, {"agreement": r.agreement, "rental": r.id, "by": f"renter:{act.tenant}", "sha256": act.args["sha256"],
+                                         "amount_cents": act.args.get("amount_cents")},
+             f"accepted:{r.agreement}:{act.id}", source=act.source)
+    if r.kind == "new" and _d(r.quote["start"]) > local(now).date() and not rent.short(r, now):
+        lease = sign(led, r, now)
+        led.emit("rental.funded", now, {"rental": r.id, "lease": lease}, f"funded:{r.id}", source="code")
 
 
 def _answer(rent, led, r, result, now, op=None):
@@ -979,7 +1025,7 @@ def _failed(rent, led, act, now):
 
 def _activate(rent, led, act, now):
     r = rent.rentals[act.about]
-    lease = sign(led, r, now)
+    lease = r.lease or sign(led, r, now)
     led.emit("rental.activated", now, {"rental": r.id, "lease": lease}, f"active:{r.id}", source="code")
     if r.reservation:
         led.emit("reservation.confirmed", now, {"reservation": r.reservation}, f"confirmed:{r.reservation}", source="code")
@@ -1103,11 +1149,10 @@ def _record(led: Ledger, act: Act, dec: Decision, now: datetime) -> None:
 
 
 def _try_activate(rent: Rent, led: Ledger, rid: str, now: datetime) -> None:
-    """Once a rental has both its confirmed payment and its accepted agreement, code asks the gate to activate it. A refusal
-    then (money short, say) is a dated staff task, never a silent wait."""
+    """Try to start an accepted rental using the money on the account."""
     r = rent.rentals[rid]
     act = Act(f"{rid}:activate", "activate", "code", rid)
-    if act.id in rent.books.decisions or r.kind != "new" or r.state not in WAITING or not (r.accepted and r.payments):
+    if act.id in rent.books.decisions or r.kind != "new" or r.state not in WAITING or not r.accepted:
         return
     if _d(r.quote["start"]) > local(now).date():
         return                      # paid and signed for a later day: it starts on that day (advance tries again), and that is no task
@@ -1116,7 +1161,11 @@ def _try_activate(rent: Rent, led: Ledger, rid: str, now: datetime) -> None:
         _activate(rent, led, act, now)
         _record(led, act, dec, now)
     else:
-        rent.task(led, now, rid, "activation", f"Unit {r.unit} is paid for and its agreement accepted, but the rental did not start: {dec.check}.")
+        if r.payments or rent.books.credit.get(r.tenant, 0):
+            reason = f"Unit {r.unit} has an accepted agreement, but the rental did not start: {dec.check}."
+            if any(t.open and t.about == rid and t.kind == "activation" and t.reason != reason for t in rent.tasks.values()):
+                rent.close(led, now, rid, "activation")
+            rent.task(led, now, rid, "activation", reason)
 
 
 def run(store: Store, stream: str, act: Act, now: datetime) -> Decision:
@@ -1132,6 +1181,12 @@ def run(store: Store, stream: str, act: Act, now: datetime) -> Decision:
         dec = evaluate_rent(rent, books, act, now)
         if dec.allowed:
             dec.made = DO[act.action](rent, led, act, now)
+        elif act.action == "complete_transfer" and (dec.check.startswith("the amount to pay changed from ")
+                                                    or dec.check == "the transfer amount needs the tenant's acceptance"):
+            transfer = rent.transfers[act.about]
+            new, old = rent.rentals[transfer.target], rent.rentals[transfer.rental]
+            led.emit("agreement.requoted", now, {"rental": new.id, "amount_cents": rent.short(new, now, old)},
+                     f"requote:{act.id}", source="code")
         elif dec.check == LATE:
             pay = books.payments[act.args["payment"]]
             cents = led.reserve_refund(now, pay.tenant, pay.cents, f"refund:{pay.id}", (pay.id,), "code")
@@ -1187,8 +1242,8 @@ def pay_rental(store: Store, stream: str, processor: delinquency.Processor, rent
                 raise Refused(NO_HOLD)          # a hold whose time is up, not yet written down by a pass, takes no new payment
             if delinquency.unsettled(books, r.tenant):
                 raise Refused("an earlier payment's outcome is not known yet; it is checked with the processor, never paid again")
-            # the first payment is the quote; once one is confirmed, a following one is only what the move-in is still short
-            cents = rent.short(r, now) if rent.paid(r) else r.quote["total_cents"]
+            old = rent.rentals[rent.transfers[r.transfer].rental] if r.transfer else None
+            cents = rent.short(r, now, old)
             if not cents:
                 raise Refused("the rental is already paid for")
             led = RentLedger(books, rent)
@@ -1536,7 +1591,7 @@ def advance(store: Store, stream: str, system: AccessSystem, now: datetime) -> d
             books, rent = load(store, stream)
             led = RentLedger(books, rent)
             rent.sweep(led, now)
-            for rid in [x.id for x in rent.rentals.values() if x.state in WAITING and x.accepted and x.payments]:
+            for rid in [x.id for x in rent.rentals.values() if x.state in WAITING and x.accepted and (x.payments or x.lease)]:
                 _try_activate(rent, led, rid, now)      # a rental signed and paid for a later day starts when the day comes
             store.append(stream, led.pending)
             # drive() stops only at a resting state, so any record still in a working state has work left
