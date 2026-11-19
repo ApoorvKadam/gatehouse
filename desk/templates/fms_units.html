@@ -4,15 +4,20 @@
 <header class="head">
   <h1>Units</h1>
 </header>
-{% set counts = namespace(occupied=0, past=0, dispute=0, vacant=0) %}{% for row, items in rows %}{% for u in items %}{% if not u.who %}{% set counts.vacant = counts.vacant + 1 %}{% elif u.chip and u.chip[1] == 'act' %}{% set counts.past = counts.past + 1 %}{% elif u.chip and u.chip[1] == 'wait' %}{% set counts.dispute = counts.dispute + 1 %}{% else %}{% set counts.occupied = counts.occupied + 1 %}{% endif %}{% endfor %}{% endfor %}
-<p class="fms-summary">Unit occupancy {{ ((100 * (counts.occupied + counts.past + counts.dispute)) / (counts.occupied + counts.past + counts.dispute + counts.vacant))|round|int }}%: {{ counts.occupied + counts.past + counts.dispute }} of {{ counts.occupied + counts.past + counts.dispute + counts.vacant }} units occupied.</p>
-<p class="fms-legend"><span><i class="occ"></i>Current <b>{{ counts.occupied }}</b></span><span><i class="act"></i>Past due <b>{{ counts.past }}</b></span><span><i class="wait"></i>Fee in dispute <b>{{ counts.dispute }}</b></span><span><i class="vac"></i>Vacant <b>{{ counts.vacant }}</b></span></p>
+{% set counts = f.unit_counts(rows) %}{% set rented = counts.occupied + counts.past + counts.dispute %}
+<p class="fms-summary">Unit occupancy {{ ((100 * rented) / (rented + counts.reserved + counts.blocked + counts.vacant))|round|int }}%: {{ rented }} of {{ rented + counts.reserved + counts.blocked + counts.vacant }} units occupied.</p>
+<p class="fms-legend"><span><i class="occ"></i>Current <b>{{ counts.occupied }}</b></span><span><i class="act"></i>Past due <b>{{ counts.past }}</b></span><span><i class="wait"></i>Fee in dispute <b>{{ counts.dispute }}</b></span><span><i class="held"></i>Reserved <b>{{ counts.reserved }}</b></span><span><i class="blk"></i>Blocked <b>{{ counts.blocked }}</b></span><span><i class="vac"></i>Vacant <b>{{ counts.vacant }}</b></span></p>
+{% if step_note %}<p class="fms-status" id="note" role="status">Nothing changed. {{ step_note }}</p>{% endif %}
+<datalist id="tenant-names">{% for label in f.tenant_labels %}<option value="{{ label }}">{% endfor %}</datalist>
 <div class="fms-map" aria-label="Site map">
   {% for row, items in rows %}
   <section class="fms-map-row" aria-labelledby="m-row-{{ row }}">
     <h3 id="m-row-{{ row }}">Building {{ row }}</h3>
     <ul class="fms-tiles">
-      {% for u in items %}<li>{% if u.who %}<a class="{{ u.chip[1] if u.chip else 'occ' }}" href="/tenants/{{ u.who.slug }}" title="{{ u.unit }}: {{ u.who.name }}{{ ', ' ~ u.chip[0] if u.chip }}"><b>{{ u.unit }}</b><small>{{ u.who.name.split(' ')[0][0] }}. {{ u.who.name.split(' ')[-1] }}</small></a>{% else %}<span class="fms-vacant" title="{{ u.unit }}: vacant"><b>{{ u.unit }}</b><small aria-hidden="true">&nbsp;</small></span>{% endif %}</li>{% endfor %}
+      {% for u in items %}<li>{% if u.state == 'occupied' and u.who %}<a class="{{ u.chip[1] if u.chip else 'occ' }}" href="/tenants/{{ u.who.slug }}" title="{{ u.unit }}: {{ u.who.name }}{{ ', ' ~ u.chip[0] if u.chip }}"><b>{{ u.unit }}</b><small>{{ u.who.name.split(' ')[0][0] }}. {{ u.who.name.split(' ')[-1] }}</small></a>
+      {% elif u.state == 'reserved' %}{% if u.who %}<a class="held" href="/tenants/{{ u.who.slug }}" title="{{ u.unit }}: reserved for {{ u.who.name }}"><b>{{ u.unit }}</b><small>{{ u.who.name.split(' ')[0][0] }}. {{ u.who.name.split(' ')[-1] }}</small></a>{% else %}<span class="held" title="{{ u.unit }}: reserved"><b>{{ u.unit }}</b><small aria-hidden="true">&nbsp;</small></span>{% endif %}
+      {% elif u.state == 'blocked' %}<span class="fms-blocked" title="{{ u.unit }}: blocked"><b>{{ u.unit }}</b><small aria-hidden="true">&nbsp;</small></span>
+      {% else %}<span class="fms-vacant" title="{{ u.unit }}: vacant"><b>{{ u.unit }}</b><small aria-hidden="true">&nbsp;</small></span>{% endif %}</li>{% endfor %}
     </ul>
   </section>
   {% endfor %}
@@ -21,11 +26,36 @@
 <section class="fms-section" aria-labelledby="h-row-{{ row }}">
   <h2 id="h-row-{{ row }}">Building {{ row }}</h2>
   <div class="fms-scroll" tabindex="0" role="region" aria-labelledby="h-row-{{ row }}"><table class="fms-table">
-    <thead><tr><th>Unit</th><th>Tenant</th><th>Rented since</th><th>Needs attention</th><th class="num">Rent a month</th></tr></thead>
+    <thead><tr><th>Unit</th><th>Size</th><th>Tenant</th><th>Rented since</th><th>Status</th><th class="num">Street rate</th><th class="num">Rent a month</th><th><span class="visually-hidden">Change</span></th></tr></thead>
     <tbody>
       {% for u in items %}
-      <tr><td>{{ u.unit }}</td><td>{% if u.who %}<a href="/tenants/{{ u.who.slug }}">{{ u.who.name }}</a>{% else %}<span class="muted">Vacant</span>{% endif %}</td>
-        <td class="muted">{{ u.since }}</td><td>{% if u.chip %}<span class="chip {{ u.chip[1] }}">{{ u.chip[0] }}</span>{% endif %}</td><td class="num">{{ u.rent }}</td></tr>
+      <tr id="u-{{ u.unit }}"><td>{{ u.unit }}</td><td class="muted">{{ u.size }}</td>
+        <td>{% if u.state == 'occupied' and u.who %}<a href="/tenants/{{ u.who.slug }}">{{ u.who.name }}</a>{% endif %}</td>
+        <td class="muted">{{ u.since }}</td>
+        <td class="fms-state">{% if u.state == 'vacant' %}<span class="chip done">Vacant</span>{% elif u.state == 'reserved' %}<span class="chip wait">Reserved</span>{% elif u.state == 'blocked' %}<span class="chip plain">Blocked</span>{% else %}<span class="muted">Occupied</span>{% if u.chip %} <span class="chip {{ u.chip[1] }}">{{ u.chip[0] }}</span>{% endif %}{% endif %}{% if u.note %}<span class="fms-why">{{ u.note }}</span>{% endif %}</td>
+        <td class="num">{{ u.price }}</td><td class="num">{{ u.rent }}</td>
+        <td><a href="#act-{{ u.unit }}" aria-controls="act-{{ u.unit }}">Change</a></td></tr>
+      <tr class="fms-act" id="act-{{ u.unit }}"><td colspan="8"><div class="fms-unit-act">
+        <p><b>Unit {{ u.unit }}</b> <a href="#u-{{ u.unit }}">Close</a></p>
+        <form method="post" action="/units/{{ u.unit }}/renting"><input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="action" value="price_unit">
+          <label for="price-{{ u.unit }}">Street rate a month</label>
+          <input id="price-{{ u.unit }}" name="amount" inputmode="decimal" required pattern="[0-9]{1,5}(\.[0-9]{1,2})?" value="{{ u.price_value }}">
+          <button class="button" type="submit">Save the street rate</button></form>
+        {% if u.state == 'vacant' %}
+        <form method="post" action="/units/{{ u.unit }}/renting"><input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="action" value="reserve">
+          <label for="hold-{{ u.unit }}">Hold for a tenant</label>
+          <input id="hold-{{ u.unit }}" name="tenant" list="tenant-names" autocomplete="off" required placeholder="Type a name">
+          <input type="date" name="until" aria-label="Hold until" required min="{{ until_min }}" max="{{ until_max }}">
+          <button class="button primary" type="submit">Hold the unit</button></form>
+        <form method="post" action="/units/{{ u.unit }}/renting"><input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="action" value="block_unit">
+          <label for="block-{{ u.unit }}">Block the unit</label>
+          <input id="block-{{ u.unit }}" name="reason" required minlength="3" maxlength="300" placeholder="Reason, for example: door being repaired">
+          <button class="button" type="submit">Block it</button></form>
+        {% elif u.block %}
+        <form method="post" action="/units/{{ u.unit }}/renting"><input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="action" value="unblock_unit">
+          <button class="button primary" type="submit">Unblock the unit</button></form>
+        {% endif %}
+      </div></td></tr>
       {% endfor %}
     </tbody>
   </table></div>

@@ -64,6 +64,42 @@
   {% endif %}
 </section>
 
+{% if unfinished %}
+<section class="fms-section" id="rentals" aria-labelledby="h-rentals">
+  <h2 id="h-rentals">Rentals not finished yet</h2>
+  {% for x in unfinished %}
+  <article class="fms-line">
+    <p><a href="/tenants/{{ x.who.slug }}#renting">{{ x.who.name }}</a> <span class="muted" aria-hidden="true">&middot;</span> <a href="/units#u-{{ x.unit }}">unit {{ x.unit }}</a> <span class="chip {{ x.tone }}">{{ x.what }}</span></p>
+    <p class="muted">{{ x.why }}</p>
+  </article>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% if codes %}
+<section class="fms-section" id="codes" aria-labelledby="h-codes">
+  <h2 id="h-codes">Gate codes not confirmed</h2>
+  {% for x in codes %}
+  <article class="fms-line">
+    <p><a href="/tenants/{{ x.who.slug }}#renting">{{ x.who.name }}</a> <span class="muted" aria-hidden="true">&middot;</span> <a href="/units#u-{{ x.unit }}">unit {{ x.unit }}</a> <span class="chip {{ x.tone }}">{{ x.what }}</span> <span class="muted">since {{ x.since }}</span></p>
+    <p class="muted">{{ x.why }}</p>
+  </article>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% if turnover %}
+<section class="fms-section" id="turnover" aria-labelledby="h-turnover">
+  <h2 id="h-turnover">Units waiting for an old gate code to be revoked</h2>
+  {% for x in turnover %}
+  <article class="fms-line">
+    <p><a href="/tenants/{{ x.who.slug }}#renting">{{ x.who.name }}</a> <span class="muted" aria-hidden="true">&middot;</span> <a href="/units#u-{{ x.unit }}">unit {{ x.unit }}</a> <span class="chip {{ x.tone }}">{{ x.what }}</span></p>
+    <p class="muted">{{ x.why }}</p>
+  </article>
+  {% endfor %}
+</section>
+{% endif %}
+
 {% set handed = cases|selectattr('handed')|list %}
 <section class="fms-section" aria-labelledby="h-handed">
   <h2 id="h-handed">Handed to staff</h2>
@@ -81,7 +117,7 @@
 <section class="fms-section" id="decided" aria-labelledby="h-decided">
   <h2 id="h-decided">Decided by staff</h2>
   <ul class="fms-closed">
-    {% for d in decisions %}<li>{% if d.who %}<a href="/tenants/{{ d.who.slug }}">{{ d.who.name }}</a> {% endif %}<span>{% if not d.allowed %}{% if d.renting %}{{ d.words }}{% if d.unit %}, unit {{ d.unit }}{% endif %}. {% endif %}Not done: {{ d.check }}. Nothing in the books changed.{% elif d.renting %}{{ d.words }}{% if d.unit %}, unit {{ d.unit }}{% endif %}: {{ d.check|upfirst }}.{% elif d.removed %}{{ d.words }}: {{ d.fee }}. {{ d.check|upfirst }}. Books updated; the tenant is not told from here.{% else %}{{ d.words }}: {{ d.fee }}. {{ d.check|upfirst }}. Nothing in the books changed.{% endif %}{% if d.reason %} Your note: {{ d.reason }}.{% endif %}</span></li>{% endfor %}
+    {% for d in decisions %}<li>{% if d.who and not d.renting %}<a href="/tenants/{{ d.who.slug }}">{{ d.who.name }}</a>{% else %}<span></span>{% endif %}<span>{% if not d.allowed %}{% if d.renting %}{{ d.text }}. {% endif %}Not done: {{ d.check }}. Nothing in the books changed.{% elif d.renting %}{{ d.text }}.{% elif d.removed %}{{ d.words }}: {{ d.fee }}. {{ d.check|upfirst }}. Books updated; the tenant is not told from here.{% else %}{{ d.words }}: {{ d.fee }}. {{ d.check|upfirst }}. Nothing in the books changed.{% endif %}{% if d.reason %} Your note: {{ d.reason }}.{% endif %}</span></li>{% endfor %}
   </ul>
 </section>
 {% endif %}
