@@ -175,6 +175,14 @@ class CreditUse:
 class Books:
     """The state of one stream, folded event by event. Commands read it; only events change it."""
 
+    def pending_return(self, src: str) -> bool:
+        if src in self.pending_returns:
+            return True
+        if src.startswith("release:"):
+            charge = self.charges[src.removeprefix("release:")]
+            return any(self.pending_return(origin) for _, _, origin in charge.paid_effective)
+        return False
+
     def __init__(self):
         self.facility: dict = {}
         self.units: list[str] = []

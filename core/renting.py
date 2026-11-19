@@ -499,8 +499,8 @@ class Rent:
 
     def holder(self, unit: str, now: datetime) -> tuple[str, str] | None:
         """The record holding the unit at `now`, or None. A hold past its deadline still holds while a payment for it is
-        unconfirmed, or paid for (until the rental starts or staff refund and release it); a rental that ended holds until its
-        old code is revoked."""
+        unconfirmed, paid for, or a lease was already signed (until the rental starts or staff release it); a rental that ended
+        holds until its old code is revoked."""
         u = self.units.get(unit)
         if u is None or u.holder is None:
             return None
@@ -516,7 +516,7 @@ class Rent:
         else:
             r = self.rentals[rid]
             if r.state in WAITING:
-                live = now < r.expires_at or self.uncertain(r) or self.paid(r)
+                live = now < r.expires_at or self.uncertain(r) or self.paid(r) or bool(r.lease)
             elif r.state == "ended":
                 live = r.access is not None and self.access[r.access].state != "revoked"
             else:
@@ -674,6 +674,10 @@ class Rent:
                 return "the agreement is not accepted"
             if _d(rec.quote["start"]) > today:
                 return "the move-in day has not come"
+            if rec.lease and any(b.pending_return(src) for cid in b.of_lease.get(rec.lease, [])
+                                 if not b.charges[cid].closed and b.charges[cid].due == b.leases[rec.lease].start
+                                 for _, _, src in b.charges[cid].paid_effective):
+                return "a payment for the move-in charges has a return waiting for staff"
             short = self.short(rec, now)
             return f"the move-in charges are {money(short)} short (money on the account pays older charges first)" if short else None
         if a == "request_transfer":
@@ -806,6 +810,9 @@ class Rent:
             if self.uncertain(r):
                 self.task(led, now, r.id, "payment", f"The hold on unit {r.unit} ran out while a payment is unconfirmed; the unit stays held "
                                                      "until the processor answers.")
+            elif r.lease and self.books.receivable(r.lease):
+                self.task(led, now, r.id, "hold", f"Unit {r.unit} has a signed lease but its move-in charges are short. "
+                                                  "The unit stays held until the charges are paid or staff release it.")
             elif self.paid(r):
                 if r.accepted and _d(r.quote["start"]) > local(now).date():
                     continue        # signed and paid for a later day: it waits for that day, and that is no task

@@ -2,6 +2,8 @@
 
 from datetime import date, timedelta
 
+import pytest
+
 from core.books import RENT, at_local
 
 from .test_core_renting import accept, act, billing, books, checkout, facility, move_out, ok, pay, rent, rented
@@ -432,6 +434,41 @@ def test_future_rental_starts_on_its_day_with_account_credit():
     started = rent(store).rentals[rental]
     assert started.state == "active"
     assert books(store).receivable(started.lease) == 0
+
+
+@pytest.mark.parametrize("released", [False, True])
+def test_future_rental_waits_for_a_return_of_its_funding(released):
+    from core.renting import StandIn, advance
+    from core.store import BASE
+    store, tenant, _ = facility()
+    now = at_local(date(2026, 11, 10), 10)
+    day = at_local(date(2026, 11, 15), 10)
+    reservation = ok(store, act("reserve", "staff:manager", "A101", tenant, start="2026-11-15"), now)
+    rental = ok(store, act("start_checkout", "staff:manager", reservation, tenant), now)
+    total = rent(store).rentals[rental].quote["total_cents"]
+    if released:
+        old = billing(store, lambda led: led.sign_lease(now, tenant, "A102", total, [], start=date(2026, 11, 1)))
+    payment = billing(store, lambda led: led.receive_payment(tenant, total, now))
+    if released:
+        charge = books(store).of_lease[old][0]
+        billing(store, lambda led: led.reverse(now, charge, "correction", "staff:manager"))
+    assert accept(store, tenant, rental, now).allowed
+    lease = rent(store).rentals[rental].lease
+    assert books(store).receivable(lease) == 0
+    origins = [src for cid in books(store).of_lease[lease] for _, _, src in books(store).charges[cid].paid_effective]
+    assert any(src.startswith("release:") for src in origins) if released else payment in origins
+    billing(store, lambda led: led.emit("payment.return_pending", now, {"payment": payment}, "pending:test"))
+    advance(store, BASE, StandIn(), day)
+    assert rent(store).rentals[rental].state != "active"
+    assert rent(store).holder("A101", day) == ("rental", rental)
+    if not released:
+        billing(store, lambda led: led.return_payment(day, payment))
+        advance(store, BASE, StandIn(), day)
+        assert rent(store).rentals[rental].state != "active"
+        assert rent(store).holder("A101", day) == ("rental", rental)
+        billing(store, lambda led: led.receive_payment(tenant, total, day))
+        advance(store, BASE, StandIn(), day)
+        assert rent(store).rentals[rental].state == "active"
 
 
 def test_cancelling_a_future_credit_funded_rental_releases_its_charges():

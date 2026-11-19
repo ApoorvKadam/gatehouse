@@ -183,15 +183,7 @@ class Ledger:
 
     def apply_credit(self, at: datetime, tenant: str) -> None:
         """Credit the tenant holds pays open charges in the usual order, oldest credit first."""
-        def pending(src: str) -> bool:
-            if src in self.books.pending_returns:
-                return True
-            if src.startswith("release:"):
-                charge = self.books.charges[src.removeprefix("release:")]
-                return any(pending(origin) for _, _, origin in charge.paid_effective)
-            return False
-
-        lots = [lot for lot in self.books.lots.get(tenant, []) if lot[1] > 0 and not pending(lot[0])]
+        lots = [lot for lot in self.books.lots.get(tenant, []) if lot[1] > 0 and not self.books.pending_return(lot[0])]
         if not lots:
             return
         apps = []
