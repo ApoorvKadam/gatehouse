@@ -15,9 +15,9 @@ from .store import Event
 
 
 def first_month(rent_cents: int, start: date) -> int:
-    """Rent for the first month, from the start day through the month's last day, rounded down to the cent."""
+    """Rent for the first month, from the start day through the month's last day, rounded half up to the cent."""
     days = calendar.monthrange(start.year, start.month)[1]
-    return rent_cents * (days - start.day + 1) // days
+    return (2 * rent_cents * (days - start.day + 1) + days) // (2 * days)
 
 
 class Refused(Exception):
@@ -183,7 +183,15 @@ class Ledger:
 
     def apply_credit(self, at: datetime, tenant: str) -> None:
         """Credit the tenant holds pays open charges in the usual order, oldest credit first."""
-        lots = [lot for lot in self.books.lots.get(tenant, []) if lot[1] > 0]
+        def pending(src: str) -> bool:
+            if src in self.books.pending_returns:
+                return True
+            if src.startswith("release:"):
+                charge = self.books.charges[src.removeprefix("release:")]
+                return any(pending(origin) for _, _, origin in charge.paid_effective)
+            return False
+
+        lots = [lot for lot in self.books.lots.get(tenant, []) if lot[1] > 0 and not pending(lot[0])]
         if not lots:
             return
         apps = []

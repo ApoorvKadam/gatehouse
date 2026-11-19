@@ -15,7 +15,7 @@ from core.seed import NOW, RENTS, UNITS, Year, build
 from core.store import Store
 
 
-FIXED_YEAR = "be4c9da7613b0a719e94359b729532461629ad2ca098e5c3fe838b302911d527"
+FIXED_YEAR = "7cec62d3f829486fe1494a7ad423c41898c4a3db72d5f9390fdf8be7b91e6785"
 
 
 @pytest.fixture(scope="module")
@@ -40,8 +40,8 @@ def test_the_fixed_year_stays_byte_identical(year):
 # the live copy's events other than unit prices: how many, and their fingerprint, as the build makes them without pricing. The ten
 # test cards on file (two each for five tenants) are among them; without those the counts are 3284 and 3442 and the fingerprints
 # are the ones this test held before cards were put on file.
-LIVE_COPY = {date(2026, 11, 14): (3294, "9ef6ca0c605e3779b0b0a2dd8cd5f085c0bb834767014d1a62293917371c4ac6"),
-             date(2026, 12, 3): (3452, "406c8157951b6563c41bcf1264716ec50c13c0bd9841db78a0a16bf4deb64623")}
+LIVE_COPY = {date(2026, 11, 14): (3294, "45df80c056e4fd0737a92d8fefa39738368d23aca6e963b7fce96f613406d2a9"),
+             date(2026, 12, 3): (3452, "e31bc957c679e396f4a3cd1c47d725f8e723b034a48417b6ebe4693dba39b8eb")}
 
 
 def test_the_live_copy_prices_every_unit_and_nothing_else_moves(year):

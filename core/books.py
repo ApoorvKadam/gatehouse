@@ -185,6 +185,7 @@ class Books:
         self.of_lease: dict[str, list[str]] = {}         # lease -> charge ids, in posting order
         self.obligations: dict[str, list[str]] = {}       # obligation -> charge ids, in posting order
         self.payments: dict[str, Payment] = {}
+        self.pending_returns: set[str] = set()
         self.declined: list[dict] = []
         self.credit: dict[str, int] = {}                  # tenant -> credit held
         self.lots: dict[str, list[list]] = {}             # tenant -> [source, cents left] for each amount of credit, oldest first
@@ -255,7 +256,10 @@ class Books:
                 self.credit[p["tenant"]] = self.credit.get(p["tenant"], 0) + p["credit_cents"]
                 self.lots.setdefault(p["tenant"], []).append([p["payment"], p["credit_cents"]])
             self._seen("P", p["payment"])
+        elif kind == "payment.return_pending":
+            self.pending_returns.add(p["payment"])
         elif kind == "payment.returned":
+            self.pending_returns.discard(p["payment"])
             pay = self.payments[p["payment"]]
             pay.returned = True
             for a in p["reopened"]:
