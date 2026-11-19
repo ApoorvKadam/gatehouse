@@ -87,7 +87,7 @@ A generated year of one facility runs through the same code: 120 units, 121 tena
 ## What is built and what is simulated
 
 - **Built:** the books, the gate, Tilden's reading, the FMS screens, renting records (reservations, move-ins with a signed agreement, transfers, and move-outs with a final bill), the staff decisions, owner rules written in plain words, the sign-in and the tests. The earlier reconciliation desk (below) is built too.
-- **Simulated:** the facility, its tenants and its money are generated. Replies are shown, never sent. Renting has no page for tenants yet. Move-ins, transfers and move-outs run in the code and its tests. On the screens, staff price, hold, block and unblock units and follow each rental. Gate codes go to a simulated gate system, and lien notices come in a later step. Card payments run in the card processor's test mode, and a payment still waiting when the service restarts is not carried over.
+- **Simulated:** the facility, its tenants and its money are generated. Replies are shown, never sent. Tenants rent a unit on the made-up facility's website, reached from the FMS menu, with a test card. Transfers and move-outs run in the code and its tests. On the screens, staff price, hold, block and unblock units and follow each rental. Gate codes go to a simulated gate system, and lien notices come in a later step. Card payments run in the card processor's test mode, and a payment still waiting when the service restarts is not carried over.
 - **Not shown yet:** no operator has used it.
 
 ## The earlier reconciliation desk

@@ -935,11 +935,20 @@ def _settle(led: Ledger, intent: Intent, p: dict, now: datetime) -> None:
             led.return_payment(now, intent.payment)
         except Refused as e:
             # billing cannot apply it: the intent stays as it was, so every reconciliation reports it until the books are corrected
+            if intent.payment not in led.books.pending_returns:
+                led.emit("payment.return_pending", now, {"payment": intent.payment}, f"return-pending:{intent.payment}", source="processor")
             _task(led, "returned payment needs staff", intent.tenant, f"return:{intent.id}", str(e), local(now).date(), now)
             return
     # keyed by the move, not just where it ends: a payment that turns up after its intent was closed and is then cancelled closes it twice
     led.emit("intent.updated", now, payload, f"intent:{intent.id}:{intent.state}:{to}", source="processor")
     recheck(led, intent.tenant, now)
+    if to == "returned" and intent.payment and (led.books.payments[intent.payment].applications or any(
+            u.lot == intent.payment for u in led.books.credit_uses.get(intent.tenant, []))):
+        covered = any(not t.acknowledged and t.tenant == intent.tenant and
+                      f"returned:{intent.payment}" in t.ref for t in state(led.books).tasks.values())
+        if not covered:
+            _task(led, "returned payment needs staff", intent.tenant, f"return:{intent.id}",
+                  "A payment came back after paying charges; those charges are owed again.", local(now).date(), now)
 
 
 def pay(store: Store, stream: str, processor: Processor, tenant: str, cents: int, card: str, now: datetime) -> Intent:
