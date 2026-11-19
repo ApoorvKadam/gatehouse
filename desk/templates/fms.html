@@ -29,13 +29,19 @@
 {% block body %}{% endblock %}
 </div>
 <script>
-// a table fills its frame with the spare width shared equally by its columns, so every gap between columns is the same
+// a table fills its frame with the spare width shared equally by its columns, so every gap between columns is the same.
+// A cell held wider by its min-width takes the first padding into that width, so the share is measured again until the frame is full.
 (function () {
   function spread() {
     document.querySelectorAll(".fms-table").forEach(function (t) {
       t.style.setProperty("--extra", "0px");
-      var n = t.rows.length ? t.rows[0].cells.length : 0, free = t.parentElement.clientWidth - t.offsetWidth;
-      if (n && free > 0) t.style.setProperty("--extra", Math.floor(free / n * 10) / 10 + "px");
+      var n = t.rows.length ? t.rows[0].cells.length : 0, extra = 0;
+      for (var i = 0; n && i < 4; i++) {
+        var free = t.parentElement.clientWidth - t.offsetWidth;
+        if (free < 1) break;
+        extra += free / n;
+        t.style.setProperty("--extra", Math.floor(extra * 10) / 10 + "px");
+      }
     });
   }
   spread();
