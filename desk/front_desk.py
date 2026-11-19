@@ -88,6 +88,9 @@ class FrontDesk:
         self.clock = clock or (lambda: datetime.now(ZONE))      # the real time in Orlando; tests pass a fixed one
         self.day: date | None = None                            # the day the books were made for
         self.lock = threading.RLock()
+        # website checkout forms already answered, by copy and page token, so a second press of one page never pays twice.
+        # ponytail: kept in memory; a restart forgets them, and a restart starts every copy afresh anyway
+        self.site_forms: set[tuple[str, str]] = set()
         self.store: Store | None = None
         self.cast: dict[str, dict] = {}
         self.reserved = 0.0
@@ -566,6 +569,20 @@ class FrontDesk:
             return led.books.rules[name]["version"]
 
     # renting ------------------------------------------------------------------------------------------------------------------
+    def find_or_add_tenant(self, visitor: str, name: str, phone: str) -> str:
+        """Find an exact match or add a tenant to this copy."""
+        with self.lock:
+            store, stream = self.ready(), self.stream(visitor)
+            books = store.books(stream)
+            match = next((t.id for t in books.tenants.values() if t.name == name and t.phone == phone), None)
+            if match:
+                return match
+            with store.write():
+                led = Ledger(store.books(stream))
+                tenant = led.add_tenant(self.clock(), name, phone)
+                store.append(stream, led.pending)
+            return tenant
+
     def rent_step(self, visitor: str, act: renting.Act):
         """One renting command on a visitor's copy. A rental it starts gets its gate code at once, from the stand-in gate."""
         with self.lock:

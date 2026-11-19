@@ -9,6 +9,7 @@
     <p class="fms-group">{{ group }}</p>
     {% for key, label, icon in items %}<a href="/{{ key }}" {% if nav == key %}aria-current="page"{% endif %}>{% include "icons/" ~ icon ~ ".svg" %}<span>{{ label }}</span></a>{% endfor %}
     {% endfor %}
+    <a href="/website" target="_blank" rel="noopener">{% include "icons/warehouse.svg" %}<span>Website</span></a>
   </nav>
   <div class="fms-me">
     <p><b>Dana Reyes</b><span>Office manager</span></p>
