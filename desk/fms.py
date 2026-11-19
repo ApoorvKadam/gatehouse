@@ -20,7 +20,7 @@ from core import delinquency as col
 from core.case import OFF
 from core.books import ADMIN_FEE_CENTS, LATE_FEE_CENTS, RENT, REVIEW_DAYS, lines, local, month_key
 from core.evidence import KIND_WORDS, clock, day, money, month_words
-from core.gate import ACTIONS, STAFF_ACTIONS, STAFF_RULE, Command, execute
+from core.gate import ACTIONS, RENT_SCOPE, STAFF_ACTIONS, STAFF_RULE, Command, execute
 from core.rules import staff_words, waiver_words
 from core.seed import story_month
 
@@ -45,6 +45,23 @@ PUBLIC = {"/", "/film", "/sign-in", "/sign-out", "/static", "/health/live", "/he
           "/webhooks/stripe"}
 SCORE = Path(__file__).parent / "static" / "first_shift.json"
 STAFF_WORDS = {"remove_disputed_fee": "Removed the fee", "keep_under_review": "Kept under review"}
+# renting's staff commands as the Today list words them; an attempt the gate refused reads "Asked to ..."
+RENT_WORDS = {"price_unit": ("Priced a unit", "Asked to price a unit"), "block_unit": ("Blocked a unit", "Asked to block a unit"),
+              "unblock_unit": ("Unblocked a unit", "Asked to unblock a unit"), "reserve": ("Held a unit", "Asked to hold a unit"),
+              "cancel_reservation": ("Cancelled a reservation", "Asked to cancel a reservation"),
+              "start_checkout": ("Started a checkout", "Asked to start a checkout"),
+              "request_transfer": ("Asked for a transfer", "Asked for a transfer"), "approve_transfer": ("Approved a transfer", "Asked to approve a transfer"),
+              "complete_transfer": ("Completed a transfer", "Asked to complete a transfer"),
+              "request_move_out": ("Recorded a move-out", "Asked to record a move-out"), "review_move_out": ("Reviewed a move-out", "Asked to review a move-out"),
+              "final_bill": ("Made the final bill", "Asked to make the final bill"), "offer_unit": ("Offered a unit", "Asked to offer a unit"),
+              "decline_offer": ("Declined an offer", "Asked to decline an offer"), "retry_access": ("Retried a gate code", "Asked to retry a gate code"),
+              # commands that are not staff's to give still leave a refused record when staff try them
+              "join_waitlist": ("Joined a waitlist", "Asked to join a waitlist"), "accept_offer": ("Accepted an offer", "Asked to accept an offer"),
+              "accept_agreement": ("Accepted an agreement", "Asked to accept an agreement"),
+              "confirm_payment": ("Recorded a payment", "Asked to record a payment"),
+              "payment_failed": ("Recorded a failed payment", "Asked to record a failed payment"),
+              "activate": ("Started a rental", "Asked to start a rental"),
+              "confirm_refund": ("Confirmed a refund", "Asked to confirm a refund")}
 MAY_DO = {"explain_charge": "Explain a charge from the records", "reverse_duplicate": "Reverse the second copy of a charge posted twice",
           "correct_fee_posted_in_error": "Remove a late fee posted in error", "open_dispute": "Record a dispute for the office manager",
           "waive_fee": "Waive a late fee under the owner's rule", "hand_to_staff": "Hand a message to staff, with the reason"}
@@ -250,8 +267,12 @@ class Facility:
         for e in self.own:
             if e.kind == "gate.decided" and e.source.startswith("staff:"):
                 p = e.payload
+                if p["action"] in RENT_SCOPE:       # a renting step: no fee, no note, and often no tenant (pricing a unit); a unit is named when it is one
+                    out.append({"who": self.people.get(p.get("tenant") or ""), "words": RENT_WORDS[p["action"]][0 if p["allowed"] else 1], "allowed": p["allowed"],
+                                "removed": False, "check": p["check"], "reason": None, "fee": "", "renting": True, "unit": p["about"] if p["about"] in self.b.units else None})
+                    continue
                 ch = self.b.charges.get(p.get("charge") or "")
-                out.append({"who": self.people[p["tenant"]], "words": STAFF_WORDS.get(p["action"], p["action"]), "allowed": p["allowed"],
+                out.append({"who": self.people.get(p.get("tenant") or ""), "words": STAFF_WORDS.get(p["action"], p["action"]), "allowed": p["allowed"],
                             "removed": p["allowed"] and p["action"] == "remove_disputed_fee",
                             "check": p["check"], "reason": p.get("reason"), "fee": f"{money(ch.cents)} {KIND_WORDS.get(ch.kind, ch.kind)}" if ch else ""})
         return out[::-1]
