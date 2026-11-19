@@ -20,6 +20,23 @@
   </table></div>
 </section>
 
+{% if renting %}
+<section class="fms-section" id="renting" aria-labelledby="h-renting">
+  <h2 id="h-renting">Renting</h2>
+  <div class="fms-scroll" tabindex="0" role="region" aria-labelledby="h-renting"><table class="fms-table">
+    <thead><tr><th>Unit</th><th>Where it stands</th><th>Payment</th><th>Agreement</th><th>Lease</th><th>Gate code</th></tr></thead>
+    <tbody>{% for x in renting %}<tr>
+      <td><a href="/units#u-{{ x.unit }}">{{ x.unit }}</a></td>
+      <td class="fms-state"><span class="chip {{ x.where[1] }}">{{ x.where[0] }}</span>{% if x.where[2] %}<span class="fms-why">{{ x.where[2] }}</span>{% endif %}</td>
+      <td class="{{ 'fms-state' if x.pay else 'muted' }}">{% if x.pay %}<span class="chip {{ x.pay[1] }}">{{ x.pay[0] }}</span><span class="fms-why">{{ x.pay[2] }}</span>{% else %}&ndash;{% endif %}</td>
+      <td class="{{ 'fms-state' if x.agreement else 'muted' }}">{% if x.agreement %}<span class="chip {{ x.agreement[1] }}">{{ x.agreement[0] }}</span>{% if x.agreement[2] %}<span class="fms-why">{{ x.agreement[2] }}</span>{% endif %}{% else %}&ndash;{% endif %}</td>
+      <td class="muted">{% if x.lease %}{{ x.lease }}{% else %}&ndash;{% endif %}</td>
+      <td class="{{ 'fms-state' if x.gate else 'muted' }}">{% if x.gate %}<span class="chip {{ x.gate[1] }}">{{ x.gate[0] }}</span>{% else %}&ndash;{% endif %}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+{% endif %}
+
 {% if col.show %}{% set plan = col.plan %}
 <section class="fms-section" id="collections" aria-labelledby="h-collections">
   <h2 id="h-collections">Collections</h2>

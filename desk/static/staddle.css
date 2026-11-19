@@ -1252,13 +1252,16 @@ html { font-size: 93.75%; }
 .fms-map { display: grid; gap: var(--s4); margin-bottom: var(--s6); }
 .fms-map-row h3 { font-size: var(--t-sm); font-weight: 600; color: var(--ink-3); margin-bottom: var(--s2); }
 .fms-tiles { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(5.75rem, 1fr)); gap: 6px; }
-.fms-tiles a, .fms-tiles .fms-vacant { display: grid; gap: 1px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--frame); background: var(--paper); color: var(--ink); font-size: var(--t-sm); line-height: 1.3; }
+.fms-tiles a, .fms-tiles .fms-vacant, .fms-tiles .held, .fms-tiles .fms-blocked { display: grid; gap: 1px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--frame); background: var(--paper); color: var(--ink); font-size: var(--t-sm); line-height: 1.3; }
 .fms-tiles a:hover { border-color: var(--ink-3); text-decoration: none; }
 .fms-tiles b { font-variant-numeric: tabular-nums; }
 .fms-tiles small { color: var(--ink-3); font-size: var(--t-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* the industry's site-map colours (storEDGE: green vacant, blue occupied, red delinquent, yellow reserved) */
 .fms-tiles .occ { background: color-mix(in srgb, var(--blue) 12%, var(--paper)); border-color: color-mix(in srgb, var(--blue) 28%, var(--paper)); }
 .fms-tiles .fms-vacant { background: var(--chip-done); border-color: transparent; color: var(--chip-done-ink); }
+.fms-tiles .held { background: var(--chip-wait); border-style: dashed; border-color: var(--chip-wait-ink); color: var(--chip-wait-ink); }
+.fms-tiles .fms-blocked { background: color-mix(in srgb, var(--ink) 8%, var(--paper)); border-color: var(--frame); color: var(--ink-2); }
+.fms-tiles .held small { color: inherit; opacity: .85; }
 .fms-tiles .act { background: var(--chip-act); border-color: transparent; color: var(--chip-act-ink); }
 .fms-tiles .act small, .fms-tiles .wait small { color: inherit; opacity: .85; }
 .fms-tiles .wait { background: var(--chip-wait); border-color: transparent; color: var(--chip-wait-ink); }
@@ -1270,6 +1273,8 @@ html { font-size: 93.75%; }
 .fms-legend b { font-variant-numeric: tabular-nums; }
 .fms-legend i.act { background: var(--chip-act); border-color: transparent; }
 .fms-legend i.wait { background: var(--chip-wait); border-color: transparent; }
+.fms-legend i.held { background: var(--chip-wait); border-style: dashed; border-color: var(--chip-wait-ink); }
+.fms-legend i.blk { background: color-mix(in srgb, var(--ink) 8%, var(--paper)); }
 
 /* the Staddle mark: a level slab held on two staddle stones, with the gap that keeps the store dry */
 .brand .brand-mark { width: 34px; height: 34px; flex: none; }
@@ -1286,8 +1291,20 @@ html { font-size: 93.75%; }
 .fms-exempt > label { flex: 1 0 100%; font-size: var(--t-sm); color: var(--ink-2); }
 .fms-exempt > input[name="reason"] { flex: 1 1 22rem; }
 .fms-change { margin-top: var(--s3); }
+/* a unit's change row sits under its row and opens from its Change link (:target), so it needs no script and works from the keyboard */
+.fms-table tr.fms-act { display: none; }
+.fms-table tr.fms-act:target { display: table-row; }
+.fms-table tr.fms-act td { white-space: normal; text-align: left; background: color-mix(in srgb, var(--ink) 3%, var(--paper)); }
+.fms-table tbody tr:has(+ tr.fms-act:last-child) td { border-bottom: 0; }
+.fms-unit-act { display: flex; flex-wrap: wrap; align-items: start; gap: var(--s4) var(--s6); padding: var(--s2) 0; }
+.fms-unit-act > p { flex: 1 0 100%; display: flex; gap: var(--s4); align-items: baseline; margin: 0; }
+.fms-unit-act form { flex: 1 1 15rem; display: grid; gap: var(--s2); }
+.fms-unit-act label { font-size: var(--t-sm); color: var(--ink-2); }
+.fms-unit-act input { width: 100%; }
 /* a state in a table: the chip, and its reason wrapping on its own line beneath, so a long reason never widens the table */
 .fms-table .fms-state { white-space: normal; text-align: left; min-width: 11rem; max-width: 17rem; }
+/* the Renting table's state cells have no width cap, so its columns share the card's full width like the Rentals table above it */
+#renting .fms-table .fms-state { max-width: none; min-width: 8rem; }
 .fms-why { display: block; margin-top: 4px; font-size: var(--t-sm); line-height: 1.4; color: var(--ink-3); }
 .fms-change summary { cursor: pointer; font-size: var(--t-sm); font-weight: 600; color: var(--ink-2); padding: var(--s2) 0; }
 .fms-settings { display: grid; grid-template-columns: minmax(9rem, 14rem) minmax(6rem, 9rem) auto; align-items: center; gap: var(--s2) var(--s3); margin-top: var(--s2); }

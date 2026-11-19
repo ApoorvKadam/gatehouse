@@ -22,6 +22,9 @@
       <li><a href="/today#disputes">{% include "icons/scale.svg" %}<span><b>{{ disputes }}</b> dispute{{ 's' if disputes != 1 }} waiting for a decision</span><span>Today</span></a></li>
       <li><a href="/today#collections">{% include "icons/list-checks.svg" %}<span><b>{{ tasks }}</b> collections item{{ 's' if tasks != 1 }} waiting for staff</span><span>Today</span></a></li>
       <li><a href="/today#overlocks">{% include "icons/list-checks.svg" %}<span><b>{{ overlocks }}</b> overlock{{ 's' if overlocks != 1 }} due on the owner's schedule</span><span>Today</span></a></li>
+      {% if unfinished %}<li><a href="/today#rentals">{% include "icons/calendar-clock.svg" %}<span><b>{{ unfinished }}</b> rental{{ 's' if unfinished != 1 }} waiting for staff</span><span>Today</span></a></li>{% endif %}
+      {% if codes %}<li><a href="/today#codes">{% include "icons/shield-check.svg" %}<span><b>{{ codes }}</b> gate code{{ 's' if codes != 1 }} not confirmed</span><span>Today</span></a></li>{% endif %}
+      {% if turnover %}<li><a href="/today#turnover">{% include "icons/door-open.svg" %}<span><b>{{ turnover }}</b> unit{{ 's' if turnover != 1 }} waiting for an old gate code to be revoked</span><span>Today</span></a></li>{% endif %}
       <li><a href="/billing#past-due">{% include "icons/credit-card.svg" %}<span><b>{{ past|length }}</b> tenants past due</span><span>Billing</span></a></li>
     </ul>
   </section>

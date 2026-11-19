@@ -93,6 +93,7 @@ class FrontDesk:
         self.reserved = 0.0
         self._year = None
         self._views: OrderedDict[str, tuple] = OrderedDict()
+        self._rents: OrderedDict[str, renting.Rent] = OrderedDict()      # stream -> its renting state, folded on the books view() holds
         # ponytail: the last proposal per visitor, in memory; a restart drops it and the owner asks again
         self._proposals: OrderedDict[str, tuple] = OrderedDict()     # visitor -> (id, proposal, sentence, rule versions, day)
         self._resets: dict[str, int] = {}                            # visitor -> how many times their copy was reset
@@ -170,6 +171,7 @@ class FrontDesk:
                          "run TEXT NOT NULL, shift TEXT, cents REAL NOT NULL)")
         store.db.execute("CREATE UNIQUE INDEX IF NOT EXISTS usage_once ON usage(visitor, run, shift)")
         self._views.clear()             # event ids start again in the new file, so no cached view may match
+        self._rents.clear()
         self._facts = None
         self.cast, self.store, self._year, self.day = year.cast, store, year, today
         if self.path != ":memory:":     # visitor copies last a day: files older than yesterday's go (a run begun before midnight keeps yesterday's)
@@ -265,6 +267,23 @@ class FrontDesk:
                     self._views.popitem(last=False)
             self._views.move_to_end(stream)
             return hit[1], hit[2], hit[3], hit[4], (store.events(stream) if everything else [])
+
+    def rent_view(self, visitor: str) -> renting.Rent:
+        """One copy's renting state, folded once per change and kept for the last few copies like view(). It reads the same folded books
+        as view(), so a copy holds one set of books, not two; a page only reads either."""
+        with self.lock:
+            books = self.view(visitor)[0]
+            store, stream = self.ready(), self.stream(visitor)
+            hit = self._rents.get(stream)
+            if hit is None or hit.books is not books:
+                hit = renting.Rent(books)
+                for e in store.events(stream):
+                    hit.apply(e.kind, e.at, e.payload)
+                self._rents[stream] = hit
+                while len(self._rents) > 8:
+                    self._rents.popitem(last=False)
+            self._rents.move_to_end(stream)
+            return hit
 
     def facts(self) -> dict:
         """The facility's own numbers for the Overview, from the base year (which never changes after it is built)."""
@@ -377,6 +396,7 @@ class FrontDesk:
                 continue
             self.store.drop_stream(s)
             self._views.pop(s, None)        # event ids can be used again once a copy is gone, so its cached view goes with it
+            self._rents.pop(s, None)
             self._forget(mark)              # its codes on the stand-in gate go with it
 
     def tenants(self) -> list[dict]:
@@ -444,6 +464,7 @@ class FrontDesk:
             self._resets[visitor] = self._resets.get(visitor, 0) + 1
             store.drop_stream(stream)
             self._views.pop(stream, None)
+            self._rents.pop(stream, None)
             self._forget(mark)                  # nor any code of it on the stand-in gate
             return True
 
@@ -552,6 +573,21 @@ class FrontDesk:
             decision = renting.run(store, stream, act, now)
             self._advance(store, stream, now)
             return decision
+
+    def keep_step_note(self, visitor: str, text: str) -> None:
+        """Why a staff step was not taken before it reached the gate, kept to be shown once on the page that asked."""
+        with self.lock:
+            self._keep(self._step_notes, visitor, text)
+
+    def staff_rent(self, visitor: str, act: renting.Act) -> bool:
+        """A staff renting step on this copy, through the gate: whether it was done. A refusal is kept to be shown once on the page that asked."""
+        d = self.rent_step(visitor, act)
+        with self.lock:
+            if d.allowed:
+                self._step_notes.pop(visitor, None)
+            else:
+                self._keep(self._step_notes, visitor, d.check)
+        return d.allowed
 
     def pay_rental(self, visitor: str, rental: str, card: str):
         """A renter's card payment for a rental in checkout, through the processor; a rental it starts gets its code at once."""

@@ -465,7 +465,7 @@ def test_a_staff_renting_command_is_listed_without_a_tenant_and_every_page_still
             (None, "Asked to start a rental", False), ("Priya Shah", "Joined a waitlist", True),
             (None, "Asked to block a unit", False), ("Priya Shah", "Held a unit", True)]
         decided = seen(c.get("/today").text).split("Decided by staff", 1)[1]
-        assert f"Priced a unit, unit {vacant}" in decided and "Not done: the unit is occupied" in decided and "Priya Shah" in decided
+        assert f"Set the street rate of unit {vacant} to $120.00." in decided and "Not done: the unit is occupied" in decided and "Priya Shah" in decided
         assert "Not done: staff may not activate" in decided and "None" not in decided and "price_unit" not in decided
         for page in (*PAGES, record_of(c, "Priya Shah")):
             assert c.get(page).status_code == 200, page
