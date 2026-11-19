@@ -3,7 +3,7 @@
 <div class="wrap website-page website-columns">
   <section>
     <h1>Your details</h1>
-    <form class="website-form" method="post" action="/website/rent/{{ unit.id }}">
+    <form class="website-form" method="post" action="/rent/{{ unit.id }}">
       <input type="hidden" name="token" value="{{ token }}">
       <label for="name">Name</label><input id="name" name="name" maxlength="80" required>
       <label for="phone">Phone</label><input id="phone" name="phone" type="tel" maxlength="30" required>

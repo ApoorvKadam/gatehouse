@@ -39,7 +39,7 @@ SESSION = "staddle_session"
 STAFF = "staff:office_manager"
 # the menu in the groups an FMS is organised by; a module joins its group when it is built, never as a greyed-out item
 MENU = (("Run the facility", (("home", "Home", "house"), ("today", "Today", "list-checks"), ("messages", "Messages", "message-square"))),
-        ("Facility and tenants", (("units", "Units", "warehouse"), ("tenants", "Tenants", "users"))),
+        ("Facility and tenants", (("units", "Units", "warehouse"), ("tenants", "Tenants", "users"), ("rent", "Online rentals", "globe"))),
         ("Money", (("billing", "Billing and payments", "credit-card"),)),
         ("Setup", (("rules", "Rules", "scale"),)))
 # the only addresses that answer without a session; tests/test_fms.py walks every route against this list. The card processor's
@@ -823,7 +823,7 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
 
         return templates.TemplateResponse(request, template, {"f": f, "money": site_money, "plain": plain, **ctx})
 
-    @app.get("/website", include_in_schema=False)
+    @app.get("/rent", include_in_schema=False)
     def website(request: Request):
         f = Facility(fd, need(request))
 
@@ -842,15 +842,15 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
         shown = [u for u in units if u.size == size] if size else units
         return site_show(request, "site_store.html", f, units=shown, sizes=sizes, size=size)
 
-    @app.get("/website/rent/{unit}", include_in_schema=False)
+    @app.get("/rent/{unit}", include_in_schema=False)
     def website_rent(request: Request, unit: str):
         f = Facility(fd, need(request))
         record = f.rent.units.get(unit)
         if not record or not record.rent_cents or not record.size or f.rent.status(unit, f.now) != "vacant":
-            return RedirectResponse("/website?unavailable=1", status_code=303)
+            return RedirectResponse("/rent?unavailable=1", status_code=303)
         return site_show(request, "site_renter.html", f, unit=record, token=secrets.token_hex(6))
 
-    @app.post("/website/rent/{unit}", include_in_schema=False)
+    @app.post("/rent/{unit}", include_in_schema=False)
     async def website_begin(request: Request, unit: str):
         same_site(request)
         ident = need(request)
@@ -873,9 +873,9 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
                 return checkout.made if checkout.allowed else None
 
         rental = await run_in_threadpool(begin)
-        return RedirectResponse(f"/website/checkout/{rental}" if rental else "/website?unavailable=1", status_code=303)
+        return RedirectResponse(f"/rent/checkout/{rental}" if rental else "/rent?unavailable=1", status_code=303)
 
-    @app.get("/website/checkout/{rental}", include_in_schema=False)
+    @app.get("/rent/checkout/{rental}", include_in_schema=False)
     def website_checkout(request: Request, rental: str):
         f = Facility(fd, need(request))
         r = f.rent.rentals.get(rental)
@@ -884,7 +884,7 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
         agreement = f.rent.agreements[r.agreement]
         return site_show(request, "site_checkout.html", f, rental=r, agreement=agreement, token=secrets.token_hex(6))
 
-    @app.post("/website/checkout/{rental}", include_in_schema=False)
+    @app.post("/rent/checkout/{rental}", include_in_schema=False)
     async def website_pay(request: Request, rental: str):
         same_site(request)
         ident = need(request)
@@ -914,9 +914,9 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
                     pass
 
         await run_in_threadpool(pay)
-        return RedirectResponse(f"/website/result/{rental}", status_code=303)
+        return RedirectResponse(f"/rent/result/{rental}", status_code=303)
 
-    @app.get("/website/result/{rental}", include_in_schema=False)
+    @app.get("/rent/result/{rental}", include_in_schema=False)
     def website_result(request: Request, rental: str):
         f = Facility(fd, need(request))
         r = f.rent.rentals.get(rental)

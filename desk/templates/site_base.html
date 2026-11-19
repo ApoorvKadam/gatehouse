@@ -2,6 +2,6 @@
 {% block title %}{{ plain(f.name) }}{% endblock %}
 {% block bodyclass %}website{% endblock %}
 {% block header %}
-<header class="top"><div class="wrap"><a class="brand" href="/website">{{ plain(f.name) }}</a><span class="website-city">{{ plain(f.b.facility.city) }}</span><nav aria-label="Website"><a href="/website">Rent a unit</a></nav></div></header>
+<header class="top"><div class="wrap"><a class="brand" href="/rent">{{ plain(f.name) }}</a><span class="website-city">{{ plain(f.b.facility.city) }}</span><nav aria-label="Online rentals"><a href="/rent"{% if request.url.path == "/rent" %} aria-current="page"{% endif %}>Rent a unit</a></nav></div></header>
 {% endblock %}
-{% block footer %}<footer><div class="wrap"><p>{{ plain(f.name) }}, {{ plain(f.b.facility.city) }}. A made-up facility on a demo copy.</p></div></footer>{% endblock %}
+{% block footer %}<footer><div class="wrap"><p>{{ plain(f.name) }}, {{ plain(f.b.facility.city) }}. A made-up facility on a demo copy. <a href="/home">Back to the FMS</a></p></div></footer>{% endblock %}

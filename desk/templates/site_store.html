@@ -2,15 +2,15 @@
 {% block main %}
 <div class="wrap website-page" id="units">
   <h1>Storage units in {{ plain(f.b.facility.city) }}</h1>
-  <p class="website-lede">The facility's own website, where tenants rent a unit online. A unit rented here shows in the FMS at once.</p>
+  <p class="website-lede">Where tenants rent a unit online. A unit rented here shows in the FMS at once.</p>
   {% if request.query_params.get('unavailable') %}<p class="website-notice">We could not hold that unit. Please choose a unit and try again.</p>{% endif %}
-  <nav class="website-sizes" aria-label="Unit sizes"><a href="/website"{% if not size %} aria-current="page"{% endif %}>All</a>{% for s in sizes %}<a href="/website?size={{ s|urlencode }}"{% if s == size %} aria-current="page"{% endif %}>{{ plain(s) }}</a>{% endfor %}</nav>
+  <nav class="website-sizes" aria-label="Unit sizes"><a href="/rent"{% if not size %} aria-current="page"{% endif %}>All</a>{% for s in sizes %}<a href="/rent?size={{ s|urlencode }}"{% if s == size %} aria-current="page"{% endif %}>{{ plain(s) }}</a>{% endfor %}</nav>
   <div class="website-grid">
     {% for unit in units %}
     <article class="website-card">
       <h2>{{ plain(unit.size) }}</h2><p class="website-unit">Unit {{ plain(unit.id) }}</p>
       <p class="website-price"><strong>{{ money(unit.rent_cents) }}</strong> <span>a month</span></p>
-      <a class="button primary" href="/website/rent/{{ unit.id }}">Rent this unit</a>
+      <a class="button primary" href="/rent/{{ unit.id }}">Rent this unit</a>
     </article>
     {% else %}<p>No units are available right now.</p>{% endfor %}
   </div>

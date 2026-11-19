@@ -7,6 +7,6 @@
     <div class="website-result-row"><h2>{{ label }}</h2><div><span class="chip {{ state[1] }}">{{ plain(state[0]) }}</span><p>{% if state[2] %}{{ plain(state[2]) }}{% elif label == "Rental" %}Unit {{ plain(rental.unit) }}.{% elif label == "Gate code" and state[0] == "Code set and read back" %}The gate returned the code.{% else %}This is the recorded status.{% endif %}</p></div></div>
     {% endfor %}
   </div>
-  <div class="website-links">{% if retry %}<a href="/website/checkout/{{ rental.id }}">Try another card</a>{% endif %}<a href="/website">Back to the units</a><a href="/tenants/{{ person.slug }}">See this tenant in the FMS</a></div>
+  <div class="website-links">{% if retry %}<a href="/rent/checkout/{{ rental.id }}">Try another card</a>{% endif %}<a href="/rent">Back to the units</a><a href="/tenants/{{ person.slug }}">See this tenant in the FMS</a></div>
 </div>
 {% endblock %}
