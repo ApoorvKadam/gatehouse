@@ -1310,3 +1310,59 @@ html { font-size: 93.75%; }
 .fms-settings { display: grid; grid-template-columns: minmax(9rem, 14rem) minmax(6rem, 9rem) auto; align-items: center; gap: var(--s2) var(--s3); margin-top: var(--s2); }
 .fms-settings .button { grid-column: 1 / -1; justify-self: start; margin-top: var(--s2); }
 .fms input[type="number"], .fms input[type="date"] { font: inherit; color: var(--ink); background: var(--paper); border: 1px solid var(--frame); border-radius: 6px; padding: 8px 10px; }
+
+/* website */
+/* the page fills the window, so a short page never shows a bare band under its footer (as body.fms does) */
+body.website { min-height: 100vh; display: flex; flex-direction: column; }
+body.website > main { flex: 1 0 auto; }
+.website .top { position: static; }
+.website .top .wrap { gap: var(--s4); }
+.website-city { color: var(--ink-3); font-size: var(--t-sm); }
+.website .top nav { margin-left: auto; }
+.website .top nav a { color: var(--ink); font-weight: 600; }
+.website main { padding: var(--s7) 0 var(--s8); }
+.website-page h1, .website-page h2 { font-family: var(--display); font-weight: 500; letter-spacing: -0.02em; line-height: 1.15; }
+.website-page h1 { font-size: clamp(2rem, 3vw, 2.75rem); }
+.website-page h2 { font-size: 1.5rem; }
+.website-notice { margin-top: var(--s4); color: var(--ink-2); }
+.website-sizes { display: flex; flex-wrap: wrap; gap: var(--s2); margin: var(--s5) 0; }
+.website-sizes a { padding: 6px 14px; border: 1px solid var(--frame); border-radius: 999px; color: var(--ink); font-size: var(--t-sm); }
+.website-sizes a:hover { background: var(--bar); text-decoration: none; }
+.website-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: var(--s4); }
+.website-card, .website-summary, .website-result { border: 1px solid var(--frame); border-radius: 10px; background: var(--paper); }
+.website-card { padding: var(--s5); display: flex; flex-direction: column; }
+.website-card h2 { font-size: 2rem; }
+.website-unit, .website-label { color: var(--ink-3); font-size: var(--t-sm); }
+.website-price { margin: var(--s5) 0; color: var(--ink-2); }
+.website-price strong, .website-total { color: var(--ink); font-size: 2rem; line-height: 1.1; font-weight: 700; }
+.website-price span { font-size: var(--t-sm); }
+.website-card .button { justify-content: center; margin-top: auto; }
+.website-columns { display: grid; gap: var(--s6); align-items: start; }
+.website-summary { padding: var(--s5); }
+.website-summary h2 + .website-summary-unit { margin-top: var(--s4); }
+.website-summary-unit { font-weight: 600; }
+.website-summary-unit span { display: block; color: var(--ink-3); font-size: var(--t-sm); font-weight: 400; }
+.website-steps { margin: var(--s4) 0 0; padding-left: var(--s5); color: var(--ink-2); }
+.website-steps li { padding: var(--s2) 0 var(--s2) var(--s2); }
+.website-form label { font-size: var(--t-sm); font-weight: 600; }
+.website-form input:not([type="hidden"]), .website-form select { width: 100%; font: inherit; color: var(--ink); background: var(--paper); border: 1px solid var(--frame); border-radius: 6px; padding: 8px 10px; }
+.website-form:not(aside) { display: grid; gap: var(--s2); margin-top: var(--s5); max-width: 36rem; }
+.website-form:not(aside) label:not(:first-of-type) { margin-top: var(--s3); }
+.website-form .button { justify-content: center; margin-top: var(--s4); }
+.website-summary.website-form { display: grid; gap: var(--s2); }
+.website-total { margin: var(--s2) 0 var(--s4); }
+.website-totals { margin: 0 0 var(--s4); border-top: 1px solid var(--rule); }
+.website-totals div { display: flex; justify-content: space-between; gap: var(--s4); padding: var(--s3) 0; border-bottom: 1px solid var(--rule); }
+.website-totals dt { color: var(--ink-2); }
+.website-totals dd { margin: 0; font-weight: 600; white-space: nowrap; }
+.website-page h1 + .website-label { margin-top: var(--s2); }
+.website-document { white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid var(--frame); border-radius: 10px; background: var(--bar); padding: var(--s5); margin-top: var(--s4); line-height: 1.7; }
+.website-accept { display: flex; align-items: baseline; gap: var(--s2); margin-top: var(--s4); }
+.website-result { margin-top: var(--s5); }
+.website-result-row { display: grid; grid-template-columns: minmax(8rem, 1fr) 3fr; gap: var(--s4); padding: var(--s4) var(--s5); }
+.website-result-row + .website-result-row { border-top: 1px solid var(--rule); }
+.website-result-row h2 { font-size: 1.25rem; }
+.website-result-row p { margin-top: var(--s1); font-size: var(--t-sm); color: var(--ink-3); }
+.website-links { display: flex; flex-wrap: wrap; gap: var(--s4) var(--s6); margin-top: var(--s5); font-weight: 600; }
+@media (min-width: 1100px) { .website-columns { grid-template-columns: minmax(0, 3fr) minmax(20rem, 2fr); gap: var(--s7); } }
+@media (max-width: 32rem) { .website .top .wrap { gap: var(--s2); flex-wrap: wrap; height: auto; padding-top: var(--s3); padding-bottom: var(--s3); } .website .brand { font-size: 1.25rem; } .website .top nav a { padding: 0; } .website-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr)); } .website-result-row { grid-template-columns: 1fr; gap: var(--s2); } }
