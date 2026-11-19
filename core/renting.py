@@ -195,6 +195,7 @@ class Rental:
     access: str | None = None
     moveout: str | None = None
     refund: dict | None = None      # money to give back when a paid rental never started: cents, and pending until confirmed
+    cancelled_why: str | None = None    # what cancelled a rental that never started, as the cancel event recorded it
 
 
 @dataclass
@@ -356,6 +357,7 @@ class Rent:
 
     def _on_rental_cancelled(self, at, p):
         self.rentals[p["rental"]].refund = p.get("refund")
+        self.rentals[p["rental"]].cancelled_why = p.get("reason")
 
     def _on_rental_activated(self, at, p):
         self.rentals[p["rental"]].lease = p["lease"]

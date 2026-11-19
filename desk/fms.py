@@ -9,6 +9,7 @@ import json
 import re
 import secrets
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 from functools import cached_property
 from pathlib import Path
 from urllib.parse import parse_qs
@@ -21,6 +22,7 @@ from core import delinquency as col
 from core import renting
 from core.case import OFF
 from core.books import ADMIN_FEE_CENTS, LATE_FEE_CENTS, RENT, REVIEW_DAYS, at_local, lines, local, month_key
+from core.billing import Refused
 from core.evidence import KIND_WORDS, clock, day, money, month_words
 from core.gate import ACTIONS, RENT_SCOPE, STAFF_ACTIONS, STAFF_RULE, Command, execute
 from core.rules import staff_words, waiver_words
@@ -429,7 +431,7 @@ class Facility:
                 where = ("Waiting to start", "wait", f"Hold ends {clock(r.expires_at)}." if now < r.expires_at else
                          f"The hold time ended {clock(r.expires_at)}; the unit stays held while a payment is waiting or paid for.")
             else:
-                where = {"active": ("Active", "done", ""), "ended": ("Ended", "plain", ""), "cancelled": ("Cancelled", "plain", ""),
+                where = {"active": ("Active", "done", ""), "ended": ("Ended", "plain", ""), "cancelled": ("Cancelled", "plain", f"Cancelled because {r.cancelled_why}." if r.cancelled_why else ""),
                          "ending": ("Moving out" if m else "Moving to another unit", "wait", f"Last day {dated(m.on, year)}." if m else "")
                          }.get(r.state) or ("Hold ended", "plain", f"The hold ended {clock(r.expires_at)}.")
             note = [where[2]] if where[2] else []
@@ -457,7 +459,7 @@ class Facility:
             lease = b.leases.get(r.lease or "")
             a = rent.access.get(r.access or "")
             gate = GATE_WORDS[a.state] if a else ("Access pending", "wait") if r.state in ("active", "ending") else None
-            rows.append({"unit": r.unit, "where": (where[0], where[1], " ".join(note)), "pay": (*pay, f"Move-in total {money(r.quote['total_cents'])}"),
+            rows.append({"id": r.id, "unit": r.unit, "where": (where[0], where[1], " ".join(note)), "pay": (*pay, f"Move-in total {money(r.quote['total_cents'])}"),
                          "agreement": agreement, "gate": (*gate, "") if gate else None,
                          "lease": (f"Ended {dated(lease.ended, year)}" if lease.ended else f"Started {dated(lease.start, year)}") if lease else None})
         return rows[::-1]
@@ -815,6 +817,112 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
         return response
 
     # signed in ---------------------------------------------------------------------------------------------------------
+    def site_show(request, template, f, **ctx):
+        def site_money(cents):
+            return f"${cents // 100:,}" + (f".{cents % 100:02d}" if cents % 100 else "")
+
+        return templates.TemplateResponse(request, template, {"f": f, "money": site_money, "plain": plain, **ctx})
+
+    @app.get("/website", include_in_schema=False)
+    def website(request: Request):
+        f = Facility(fd, need(request))
+
+        def area(size):
+            parts = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*[xX]\s*(\d+(?:\.\d+)?)\s*", size)
+            return Decimal(parts[1]) * Decimal(parts[2]) if parts else Decimal("Infinity")
+
+        units = []
+        for unit, record in f.rent.units.items():
+            if record.rent_cents and record.size and f.rent.status(unit, f.now) == "vacant":
+                units.append(record)
+        units.sort(key=lambda u: (area(u.size), u.rent_cents, u.id))
+        sizes = sorted({u.size for u in units}, key=lambda size: (area(size), size))
+        return site_show(request, "site_store.html", f, units=units, sizes=sizes)
+
+    @app.get("/website/rent/{unit}", include_in_schema=False)
+    def website_rent(request: Request, unit: str):
+        f = Facility(fd, need(request))
+        record = f.rent.units.get(unit)
+        if not record or not record.rent_cents or not record.size or f.rent.status(unit, f.now) != "vacant":
+            return RedirectResponse("/website?unavailable=1", status_code=303)
+        return site_show(request, "site_renter.html", f, unit=record, token=secrets.token_hex(6))
+
+    @app.post("/website/rent/{unit}", include_in_schema=False)
+    async def website_begin(request: Request, unit: str):
+        same_site(request)
+        ident = need(request)
+        data = await form(request)
+        token, name, phone = data.get("token", ""), data.get("name", "").strip(), data.get("phone", "").strip()
+        if not re.fullmatch(r"[0-9a-f]{12}", token) or not name or not phone or len(name) > 80 or len(phone) > 30:
+            raise HTTPException(422, "Enter your name and phone, then try again.")
+
+        def begin():
+            with fd.lock:
+                rent = fd.rent_view(ident)
+                record = rent.units.get(unit)
+                if not record or not record.rent_cents or not record.size:
+                    return None
+                tenant = fd.find_or_add_tenant(ident, name, phone)
+                held = fd.rent_step(ident, renting.Act(f"site:{token}:reserve", "reserve", "renter", unit, tenant))
+                if not held.allowed:
+                    return None
+                checkout = fd.rent_step(ident, renting.Act(f"site:{token}:checkout", "start_checkout", "renter", held.made, tenant))
+                return checkout.made if checkout.allowed else None
+
+        rental = await run_in_threadpool(begin)
+        return RedirectResponse(f"/website/checkout/{rental}" if rental else "/website?unavailable=1", status_code=303)
+
+    @app.get("/website/checkout/{rental}", include_in_schema=False)
+    def website_checkout(request: Request, rental: str):
+        f = Facility(fd, need(request))
+        r = f.rent.rentals.get(rental)
+        if not r:
+            raise HTTPException(404, "No such rental.")
+        agreement = f.rent.agreements[r.agreement]
+        return site_show(request, "site_checkout.html", f, rental=r, agreement=agreement, token=secrets.token_hex(6))
+
+    @app.post("/website/checkout/{rental}", include_in_schema=False)
+    async def website_pay(request: Request, rental: str):
+        same_site(request)
+        ident = need(request)
+        data = await form(request)
+        token, card = data.get("token", ""), data.get("card", "")
+        if not re.fullmatch(r"[0-9a-f]{12}", token) or card not in ("card_ok", "card_declined"):
+            raise HTTPException(422, "Choose a card.")
+
+        def pay():
+            with fd.lock:
+                r = fd.rent_view(ident).rentals.get(rental)
+                if not r:
+                    raise HTTPException(404, "No such rental.")
+                if not r.accepted and data.get("accept") != "yes":
+                    raise HTTPException(422, "Accept the agreement and choose a card.")
+                if (ident, token) in fd.site_forms:     # a second press of the same page returns the first answer
+                    return
+                fd.site_forms.add((ident, token))
+                if not r.accepted:      # once accepted, a declined card can be tried again without accepting twice
+                    decision = fd.rent_step(ident, renting.Act(f"site:{token}:accept", "accept_agreement", "renter", rental, r.tenant,
+                                                               {"sha256": data.get("sha256", "")}))
+                    if not decision.allowed or decision.repeated:
+                        return
+                try:
+                    fd.pay_rental(ident, rental, card)      # the core refuses a payment that is not due, so a second press pays nothing
+                except Refused:
+                    pass
+
+        await run_in_threadpool(pay)
+        return RedirectResponse(f"/website/result/{rental}", status_code=303)
+
+    @app.get("/website/result/{rental}", include_in_schema=False)
+    def website_result(request: Request, rental: str):
+        f = Facility(fd, need(request))
+        r = f.rent.rentals.get(rental)
+        if not r:
+            raise HTTPException(404, "No such rental.")
+        row = next(row for row in f.renting_of(r.tenant) if row.get("id") == r.id)
+        retry = r.state in renting.WAITING and f.rent.holder(r.unit, f.now) == ("rental", r.id) and f.pay_state(r) != "paid"   # a declined card, hold still on
+        return site_show(request, "site_result.html", f, rental=r, row=row, person=f.people[r.tenant], retry=retry)
+
     @app.post("/sign-out", include_in_schema=False)
     def sign_out(request: Request):
         same_site(request)

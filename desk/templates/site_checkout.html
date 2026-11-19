@@ -1,0 +1,18 @@
+{% extends "site_base.html" %}
+{% block main %}
+<form method="post" class="wrap website-page website-columns">
+  <input type="hidden" name="token" value="{{ token }}">
+  <input type="hidden" name="sha256" value="{{ agreement.sha256 }}">
+  <section>
+    <h1>Rental agreement</h1><p class="website-label">Version {{ plain(agreement.version) }}</p>
+    <div class="website-document">{{ agreement.text }}</div>
+    {% if rental.accepted %}<p class="website-accept">You accepted this agreement. Choose a card to pay.</p>{% else %}<label class="website-accept"><input type="checkbox" name="accept" value="yes" required> I accept this agreement.</label>{% endif %}
+  </section>
+  <aside class="website-summary website-form">
+    <h2>Move-in total</h2><p class="website-total">{{ money(rental.quote['total_cents']) }}</p>
+    <dl class="website-totals"><div><dt>Rent for the rest of the month</dt><dd>{{ money(rental.quote['first_cents']) }}</dd></div>{% for fee, cents in rental.quote['fees'].items() %}<div><dt>{{ 'Admin fee' if fee == 'admin_fee' else plain(fee) }}</dt><dd>{{ money(cents) }}</dd></div>{% endfor %}</dl>
+    <label for="card">Test card</label><select id="card" name="card"><option value="card_ok">Card ending 4242</option><option value="card_declined">Card ending 9995, declined</option></select>
+    <button class="button primary" type="submit">Pay and rent</button>
+  </aside>
+</form>
+{% endblock %}
