@@ -118,15 +118,28 @@ def test_one_checkout_page_pays_at_most_once_and_a_retry_needs_no_second_accepta
         assert rental.state == 'active' and len(rental.pay_ops) == 2
 
 
-def test_tenant_method_finds_exact_match_and_is_scoped_to_copy(fms_url, sim):
+def test_typed_details_never_pick_an_existing_tenant_or_spend_their_credit(fms_url, sim, stripe):
     app = site(fms_url)
+    app.state.front_desk.processor = StripeProcessor('sk_test_fake', base_url=stripe.url, clock=lambda: NOW.timestamp())
     with sign_in(app) as c, sign_in(app) as other:
         fd, ident = desk_of(app, c)
         _, other_id = desk_of(app, other)
-        first = fd.find_or_add_tenant(ident, 'Rae Quinn', '+14075550199')
-        assert fd.find_or_add_tenant(ident, 'Rae Quinn', '+14075550199') == first
-        assert fd.find_or_add_tenant(ident, 'Rae Quinn', '+14075550198') != first
+        first = fd.add_renter(ident, 'Rae Quinn', '+14075550199')
+        assert fd.add_renter(ident, 'Rae Quinn', '+14075550199') != first
         assert first not in fd.view(other_id)[0].tenants
+        units = [u for u in vacant(fd, ident, 20) if rent_of(fd, ident).units[u].rent_cents]
+        known = fd.view(ident)[0].tenants[first]
+        with fd.lock:                   # the known tenant holds more credit than any move-in costs
+            store, stream = fd.ready(), fd.stream(ident)
+            with store.write():
+                led = Ledger(store.books(stream))
+                led.receive_payment(first, 100000, NOW)
+                store.append(stream, led.pending)
+        path = begin(c, units[0], name=known.name, phone=known.phone).headers['location']
+        (rental,) = rent_of(fd, ident).rentals.values()
+        assert rental.tenant != first
+        finish(c, path, 'card_declined')
+        assert rent_of(fd, ident).rentals[rental.id].state != 'active'
 
 
 def test_website_needs_sign_in(fms_url, sim):
