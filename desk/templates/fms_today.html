@@ -81,7 +81,7 @@
 <section class="fms-section" id="decided" aria-labelledby="h-decided">
   <h2 id="h-decided">Decided by staff</h2>
   <ul class="fms-closed">
-    {% for d in decisions %}<li><a href="/tenants/{{ d.who.slug }}">{{ d.who.name }}</a> <span>{% if not d.allowed %}Not done: {{ d.check }}. Nothing in the books changed.{% elif d.removed %}{{ d.words }}: {{ d.fee }}. {{ d.check|upfirst }}. Books updated; the tenant is not told from here.{% else %}{{ d.words }}: {{ d.fee }}. {{ d.check|upfirst }}. Nothing in the books changed.{% endif %} Your note: {{ d.reason }}.</span></li>{% endfor %}
+    {% for d in decisions %}<li>{% if d.who %}<a href="/tenants/{{ d.who.slug }}">{{ d.who.name }}</a> {% endif %}<span>{% if not d.allowed %}{% if d.renting %}{{ d.words }}{% if d.unit %}, unit {{ d.unit }}{% endif %}. {% endif %}Not done: {{ d.check }}. Nothing in the books changed.{% elif d.renting %}{{ d.words }}{% if d.unit %}, unit {{ d.unit }}{% endif %}: {{ d.check|upfirst }}.{% elif d.removed %}{{ d.words }}: {{ d.fee }}. {{ d.check|upfirst }}. Books updated; the tenant is not told from here.{% else %}{{ d.words }}: {{ d.fee }}. {{ d.check|upfirst }}. Nothing in the books changed.{% endif %}{% if d.reason %} Your note: {{ d.reason }}.{% endif %}</span></li>{% endfor %}
   </ul>
 </section>
 {% endif %}

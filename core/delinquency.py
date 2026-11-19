@@ -949,13 +949,21 @@ def pay(store: Store, stream: str, processor: Processor, tenant: str, cents: int
         if unsettled(books, tenant):
             raise Refused("an earlier payment's outcome is not known yet; it is checked with the processor, never paid again")
         led = Ledger(books)
-        iid = books.next_id("PI")
-        # the copy's mark keeps keys apart when a reset copy, under the same name, starts its counts again
-        nonce = state(books).nonce or uuid.uuid4().hex[:12]
-        led.emit("intent.created", now, {"intent": iid, "tenant": tenant, "cents": cents, "key": f"{stream}:{iid}:{nonce}", "nonce": nonce,
-                                         "copy": stream, "simulated": processor.simulated}, f"intent:{iid}", source="processor")
+        iid = open_intent(led, stream, processor, tenant, cents, now)
         store.append(stream, led.pending)
     return send(store, stream, processor, iid, card, now)
+
+
+def open_intent(led: Ledger, stream: str, processor: Processor, tenant: str, cents: int, now: datetime) -> str:
+    """Write a payment's intent, before any request goes out; its key is fixed here. Call it inside a write transaction (renting
+    writes it together with the rental's own payment record). Returns the intent's id."""
+    books = led.books
+    iid = books.next_id("PI")
+    # the copy's mark keeps keys apart when a reset copy, under the same name, starts its counts again
+    nonce = state(books).nonce or uuid.uuid4().hex[:12]
+    led.emit("intent.created", now, {"intent": iid, "tenant": tenant, "cents": cents, "key": f"{stream}:{iid}:{nonce}", "nonce": nonce,
+                                     "copy": stream, "simulated": processor.simulated}, f"intent:{iid}", source="processor")
+    return iid
 
 
 def send(store: Store, stream: str, processor: Processor, intent_id: str, card: str, now: datetime) -> Intent:

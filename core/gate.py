@@ -55,6 +55,7 @@ class Decision:
     events: list[int] = field(default_factory=list)
     repeated: bool = False
     charge: str | None = None       # the charge a tenant's ask named, for asks checked without acting
+    made: str | None = None         # the record a renting command created (a reservation, rental, transfer...)
 
 
 def _month_of(charge) -> str | None:
@@ -287,6 +288,43 @@ def execute(store: Store, stream: str, cmd: Command, now: datetime) -> Decision:
         # a business effect already taken in this stream raises sqlite3.IntegrityError here, and nothing of the command is kept
         dec.events = [e.id for e in store.append(stream, led.pending) if e.id is not None]
         return dec
+
+
+# renting ----------------------------------------------------------------------------------------------------------------
+# who may ask for each renting command: the agent may hold a unit, reserve and answer; only code records a payment or activates
+# a rental; staff or the renter's own confirmed action drive transfers and move-outs
+RENT_SCOPE = {
+    "price_unit": ("staff",), "block_unit": ("staff",), "unblock_unit": ("staff",),
+    "reserve": ("operator", "renter", "staff"), "cancel_reservation": ("renter", "staff"), "start_checkout": ("renter", "staff"),
+    "accept_agreement": ("renter",), "confirm_payment": ("code",), "payment_failed": ("code",), "activate": ("code",),
+    "request_transfer": ("renter", "staff"), "approve_transfer": ("staff",), "complete_transfer": ("staff", "code"),
+    "request_move_out": ("renter", "staff"), "review_move_out": ("staff",), "final_bill": ("staff",),
+    "join_waitlist": ("operator", "renter", "staff"), "offer_unit": ("staff", "code"), "accept_offer": ("renter",),
+    "decline_offer": ("renter", "staff"), "retry_access": ("staff",), "confirm_refund": ("staff",),
+}
+WHO = {"operator": "the agent", "renter": "the renter", "staff": "staff", "code": "code", "fixed_workflow": "the fixed workflow"}
+
+
+def evaluate_rent(rent, books: Books, act, now: datetime) -> Decision:
+    """A renting command's checks, in the gate's order, against the folded books and renting state. Writes nothing. `rent` gives
+    the records' own safety check (refusal) and the charges the command would change (touches)."""
+    d = lambda ok, check: Decision(ok, act.action, check, command=act.id)
+    who = "staff" if act.source.startswith("staff:") else act.source
+    # 1. exists and in scope
+    if act.action not in RENT_SCOPE:
+        return d(False, "not an action the system knows")
+    if who not in RENT_SCOPE[act.action]:
+        return d(False, f"{WHO.get(who, who)} may not {act.action.replace('_', ' ')}; only "
+                        f"{' or '.join(WHO[w] for w in RENT_SCOPE[act.action])} may")
+    # 2. safety, fixed in code
+    why = rent.refusal(act, now)
+    if why:
+        return d(False, why)
+    # 3. the owner's rules: none apply to renting yet
+    # 4. holds: a charge under a dispute hold is not changed until staff decide the dispute
+    if any(books.held(c.id) for c in rent.touches(act, now)):
+        return d(False, "a charge this would change is held under a dispute; staff decide the dispute first")
+    return d(True, "the records support it")
 
 
 def open_dispute_on(books: Books, charge: str):

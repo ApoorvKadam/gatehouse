@@ -14,6 +14,12 @@ from .books import (ADMIN_FEE, ADMIN_FEE_CENTS, FEE_KINDS, LATE_FEE, LATE_FEE_CE
 from .store import Event
 
 
+def first_month(rent_cents: int, start: date) -> int:
+    """Rent for the first month, from the start day through the month's last day, rounded down to the cent."""
+    days = calendar.monthrange(start.year, start.month)[1]
+    return rent_cents * (days - start.day + 1) // days
+
+
 class Refused(Exception):
     """A command whose preconditions do not hold; nothing was emitted."""
 
@@ -92,15 +98,14 @@ class Ledger:
         self.emit("tenant.added", at, {"tenant": t, "name": name, "phone": phone}, f"tenant:{t}", source="staff:front_desk")
         return t
 
-    def sign_lease(self, at: datetime, tenant: str, unit: str, rent_cents: int, schedule: list[str]) -> str:
-        """A move-in: the lease with the fees the tenant signed for, the prorated first month, and the admin fee if signed for."""
+    def sign_lease(self, at: datetime, tenant: str, unit: str, rent_cents: int, schedule: list[str], start: date | None = None) -> str:
+        """A move-in: the lease with the fees the tenant signed for, the prorated first month, and the admin fee if signed for.
+        `start` is the day the lease begins when it is not the day it is signed (a rental quoted earlier)."""
         lease = self.books.next_id("L")
-        start = local(at).date()
+        start = start or local(at).date()
         self.emit("lease.signed", at, {"lease": lease, "tenant": tenant, "unit": unit, "rent_cents": rent_cents, "start": start.isoformat(),
                                        "schedule": schedule}, f"lease:{lease}", source="staff:front_desk")
-        days = calendar.monthrange(start.year, start.month)[1]
-        first = rent_cents * (days - start.day + 1) // days
-        self._charge(at, lease, RENT, first, f"rent:{lease}:{month_key(start)}", start)
+        self._charge(at, lease, RENT, first_month(rent_cents, start), f"rent:{lease}:{month_key(start)}", start)
         if ADMIN_FEE in schedule:
             self._charge(at, lease, ADMIN_FEE, ADMIN_FEE_CENTS, f"admin_fee:{lease}", start)
         return lease
@@ -197,6 +202,37 @@ class Ledger:
             n = len(self.books.credit_uses.get(tenant, [])) + 1
             self.emit("credit.applied", at, {"tenant": tenant, "applications": apps}, f"credit:{tenant}:{n}")
 
+    def reserve_refund(self, at: datetime, tenant: str, cents: int, key: str, prefer: tuple[str, ...] = (), source: str = "billing") -> int:
+        """Set credit aside for a refund: it leaves the tenant's credit, so nothing can spend it again, and is owed back until the
+        processor confirms the refund went out. Draws only on the lots named in `prefer` (the payments being given back) when it
+        names any, else on the oldest credit; never more than is there, and once per key. Returns the cents set aside."""
+        if cents < 0:
+            raise Refused("a refund cannot be negative")
+        if key in self.books.reserved:
+            return 0
+        lots = [lot for lot in self.books.lots.get(tenant, []) if lot[1] > 0 and (not prefer or lot[0] in prefer)]
+        draws, left = [], min(cents, self.books.credit.get(tenant, 0))
+        for src, have in lots:
+            if left == 0:
+                break
+            draws.append({"lot": src, "cents": min(left, have)})
+            left -= draws[-1]["cents"]
+        total = sum(d["cents"] for d in draws)
+        if total:
+            self.emit("refund.reserved", at, {"refund": key, "tenant": tenant, "cents": total, "lots": draws}, key, source=source)
+        return total
+
+    def refund_paid(self, at: datetime, key: str, source: str = "billing", command: str | None = None) -> int:
+        """The refund set aside under `key` went out: it is no longer owed back. Refused when there is no such refund or it was already
+        confirmed. Returns the cents."""
+        info = self.books.refund_of.get(key)
+        if info is None:
+            raise Refused("no such refund")
+        if info["paid"]:
+            raise Refused("that refund is already confirmed")
+        self.emit("refund.paid", at, {"refund": key, "tenant": info["tenant"], "cents": info["cents"]}, f"refund-paid:{key}", source=source, command=command)
+        return info["cents"]
+
     def return_payment(self, at: datetime, payment: str) -> None:
         """The processor took a payment back. Every charge it paid, directly or through the credit it left, is reopened; credit
         it left that was never used is taken back. If it reopens rent whose cutoff has passed, that month's late fee posts now."""
@@ -209,6 +245,9 @@ class Ledger:
         # ponytail: a charge since reversed or waived cannot be reopened; such a return goes to staff, not into these books
         if any(self.books.charges[a["charge"]].closed for a in reopened):
             raise Refused("a charge this payment paid has since been reversed or waived; staff handle this return")
+        # ponytail: credit from this payment set aside for a refund would be given back twice; staff cancel the refund first
+        if any(r.get(payment) for r in self.books.reserved.values()):
+            raise Refused("credit from this payment is set aside for a refund; staff handle this return")
         unused = next((lot[1] for lot in self.books.lots.get(pay.tenant, []) if lot[0] == payment), 0)
         self.emit("payment.returned", at, {"payment": payment, "tenant": pay.tenant, "cents": pay.cents, "reopened": reopened,
                                            "credit_cents": unused}, f"returned:{payment}", source="processor")

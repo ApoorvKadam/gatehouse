@@ -17,7 +17,7 @@ from datetime import date, datetime, timedelta, timezone
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
-from core import delinquency
+from core import delinquency, renting
 from core.books import ZONE, at_local, local
 from core.billing import Ledger, Refused
 from core.case import READ_ONLY, handle
@@ -82,6 +82,9 @@ class FrontDesk:
         if processor_path is None and path != ":memory:":
             processor_path = os.path.join(os.path.dirname(os.path.abspath(path)), "processor.json")
         self.processor = processor or delinquency.SimulatedProcessor(processor_path)
+        # the stand-in gate keeps its records there too: a restart finds the codes it made and issues nothing twice. Until a real
+        # access system is connected every gate code in a copy is the stand-in's, and its records say so.
+        self.access = renting.StandIn(path=None if path == ":memory:" else os.path.join(os.path.dirname(os.path.abspath(path)), "access.json"))
         self.clock = clock or (lambda: datetime.now(ZONE))      # the real time in Orlando; tests pass a fixed one
         self.day: date | None = None                            # the day the books were made for
         self.lock = threading.RLock()
@@ -128,10 +131,12 @@ class FrontDesk:
         for s in streams:
             try:
                 delinquency.reconcile(store, s, self.processor, now)
+                self._settle_rentals(store, s, now)
                 waiting = self._unresolved(store, s)
                 if any(i.state == "pending" for i in waiting):
                     delinquency.close_copy(self.processor, s, min(i.created for i in waiting))
                     delinquency.reconcile(store, s, self.processor, now)
+                    self._settle_rentals(store, s, now)
             except (delinquency.ProcessorTimeout, delinquency.ProcessorRefused) as exc:
                 # the first answer that does not come ends the pass: one wait under the lock per attempt, not one per copy
                 log.error("the processor could not settle the payments of %s: %s", s, type(exc).__name__)
@@ -169,9 +174,78 @@ class FrontDesk:
         self.cast, self.store, self._year, self.day = year.cast, store, year, today
         if self.path != ":memory:":     # visitor copies last a day: files older than yesterday's go (a run begun before midnight keeps yesterday's)
             keep = {f"{root}-{d.isoformat()}{ext}" for d in (today, today - timedelta(days=1))}
-            for old in glob.glob(f"{glob.escape(root)}-????-??-??{ext}*"):
-                if old.removesuffix("-wal").removesuffix("-shm") not in keep:
-                    os.remove(old)
+            def gone() -> list[str]:
+                return [f for f in glob.glob(f"{glob.escape(root)}-????-??-??{ext}*") if f.removesuffix("-wal").removesuffix("-shm") not in keep]
+            # the gate codes of the copies in a file that goes are noted first, and forgotten once it is gone; the files are listed
+            # again after reading them, since opening a database leaves its -wal and -shm files beside it
+            prefixes = self._note_copies_of([f for f in gone() if not f.endswith(("-wal", "-shm"))])
+            if prefixes is not None:
+                for f in gone():
+                    os.remove(f)
+                for prefix in prefixes:
+                    self._forget(prefix)
+        self._finish_cleanups()
+
+    def _note_copies_of(self, files: list[str]) -> list[str] | None:
+        """The gate-code prefix of every visitor copy in these database files, each written to the stand-in's file before the files are
+        deleted. None when a file cannot be read or a note cannot be written: nothing is deleted then and the next seed tries again."""
+        prefixes = []
+        for f in files:
+            try:
+                prefixes += [m + ":" for m in renting.copy_marks_in(f)]
+            except Exception:
+                log.exception("the copies in %s could not be read, so their gate codes cannot be named and the old day files stay for now", f)
+                return None
+        try:
+            for prefix in prefixes:
+                self.access.note(prefix)
+        except Exception:
+            log.exception("the gate cleanup could not be noted, so old day files stay for now")
+            return None
+        return prefixes
+
+    def _forget(self, prefix: str) -> None:
+        """Forget a gone copy's codes on the stand-in gate. A failure is logged and the note on file lets a later pass finish it."""
+        try:
+            self.access.forget(prefix)
+        except Exception:
+            log.exception("forgetting the gate codes of %s failed; a later pass finishes it", prefix)
+
+    def _finish_cleanups(self) -> None:
+        """Finish what a stop or a fault left noted: the codes of a copy that is gone are forgotten, and a note for a copy that is still
+        here (its drop failed) is cleared with its codes kept."""
+        for prefix in list(self.access.pending):
+            alive = self._copy_is_alive(prefix.rstrip(":"))
+            if alive is None:
+                continue                    # a day file could not be read: the note stays until every file can be checked
+            if alive:
+                try:
+                    self.access.release(prefix)
+                except Exception:
+                    log.exception("clearing the gate cleanup note of %s failed", prefix)
+            else:
+                self._forget(prefix)
+
+    def _copy_is_alive(self, copy: str) -> bool | None:
+        """Whether a copy (its name and mark) is still in the current day's database or in any day file that is kept. None when it is in
+        none that could be read but a kept file could not be read: it may be there, so nothing is decided."""
+        stream = copy.split("@")[0]
+        if self.store.db.execute("SELECT 1 FROM events WHERE stream = ? LIMIT 1", (stream,)).fetchone() and renting.copy_mark(self.store, stream) == copy:
+            return True
+        if self.path == ":memory:":
+            return False
+        root, ext = os.path.splitext(self.path)
+        unread = False
+        for f in glob.glob(f"{glob.escape(root)}-????-??-??{ext}"):
+            if f.endswith(f"-{self.day.isoformat()}{ext}"):
+                continue                    # the current day's file is the store checked above
+            try:
+                if copy in renting.copy_marks_in(f):
+                    return True
+            except Exception:
+                log.exception("the copies in %s could not be read, so a gate cleanup note stays", f)
+                unread = True
+        return None if unread else False
 
     def view(self, visitor: str, everything: bool = False) -> tuple:
         """What the pages read for one copy: its books, its own events, whether every entry balances and the debits, and with
@@ -210,9 +284,12 @@ class FrontDesk:
         each copy that has payments is reconciled with the processor (a payment whose answer was lost is settled from its record),
         and its due parts are noticed, missed ones breached with a staff task, promises and exemptions settled. At boot it catches
         up on whatever fell due while nothing ran. Every record is keyed, so a pass with nothing new writes nothing. Returns the
-        copies it swept."""
+        copies it swept. Each copy then gets the renting pass: a rental waiting on its payment moves with the answer, holds that ran
+        out are written down, each gate code is carried forward on the stand-in gate, and each code is checked against its rental (a
+        task for one that never read back or that an ended rental still has)."""
         with self.lock:
             store = self.ready()
+            self._finish_cleanups()
             for event in self.processor.take_events():
                 try:
                     delinquency.webhook(store, self.processor, event, self.clock())
@@ -222,24 +299,39 @@ class FrontDesk:
         swept = []
         for s in streams:
             with self.lock:         # one copy at a time, so pages wait for one copy's pass at most
+                now = self.clock()
                 try:                # a fault in one copy never stops the copies after it
-                    now = self.clock()
-                    if delinquency.state(store.books(s)).intents:
+                    intents = delinquency.state(store.books(s)).intents
+                    if intents:
                         delinquency.reconcile(store, s, self.processor, now)
                     delinquency.sweep(store, s, now)
                     swept.append(s)
                 except Exception:
                     log.exception("collections sweep failed for %s", s)
+                # renting reads what the pass above settled: a rental waiting on its payment moves with the answer, holds that ran out
+                # are written down and each gate code is carried forward, then each code is checked against its rental. Each step is
+                # tried alone, so a fault stops neither the steps after it, the collections pass, nor another copy.
+                for step in (renting.settle_payments, lambda st, c, n: renting.advance(st, c, self.access, n), renting.check_codes):
+                    try:
+                        step(store, s, now)
+                    except Exception:
+                        log.exception("renting pass failed for %s", s)
         return swept
 
     def processor_event(self, event: dict) -> str:
         """A signed processor event on the webhook, applied the way the hourly pass applies one. A payment the processor no longer
         knows is answered as unknown, so it is not sent again."""
         with self.lock:
+            store, now = self.ready(), self.clock()
             try:
-                return delinquency.webhook(self.ready(), self.processor, event, self.clock())
+                result = delinquency.webhook(store, self.processor, event, now)
             except delinquency.ProcessorRefused:
                 return "unknown"
+            if result == "applied":         # the payment is recorded now: a rental waiting on it moves at once
+                stream = event["metadata"]["copy"]
+                self._settle_rentals(store, stream, now)
+                self._advance(store, stream, now)
+            return result
 
     def serve(self) -> None:
         """Run at boot in a thread of its own: build the day's year, catch up, then sweep every SWEEP_EVERY seconds."""
@@ -277,8 +369,15 @@ class FrontDesk:
         for s in old:
             if self._unresolved(self.store, s):
                 continue                    # a payment the processor has not settled keeps its copy
+            mark = renting.copy_mark(self.store, s) + ":"      # named before the copy goes: it is read from the copy's first event
+            try:
+                self.access.note(mark)          # on file before the drop, so a fault in forgetting is finished later
+            except Exception:
+                log.exception("the gate cleanup of %s could not be noted, so the copy stays for now", s)
+                continue
             self.store.drop_stream(s)
             self._views.pop(s, None)        # event ids can be used again once a copy is gone, so its cached view goes with it
+            self._forget(mark)              # its codes on the stand-in gate go with it
 
     def tenants(self) -> list[dict]:
         self.ready()
@@ -338,12 +437,14 @@ class FrontDesk:
                 self._keep(self._reset_notes, visitor, "Start over waits: a card payment on this copy has not been settled by the card processor "
                            "yet, so nothing was thrown away. Try again once the card processor has answered.")
                 return False
+            self.access.note(mark := renting.copy_mark(store, stream) + ":")     # on file before anything changes: if it cannot be written, nothing is dropped
             self._proposals.pop(visitor, None)
             self._notes.pop(visitor, None)
             self._reset_notes.pop(visitor, None)
             self._resets[visitor] = self._resets.get(visitor, 0) + 1
             store.drop_stream(stream)
             self._views.pop(stream, None)
+            self._forget(mark)                  # nor any code of it on the stand-in gate
             return True
 
 
@@ -442,6 +543,40 @@ class FrontDesk:
                 store.append(stream, led.pending)
             self._notes.pop(visitor, None)      # a refusal not yet shown is out of date once a going back succeeds
             return led.books.rules[name]["version"]
+
+    # renting ------------------------------------------------------------------------------------------------------------------
+    def rent_step(self, visitor: str, act: renting.Act):
+        """One renting command on a visitor's copy. A rental it starts gets its gate code at once, from the stand-in gate."""
+        with self.lock:
+            store, stream, now = self.ready(), self.stream(visitor), self.clock()
+            decision = renting.run(store, stream, act, now)
+            self._advance(store, stream, now)
+            return decision
+
+    def pay_rental(self, visitor: str, rental: str, card: str):
+        """A renter's card payment for a rental in checkout, through the processor; a rental it starts gets its code at once."""
+        with self.lock:
+            store, stream, now = self.ready(), self.stream(visitor), self.clock()
+            intent = renting.pay_rental(store, stream, self.processor, rental, card, now)
+            self._advance(store, stream, now)
+            return intent
+
+    def _settle_rentals(self, store: Store, stream: str, now: datetime) -> None:
+        """Carry the copy's rentals forward from what its payments say. Run after every way a payment's state can change, so the wait of
+        a rental is answered the moment its intent is closed and a later success is never taken for the first answer. A fault is logged
+        and the hourly pass finishes it: the payment is already recorded."""
+        try:
+            renting.settle_payments(store, stream, now)
+        except Exception:
+            log.exception("renting pass failed for %s", stream)
+
+    def _advance(self, store: Store, stream: str, now: datetime) -> None:
+        """Carry the copy's gate codes forward. What was just written (a charge, a started rental) stands whether this works or not:
+        a fault is logged and the hourly pass finishes the code."""
+        try:
+            renting.advance(store, stream, self.access, now)
+        except Exception:
+            log.exception("gate code step failed for %s", stream)
 
     # collections ------------------------------------------------------------------------------------------------------------
     def _keep(self, notes: dict[str, str], visitor: str, text: str) -> None:

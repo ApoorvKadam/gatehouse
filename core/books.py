@@ -5,7 +5,7 @@ credit), so `lines()` is a pure function of the event. Replaying the log through
 journal that was stored; the tests check that. Amounts are whole cents. A debit is positive, a credit negative.
 
 Accounts: receivable:<lease>, income:rent, income:fees, contra:waivers, clearing:card, credit:<tenant> (money the facility
-holds for the tenant, a liability)."""
+holds for the tenant, a liability), refund:<tenant> (credit set aside to give back, owed until the refund goes out)."""
 from __future__ import annotations
 
 from copy import deepcopy
@@ -80,6 +80,10 @@ def lines(kind: str, p: dict) -> list[Line]:
         return out
     if kind == "charge.reversed":
         return [(_income(p["kind"]), p["cents"], p["charge"]), (f"receivable:{p['lease']}", -p["cents"], p["charge"])] + _moves(p)
+    if kind == "refund.reserved":
+        return [(f"credit:{p['tenant']}", p["cents"], None), (f"refund:{p['tenant']}", -p["cents"], None)]
+    if kind == "refund.paid":
+        return [(f"refund:{p['tenant']}", p["cents"], None), ("clearing:card", -p["cents"], None)]
     if kind == "charge.waived":
         return [("contra:waivers", p["cents"], p["charge"]), (f"receivable:{p['lease']}", -p["cents"], p["charge"])] + _moves(p)
     return []
@@ -184,6 +188,9 @@ class Books:
         self.lots: dict[str, list[list]] = {}             # tenant -> [source, cents left] for each amount of credit, oldest first
         self.credit_uses: dict[str, list[CreditUse]] = {}  # tenant -> every application of credit, with the credit it came from
         self.waivers: dict[str, list[datetime]] = {}      # tenant -> when each late fee was waived
+        self.refunds: dict[str, int] = {}                 # tenant -> credit set aside for refunds, owed until they go out
+        self.reserved: dict[str, dict[str, int]] = {}     # refund -> {credit lot: cents set aside from it}
+        self.refund_of: dict[str, dict] = {}              # refund -> its tenant, the cents set aside, and whether it was confirmed paid out
         self.disputes: dict[str, Dispute] = {}
         self.holds: dict[str, Hold] = {}
         self.rules: dict[str, dict] = {}                  # rule id -> its latest version (sentence, typed form, version)
@@ -275,6 +282,20 @@ class Books:
                 self.lots.setdefault(p["tenant"], []).append([f"release:{ch.id}", a["cents"]])
             if kind == "charge.waived" and ch.kind == LATE_FEE:     # the owner's yearly limit is on late-fee waivers only
                 self.waivers.setdefault(p["tenant"], []).append(at)
+        elif kind == "refund.reserved":
+            # the money leaves the tenant's credit and its lots, so no charge can be paid with it again
+            self.credit[p["tenant"]] -= p["cents"]
+            self.refunds[p["tenant"]] = self.refunds.get(p["tenant"], 0) + p["cents"]
+            self.reserved[p["refund"]] = {d["lot"]: d["cents"] for d in p["lots"]}
+            self.refund_of[p["refund"]] = {"tenant": p["tenant"], "cents": p["cents"], "paid": False}
+            for d in p["lots"]:
+                for lot in self.lots[p["tenant"]]:
+                    if lot[0] == d["lot"]:
+                        lot[1] -= d["cents"]
+        elif kind == "refund.paid":
+            # the refund went out: what was owed back is paid and no longer owed (the reserved record stays, as a returned payment reads it)
+            self.refunds[p["tenant"]] -= p["cents"]
+            self.refund_of[p["refund"]]["paid"] = True
         elif kind == "dispute.opened":
             hold = p.get("hold")
             self.disputes[p["dispute"]] = Dispute(p["dispute"], p["charge"], p["tenant"], at, date.fromisoformat(p["review_by"]), p["owner"], p["quote"], hold)

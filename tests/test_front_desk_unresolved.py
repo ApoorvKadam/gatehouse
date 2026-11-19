@@ -9,13 +9,14 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from core import delinquency as col
+from core import delinquency as col, renting
 from core.books import at_local
 from core.stripe_processor import StripeProcessor
 from desk import front_desk, stripe_hook
 from desk.front_desk import FrontDesk
 from tests.fake_stripe import FakeStripe, sign
 from tests.test_core_delinquency import NOW, world
+from tests.test_core_renting_pay import desk_rental
 
 DAY = date(2026, 12, 3)
 STREAM = "visitor:v1"
@@ -254,3 +255,36 @@ def test_a_payment_closed_as_absent_that_later_shows_up_succeeded_is_recorded_by
     body = json.dumps({"id": "evt_late", "type": "payment_intent.succeeded", "data": {"object": dict(stripe.intents[made["id"]], object="payment_intent")}}).encode()
     r = TestClient(app).post("/webhooks/stripe", content=body, headers={"Stripe-Signature": sign("whsec_t", body, int(now[0].timestamp()))})
     assert r.json() == {"result": "applied"} and intent(desk.store, i).state == "succeeded"
+
+
+@pytest.mark.parametrize("how", ["down", "refused"])
+def test_one_attempt_to_leave_the_day_makes_one_failed_call_however_many_rentals_wait(desk, stripe, now, how):
+    """A rental's card payment is an intent like any other, so the same guard holds it: one wait under the lock per attempt."""
+    stripe.keep_processing = True
+    for v in ("v1", "v2", "v3"):
+        desk_rental("card_ok", True, desk=desk, stream=f"visitor:{v}")
+    stripe.keep_processing = False
+    if how == "down":
+        stripe.down = True
+    else:
+        desk.processor = StripeProcessor("sk_test_wrong", base_url=stripe.url, clock=lambda: now[0].timestamp())      # every call is refused
+    calls = len(stripe.calls)
+    now[0] = at_local(DAY + timedelta(days=1), 9)
+    old = desk.store
+    assert desk.ready() is old
+    assert len(stripe.calls) == calls + 1
+    assert [x.state for v in ("v1", "v2", "v3") for x in renting.load(old, f"visitor:{v}")[1].rentals.values()] == ["awaiting_payment"] * 3
+
+
+def test_a_checkout_payment_the_processor_refuses_outright_costs_one_call_and_leaves_the_rental_waiting_for_another_try(desk, stripe, now):
+    good = desk.processor
+    desk.processor = StripeProcessor("sk_test_wrong", base_url=stripe.url, clock=lambda: now[0].timestamp())
+    calls = len(stripe.calls)
+    _, store, stream, _, _, rn, refused = desk_rental("card_ok", True, desk=desk)
+    assert len(stripe.calls) == calls + 1 and refused.state == "closed"
+    r = renting.load(store, stream)[1]
+    assert r.rentals[rn].state == "awaiting_payment" and not r.uncertain(r.rentals[rn]) and not r.rentals[rn].payments
+    assert r.rentals[rn].lease is None and not r.rentals[rn].access
+    desk.processor = good
+    again = desk.pay_rental("v1", rn, "card_ok")
+    assert again.state == "succeeded" and again.key != refused.key and renting.load(store, stream)[1].rentals[rn].state == "active"
