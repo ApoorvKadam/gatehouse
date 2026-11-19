@@ -15,8 +15,8 @@ from tests.test_fms_card_payments import stripe
 
 
 def begin(c, unit, name="Rae Quinn", phone="+14075550199"):
-    page = c.get(f"/website/rent/{unit}").text
-    return c.post(f"/website/rent/{unit}", data={"token": token(page), "name": name, "phone": phone}, follow_redirects=False)
+    page = c.get(f"/rent/{unit}").text
+    return c.post(f"/rent/{unit}", data={"token": token(page), "name": name, "phone": phone}, follow_redirects=False)
 
 
 def agreement_hash(page):
@@ -39,10 +39,10 @@ def test_only_priced_vacant_units_are_offered(fms_url, sim):
             led.emit('unit.priced', NOW, {'unit': unpriced, 'rent_cents': None, 'size': '10 x 10'}, 'test:unpriced')
             store.append(stream, led.pending)
         rent = rent_of(fd, ident)
-        page = c.get('/website').text
+        page = c.get('/rent').text
         for unit in fd.view(ident)[0].units:
             offered = rent.status(unit, NOW) == 'vacant' and rent.units[unit].rent_cents is not None
-            assert (f'href="/website/rent/{unit}"' in page) == offered
+            assert (f'href="/rent/{unit}"' in page) == offered
         assert 'Northstar Storage' in page and 'Orlando, FL' in page
 
 
@@ -142,9 +142,25 @@ def test_typed_details_never_pick_an_existing_tenant_or_spend_their_credit(fms_u
         assert rent_of(fd, ident).rentals[rental.id].state != 'active'
 
 
+def test_the_size_links_show_only_units_of_that_size(fms_url, sim):
+    app = site(fms_url)
+    with sign_in(app) as c:
+        fd, ident = desk_of(app, c)
+        units = rent_of(fd, ident).units
+        offered = lambda html: set(re.findall(r'href="/rent/([^"]+)"', html))
+        everything = offered(c.get('/rent').text)
+        sizes = {units[u].size for u in everything}
+        assert len(sizes) > 1
+        for size in sizes:
+            page = c.get('/rent', params={'size': size}).text
+            assert offered(page) == {u for u in everything if units[u].size == size}
+            assert re.search(r'href="/rent\?size=[^"]*" aria-current="page">' + re.escape(size) + '<', page)
+        assert offered(c.get('/rent', params={'size': 'no such size'}).text) == everything
+
+
 def test_website_needs_sign_in(fms_url, sim):
     with TestClient(site(fms_url)) as c:
-        r = c.get('/website', follow_redirects=False)
+        r = c.get('/rent', follow_redirects=False)
         assert r.status_code == 303 and r.headers['location'] == '/sign-in'
 
 
@@ -185,7 +201,7 @@ def test_website_writes_require_a_form_token(fms_url, sim):
         fd, ident = desk_of(app, c)
         unit = vacant(fd, ident)[0]
         tenants = len(fd.view(ident)[0].tenants)
-        response = c.post(f'/website/rent/{unit}', data={'name': 'Rae', 'phone': '555'}, follow_redirects=False)
+        response = c.post(f'/rent/{unit}', data={'name': 'Rae', 'phone': '555'}, follow_redirects=False)
         assert response.status_code == 422
         assert len(fd.view(ident)[0].tenants) == tenants
         assert not rent_of(fd, ident).rentals
