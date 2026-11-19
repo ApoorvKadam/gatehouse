@@ -313,13 +313,11 @@ def test_access_shows_on_today_and_its_own_page_without_any_credential(fms_url, 
         assert visitor.get("/access/99999").status_code == 404
 
 
-def test_the_overview_shows_no_video_until_the_film_of_the_complete_fms_is_made(fms_url, sim):
-    """2026-11-19, his words: "We are not going to shoot any video until the end, once we have a complete FMS ready." The old
-    walkthrough showed the earlier screens, so it is off the overview."""
+def test_no_second_page_offers_a_film(fms_url, sim):
+    """The live Overview has no video until the complete FMS is filmed (tests/test_fms.py checks it); no page links a film page either."""
     with TestClient(preview(fms_url)) as visitor:
         page = visitor.get("/").text
-        assert "<video" not in page and "staddle-walkthrough" not in page and "walkthrough" not in page.lower()
-        moved = visitor.get("/film", follow_redirects=False)                                 # no second page to find a film on
+        moved = visitor.get("/film", follow_redirects=False)
         assert 'href="/film"' not in page and moved.status_code == 301 and moved.headers["location"] == "/"
 
 
