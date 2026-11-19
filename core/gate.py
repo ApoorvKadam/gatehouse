@@ -5,13 +5,13 @@ writer: inside one write transaction it folds the current state, runs the same c
 the action with its money, or records the refusal with the check that refused it. A command id makes a retry return the first
 decision. The checks, in order: the action exists and is in scope; safety (fixed in code); the owner's rules; disputes and
 holds. Collections commands (plans, promises, exemptions, the overlock and lien-eligibility steps) run the same order in
-core/delinquency.py, whose last check is the hold on the whole tenancy."""
+core/delinquency.py, whose last check is the hold on the whole tenancy; lien case commands run it in core/liens.py."""
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 
-from . import delinquency
+from . import delinquency, liens
 from .billing import Ledger
 from .books import FEE_KINDS, LATE_FEE, RENT, Books, cutoff, fold, local
 from .store import Store
@@ -153,7 +153,7 @@ def evaluate(books: Books, cmd: Command, now: datetime) -> Decision:
     d = lambda ok, check, rule=None, hold=False: Decision(ok, cmd.action, check, rule, hold, cmd.id)
     staff = cmd.source.startswith("staff:")
     # 1. exists and in scope
-    if cmd.action not in ACTIONS + STAFF_ACTIONS + delinquency.ACTIONS:
+    if cmd.action not in ACTIONS + STAFF_ACTIONS + delinquency.ACTIONS + liens.ACTIONS:
         return d(False, "not an action the system knows")
     if cmd.action in STAFF_ACTIONS and not staff:
         return d(False, "only staff decide a dispute")
@@ -168,6 +168,8 @@ def evaluate(books: Books, cmd: Command, now: datetime) -> Decision:
         return d(False, "no identified tenant, so nothing on any account changes")
     if cmd.action in delinquency.ACTIONS:
         return d(*delinquency.check(books, cmd, now))
+    if cmd.action in liens.ACTIONS:
+        return d(*liens.check(books, cmd, now))
     ch = books.charges.get(cmd.charge or "")
     if ch is None:
         return d(False, "no such charge")
@@ -264,8 +266,10 @@ def execute(store: Store, stream: str, cmd: Command, now: datetime) -> Decision:
         if cmd.id in books.decisions:
             p = books.decisions[cmd.id]
             return Decision(p["allowed"], p["action"], p["check"], p.get("rule"), p.get("hold", False), cmd.id, list(p.get("events", [])), True)
-        dec = evaluate(books, cmd, now)
         led = Ledger(books)
+        if cmd.action in liens.ACTIONS:
+            liens.recheck(led, cmd.tenant, now)         # a lien command is decided on the file as the books show it now, voids written
+        dec = evaluate(books, cmd, now)
         if dec.allowed:
             if cmd.action == "reverse_duplicate":
                 led.reverse(now, cmd.charge, "duplicate", cmd.source, command=cmd.id)
@@ -277,6 +281,8 @@ def execute(store: Store, stream: str, cmd: Command, now: datetime) -> Decision:
                 led.open_dispute(now, cmd.charge, cmd.quote, dec.hold, cmd.source, command=cmd.id)
             elif cmd.action in delinquency.ACTIONS:
                 delinquency.act(led, cmd, now)
+            elif cmd.action in liens.ACTIONS:
+                liens.act(led, cmd, now)
             elif cmd.action == "remove_disputed_fee":
                 led.reverse(now, cmd.charge, "not in the signed schedule", cmd.source, command=cmd.id)
                 led.decide_dispute(now, open_dispute_on(books, cmd.charge).id, "fee removed: not in the signed schedule",
