@@ -4,8 +4,8 @@
 <header class="head">
   <h1>Good morning</h1>
 </header>
-{% if note %}<p class="fms-status" role="status">{{ note }}</p>{% endif %}
 <p class="fms-greet">Here is what is happening at {{ f.name }} this morning.</p>
+{% if note %}<p class="fms-status" role="status">{{ note }}</p>{% endif %}
 {% set rented = rows|sum(attribute='rented') %}{% set units = rows|sum(attribute='units') %}
 <dl class="fms-kpis">
   <div><dt>Unit occupancy</dt><dd>{{ (100 * rented / units)|round|int }}%<span>{{ rented }} of {{ units }}</span></dd></div>
