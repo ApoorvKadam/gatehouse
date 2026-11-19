@@ -11,7 +11,7 @@ from core.books import ADMIN_FEE, LATE_FEE, at_local, fold, lines, local
 from core.case import FIXED, handle
 from core.cases import load
 from core.reader import dates
-from core.seed import NOW, Year, build
+from core.seed import NOW, RENTS, UNITS, Year, build
 from core.store import Store
 
 
@@ -35,6 +35,28 @@ def test_the_fixed_year_stays_byte_identical(year):
     """The graded sets and their labels rest on these books: the live copy's extras (the dispute from last week) never reach them."""
     events = year.led.pending
     assert len(events) == 3241 and hashlib.sha256(repr(snapshot(events)).encode()).hexdigest() == FIXED_YEAR
+
+
+# the live copy's events other than unit prices: how many, and their fingerprint, as the build makes them without pricing. The ten
+# test cards on file (two each for five tenants) are among them; without those the counts are 3284 and 3442 and the fingerprints
+# are the ones this test held before cards were put on file.
+LIVE_COPY = {date(2026, 11, 14): (3294, "9ef6ca0c605e3779b0b0a2dd8cd5f085c0bb834767014d1a62293917371c4ac6"),
+             date(2026, 12, 3): (3452, "406c8157951b6563c41bcf1264716ec50c13c0bd9841db78a0a16bf4deb64623")}
+
+
+def test_the_live_copy_prices_every_unit_and_nothing_else_moves(year):
+    """Vacant units can be rented on a fresh copy; every other event, every tenant's charges among them, is as it was, and the
+    fixed year (the graded sets) has no prices at all."""
+    assert not [e for e in year.led.pending if e.kind == "unit.priced"]
+    for day, (count, digest) in LIVE_COPY.items():
+        y = build(today=day, cutoff=at_local(day), standing=True)
+        priced = [e for e in y.led.pending if e.kind == "unit.priced"]
+        rest = [e for e in y.led.pending if e.kind != "unit.priced"]
+        assert len(rest) == count and hashlib.sha256(repr(snapshot(rest)).encode()).hexdigest() == digest, day
+        assert sorted(e.payload["unit"] for e in priced) == sorted(UNITS), day
+        for e in priced:
+            lo, hi = RENTS[e.payload["unit"][0]]
+            assert lo <= e.payload["rent_cents"] <= hi and e.payload["size"] and e.at <= at_local(day), e.key
 
 
 def test_the_live_copy_opens_with_one_dispute_from_last_week_on_every_day(year):

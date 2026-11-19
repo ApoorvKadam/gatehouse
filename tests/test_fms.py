@@ -435,3 +435,37 @@ def test_the_date_is_the_real_day_and_a_new_day_brings_new_books(fms_url, sim):
         maria = next(t["text"] for t in fd.tenants() if t["shift"] == "s1")
         assert maria.startswith("I paid on November 3rd")                               # "the 3rd" would now read as Dec 3
         assert run(c, "maria", text=maria, shift="s1", run_id="r2").status_code == 200
+
+
+def test_a_staff_renting_command_is_listed_without_a_tenant_and_every_page_still_opens(fms_url, sim):
+    """Renting's staff commands (pricing a unit, a hold, a refused block) write gate records with no tenant, or none of an account's."""
+    from core import renting
+    from core.gate import RENT_SCOPE
+    from desk.fms import RENT_WORDS, Facility
+    assert set(RENT_WORDS) == set(RENT_SCOPE)                      # every renting command has its words, so no record can break the list
+    app = site(fms_url, Script(reader))
+    with sign_in(app) as c:
+        ident = app.state.guard.valid(c.cookies.get(SESSION), "session")
+        fd = app.state.front_desk
+        store, stream = fd.ready(), fd.stream(ident)
+        b, r = renting.load(store, stream)
+        vacant = next(u for u in b.units if r.status(u, NOW) == "vacant")
+        taken = next(u for u in b.units if r.status(u, NOW) == "occupied")
+        tenant = fd.cast["priya"]["tenant"]
+        steps = [renting.Act("price-1", "price_unit", "staff:front_desk", vacant, args={"rent_cents": 12000, "size": "5x10"}),
+                 renting.Act("hold-1", "reserve", "staff:front_desk", vacant, tenant),
+                 renting.Act("block-1", "block_unit", "staff:front_desk", taken, args={"reason": "repairs"}),
+                 renting.Act("wait-1", "join_waitlist", "staff:front_desk", "5x10", tenant),             # allowed, and in staff's scope
+                 renting.Act("go-1", "activate", "staff:front_desk", "RN0001"),                           # refused: only code starts a rental
+                 renting.Act("odd-1", "not_an_action", "staff:front_desk", vacant)]                       # refused: unknown, and no tenant
+        assert [fd.rent_step(ident, s).allowed for s in steps] == [True, True, False, True, False, False]
+        decisions = Facility(fd, ident).decisions()
+        assert decisions[0]["who"] is None and not decisions[0]["allowed"]                              # the unknown step is listed, not fatal
+        assert [(d["who"] and d["who"]["name"], d["words"], d["allowed"]) for d in decisions[1:5]] == [
+            (None, "Asked to start a rental", False), ("Priya Shah", "Joined a waitlist", True),
+            (None, "Asked to block a unit", False), ("Priya Shah", "Held a unit", True)]
+        decided = seen(c.get("/today").text).split("Decided by staff", 1)[1]
+        assert f"Priced a unit, unit {vacant}" in decided and "Not done: the unit is occupied" in decided and "Priya Shah" in decided
+        assert "Not done: staff may not activate" in decided and "None" not in decided and "price_unit" not in decided
+        for page in (*PAGES, record_of(c, "Priya Shah")):
+            assert c.get(page).status_code == 200, page

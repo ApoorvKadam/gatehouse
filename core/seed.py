@@ -27,6 +27,7 @@ BARE_DAY = re.compile(r"\bthe (\d{1,2})(st|nd|rd|th)\b(?! of)", re.I)       # "t
 A_LATE_FEE = re.compile(r"\ba (\$\d+ )?late fee\b(?! for)", re.I)
 UNITS = [f"{row}{n}" for row, first in (("A", 101), ("B", 201), ("C", 301)) for n in range(first, first + 40)]
 RENTS = {"A": (8500, 12000), "B": (14000, 19000), "C": (21000, 26000)}
+SIZES = {"A": "5x10", "B": "10x10", "C": "10x20"}            # the live copy's unit sizes, by row
 FIRST = ["Ana", "Ben", "Carla", "Dev", "Elena", "Femi", "Grace", "Hugo", "Ines", "Jon", "Kemi", "Luis", "Mona", "Nate", "Olga", "Pablo",
          "Rosa", "Sam", "Tara", "Uma", "Vic", "Wes", "Yara", "Zane", "Abby", "Cole", "Dina", "Eli", "Faye", "Gus"]
 LAST = ["Alvarez", "Brooks", "Chen", "Diaz", "Evans", "Foster", "Garcia", "Hayes", "Ito", "Jensen", "Khan", "Lopez", "Moreno", "Nguyen",
@@ -142,6 +143,7 @@ class Year:
         if self.standing:
             col.adopt_policy(led, at_local(opened - timedelta(days=10), 9, 5), 1, PLAN_POLICY)
             col.adopt_schedule(led, at_local(opened - timedelta(days=10), 9, 5), 1, OVERLOCK_DAYS, LIEN_DAYS)
+            self.price_units(at_local(opened - timedelta(days=10), 9, 10))
         for i in range(78):        # the first tenants move in over the first two weeks
             day = opened + timedelta(days=i % 14)
             habit = self.rnd.choices(["on_time", "sometimes_late", "chronic"], [62, 28, 10])[0]
@@ -168,6 +170,14 @@ class Year:
             self.on_a_plan()
             self.cards_on_file()
         return self
+
+    def price_units(self, at: datetime) -> None:
+        """The live copy gives every unit a size and an asking price, as renting's price_unit records them, so a vacant unit can be
+        rented on a fresh copy. Worked out from the unit's name and never drawn, so no other draw of the year moves."""
+        for u in UNITS:
+            lo, hi = RENTS[u[0]]
+            rent = lo + 500 * (int(u[1:]) * 3 % ((hi - lo) // 500 + 1))
+            self.led.emit("unit.priced", at, {"unit": u, "rent_cents": rent, "size": SIZES[u[0]]}, f"priced:{u}", source="staff:front_desk")
 
     def plan_month(self, month: str, rnd: random.Random) -> None:
         first = _d(month, 1)
