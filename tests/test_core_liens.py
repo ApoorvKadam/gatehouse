@@ -125,7 +125,7 @@ MAIL = {"notice_id": 1, "deposited_on": "2026-03-13", "first_class": True, "cert
         "address": "9 Oak Ave, Orlando, FL", "address_basis": "rental agreement"}
 POSTING = {"notice_id": 1, "posted_on": "2026-03-13", "location": "unit", "location_detail": "unit door", "conspicuous": "yes"}
 AD = {"notice_id": 1, "newspaper": "Orlando Ledger", "general_circulation_in_facility_area": "yes", "circulation_source": "the paper's own statement",
-      "published_on": "2026-03-20", "sale_date": "2026-04-20", "sale_time": "10:00 AM", "sale_place": "online, on the auction site",
+      "proof": "publisher_affidavit", "published_on": "2026-04-03", "sale_date": "2026-04-20", "sale_time": "10:00 AM", "sale_place": "online, on the auction site",
       "includes_property_description": True, "includes_facility_address": True, "includes_tenant_name": True,
       "includes_sale_time_place_manner": True}
 CHECK = {"check": "bankruptcy", "answer": "no", "source": "the federal court's public index", "observed_on": "2026-03-12"}
@@ -231,15 +231,16 @@ def test_evidence_is_still_gathered_under_a_hold_and_the_packet_checklist_follow
     assert run(store, s, action="open_dispute", tenant=t, charge=rent.id, quote="I paid March in cash").allowed         # the tenancy is held
     assert col.enforcement_hold(store.books(s), lease, "lien", NOW)
     status = lambda: {f.requirement: f.status for f in liens.findings(store.books(s), the_case(store, s))}
-    assert set(status().values()) == {"missing"} and len(status()) == 4
+    assert set(status().values()) == {"missing"} and len(status()) == 5
     assert record(store, s, t, lease, "notice", NOTICE).allowed
-    assert list(status().values()) == ["met", "missing", "missing", "missing"]
+    assert list(status().values()) == ["met", "missing", "missing", "missing", "missing"]
     assert record(store, s, t, lease, "mail_deposit", MAIL).allowed and record(store, s, t, lease, "publication", AD).allowed
     assert status()["posting of the notice"] == "missing"
     assert record(store, s, t, lease, "posting", POSTING).allowed
+    assert record(store, s, t, lease, "publication", {**AD, "published_on": "2026-04-10"}, "second advertisement").allowed
     assert set(status().values()) == {"met"}
     record(store, s, t, lease, "notice", {**NOTICE, "sale_time": "11:00 AM"}, supersedes=1)         # a corrected notice must be served again
-    assert list(status().values()) == ["met", "missing", "missing", "missing"]
+    assert list(status().values()) == ["met", "missing", "missing", "missing", "missing"]
 
 
 ADDRESS = {"address": "9 Oak Ave, Orlando, FL", "basis": "rental agreement"}
@@ -370,6 +371,7 @@ def complete(store, s, t, lease):
     assert record(store, s, t, lease, "notice", NOTICE).allowed
     assert record(store, s, t, lease, "mail_deposit", MAIL).allowed and record(store, s, t, lease, "publication", AD).allowed
     assert record(store, s, t, lease, "posting", POSTING).allowed
+    assert record(store, s, t, lease, "publication", {**AD, "published_on": "2026-04-10"}, "second advertisement").allowed
 
 
 def fingerprint(store, s):
@@ -436,21 +438,23 @@ def test_a_delivery_or_an_advertisement_counts_only_when_its_own_facts_meet_the_
     unanswered = {"notice_id": 1, "sent_on": "2026-03-13", "sent_to": "ann@example.com", "address_basis": "rental agreement"}
     assert record(store, s, t, lease, "email_delivery", unanswered).allowed
     assert finding("delivery of the notice").status == "review"
-    answered = {**unanswered, "confirmation": "delivery confirmation", "confirmation_from": "ann@example.com", "confirmed_on": "2026-03-13"}
+    answered = {**unanswered, "confirmation": "delivery confirmation", "confirmation_from": "ann@example.com", "confirmed_on": "2026-03-13", "agreement_allows_email": "yes"}
     assert record(store, s, t, lease, "email_delivery", answered).allowed
     assert finding("delivery of the notice").status == "met"
     assert record(store, s, t, lease, "publication", {**AD, "general_circulation_in_facility_area": "unknown"}).allowed
     assert finding("the newspaper advertisement").status == "review"
-    assert record(store, s, t, lease, "publication", {**AD, "includes_tenant_name": False}).allowed
+    assert record(store, s, t, lease, "publication", {**AD, "includes_tenant_name": False}, supersedes=5).allowed
     assert "tenant name" in finding("the newspaper advertisement").detail
-    assert record(store, s, t, lease, "publication", AD).allowed and finding("the newspaper advertisement").status == "met"
+    assert record(store, s, t, lease, "publication", AD, supersedes=6).allowed
+    assert record(store, s, t, lease, "publication", {**AD, "published_on": "2026-04-10"}).allowed
+    assert finding("the newspaper advertisement").status == "met"
 
 
 def test_a_manager_approves_the_file_as_it_stands_tied_to_its_fingerprint():
     s = "visitor:a1"
     store, t, lease = prepared(s)
     assert approve(store, s, t, lease).check == ("the packet is not complete; it still needs: the notice, delivery of the notice, "
-                                                  "posting of the notice, the newspaper advertisement")
+                                                  "posting of the notice, the newspaper advertisement, demand period")
     complete(store, s, t, lease)
     assert state_of(store, s)[0] == "packet assembled"
     assert approve(store, s, t, lease, source="staff:front_desk").check == "only a manager approves a lien case"
@@ -676,8 +680,9 @@ def test_a_partial_payment_freezes_the_file_for_staff_until_they_record_a_decisi
     assert state_of(store, s, later)[0] == "evidence incomplete" and col.open_tasks(store.books(s)) == []       # service is made again for copy 2
     assert decide(store, s, t, lease).check == "there is nothing to decide: nothing has changed since the notice copy was prepared"
     assert record(store, s, t, lease, "notice", notice_for_copy(store, s)).allowed
-    assert record(store, s, t, lease, "mail_deposit", {**MAIL, "notice_id": 5}).allowed and record(store, s, t, lease, "publication", {**AD, "notice_id": 5}).allowed
-    assert record(store, s, t, lease, "posting", {**POSTING, "notice_id": 5}).allowed
+    assert record(store, s, t, lease, "mail_deposit", {**MAIL, "notice_id": 6}).allowed and record(store, s, t, lease, "publication", {**AD, "notice_id": 6}).allowed
+    assert record(store, s, t, lease, "posting", {**POSTING, "notice_id": 6}).allowed
+    assert record(store, s, t, lease, "publication", {**AD, "notice_id": 6, "published_on": "2026-04-10"}).allowed
     assert state_of(store, s, later)[0] == "packet assembled"
     assert approve(store, s, t, lease).allowed and state_of(store, s, later)[0] == "approved"                           # a fresh approval
     assert [bool(a["voided"]) for a in the_case(store, s).approvals] == [True, False]
@@ -869,7 +874,7 @@ def notice_for_copy(store, s, lease=None, **over):
     snap = liens.frozen(case)
     items = [{"description": c["kind"].replace("_", " "), "category": "rent" if c["kind"] == "rent" else "fee", "amount_cents": c["cents"], "due_on": c["due"]}
              for c in snap["claim"]]
-    return {**NOTICE, "itemized_charges": items, "itemized_total_cents": snap["claim_cents"], "copy_version": case.copies[-1]["version"], **over}
+    return {**NOTICE, "itemized_charges": items, "itemized_total_cents": snap["claim_cents"], "copy_version": case.copies[-1]["version"], "sum_due_since": min(i["due_on"] for i in items), **over}
 
 
 def test_a_notice_is_drafted_from_a_copy_so_it_names_one_that_exists_and_a_legal_check_needs_none():
@@ -907,15 +912,17 @@ def test_a_resume_needs_new_service_for_the_new_copy_whatever_changed_the_claim(
             assert staff(store, s, t, lease, "record_lien_address", {**ADDRESS, "address": "4 Elm St, Tampa, FL"}).allowed
         assert decide(store, s, t, lease, now=later).allowed
         assert liens.frozen(the_case(store, s))["claim_cents"] == claim and the_case(store, s).copies[-1]["version"] == 2
-        assert status() == {"the notice": "missing", "delivery of the notice": "missing", "posting of the notice": "missing", "the newspaper advertisement": "missing"}, what
+        assert status() == {"the notice": "missing", "delivery of the notice": "missing", "posting of the notice": "missing", "the newspaper advertisement": "missing", "demand period": "missing"}, what
         assert "copy 1" in liens.findings(store.books(s), the_case(store, s))[0].detail and "copy 2" in liens.findings(store.books(s), the_case(store, s))[0].detail
         assert state_of(store, s, later)[0] == "evidence incomplete"
         refused = approve(store, s, t, lease)
-        assert refused.check == ("the packet is not complete; it still needs: the notice, delivery of the notice, posting of the notice, the newspaper advertisement"), what
+        assert refused.check == ("the packet is not complete; it still needs: the notice, delivery of the notice, posting of the notice, the newspaper advertisement, demand period"), what
         assert record(store, s, t, lease, "notice", notice_for_copy(store, s), "the second notice").allowed        # service for copy 2 counts
-        assert list(status().values()) == ["met", "missing", "missing", "missing"]
-        assert record(store, s, t, lease, "mail_deposit", {**MAIL, "notice_id": 5}).allowed and record(store, s, t, lease, "publication", {**AD, "notice_id": 5}).allowed
-        assert record(store, s, t, lease, "posting", {**POSTING, "notice_id": 5}).allowed
+        assert list(status().values()) == ["met", "missing", "missing", "missing", "missing"]
+        mailed_to = {} if change else {"address": "4 Elm St, Tampa, FL"}          # a mailing goes to the last written address on the file
+        assert record(store, s, t, lease, "mail_deposit", {**MAIL, "notice_id": 6, **mailed_to}).allowed and record(store, s, t, lease, "publication", {**AD, "notice_id": 6}).allowed
+        assert record(store, s, t, lease, "posting", {**POSTING, "notice_id": 6}).allowed
+        assert record(store, s, t, lease, "publication", {**AD, "notice_id": 6, "published_on": "2026-04-10"}).allowed
         assert set(status().values()) == {"met"} and approve(store, s, t, lease).allowed, what
 
 
@@ -931,6 +938,7 @@ def two_units(stream):
         assert record(store, stream, t, unit, "notice", notice_for_copy(store, stream, unit)).allowed          # each unit's notice states its own claim
         assert record(store, stream, t, unit, "mail_deposit", MAIL).allowed and record(store, stream, t, unit, "publication", AD).allowed
         assert record(store, stream, t, unit, "posting", POSTING).allowed
+        assert record(store, stream, t, unit, "publication", {**AD, "published_on": "2026-04-10"}).allowed
     return store, t, lease, other
 
 
@@ -1114,6 +1122,7 @@ def test_a_notice_counts_only_if_it_states_the_claim_of_the_copy_it_names():
         assert findings_of(store, s)["the notice"].status == "met"
         assert record(store, s, t, lease, "mail_deposit", {**MAIL, "notice_id": 4}).allowed and record(store, s, t, lease, "publication", {**AD, "notice_id": 4}).allowed
         assert record(store, s, t, lease, "posting", {**POSTING, "notice_id": 4}).allowed
+        assert record(store, s, t, lease, "publication", {**AD, "notice_id": 4, "published_on": "2026-04-10"}).allowed
         assert approve(store, s, t, lease).allowed, what
 
 
@@ -1131,6 +1140,7 @@ def test_an_advertisement_counts_only_if_it_describes_the_sale_the_notice_names(
         assert not approve(store, s, t, lease).allowed and state_of(store, s)[0] == "evidence incomplete"
         assert record(store, s, t, lease, "publication", AD, "the corrected advertisement", supersedes=3).allowed      # correct it
         assert record(store, s, t, lease, "posting", POSTING).allowed
+        assert record(store, s, t, lease, "publication", {**AD, "published_on": "2026-04-10"}).allowed
         assert findings_of(store, s)["the newspaper advertisement"].status == "met" and approve(store, s, t, lease).allowed, what
     s = "visitor:x29"                                                                                     # the same time written another way still matches
     store, t, lease = prepared(s)
@@ -1142,6 +1152,7 @@ def complete_with(store, s, t, lease, ad):
     assert record(store, s, t, lease, "notice", NOTICE).allowed and record(store, s, t, lease, "mail_deposit", MAIL).allowed
     assert record(store, s, t, lease, "publication", {**AD, **ad}).allowed
     assert record(store, s, t, lease, "posting", POSTING).allowed
+    assert record(store, s, t, lease, "publication", {**AD, **ad, "published_on": "2026-04-10"}).allowed
 
 
 def test_online_sale_places_preserve_path_and_query_case():

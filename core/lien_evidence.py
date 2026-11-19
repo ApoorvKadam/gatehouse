@@ -63,6 +63,7 @@ class EmailDelivery(BaseModel):
     sent_to: str = Field(min_length=3)
     address_basis: Literal["rental agreement", "written change of address"] = Field(
         description="why this is the tenant's last known e-mail address")
+    agreement_allows_email: YesNoUnknown = "unknown"
     confirmation: Literal["response", "return receipt", "delivery confirmation"] | None = None
     confirmation_from: str | None = None
     confirmed_on: date | None = None
@@ -102,6 +103,10 @@ class Publication(BaseModel):
     includes_facility_address: bool
     includes_tenant_name: bool
     includes_sale_time_place_manner: bool
+    proof: Literal["publisher_affidavit", "clipping", "staff_entry"] = Field(
+        description="what the document behind this record is; the file's evidence rule counts only the publisher's own proof")
+    proof_tenant_name: str | None = Field(default=None, description="the tenant the publisher's proof names, when it names one")
+    proof_facility_address: str | None = Field(default=None, description="the facility address the publisher's proof names, when it names one")
 
 
 class LegalCheck(BaseModel):
