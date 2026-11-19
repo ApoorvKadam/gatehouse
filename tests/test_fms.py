@@ -402,7 +402,8 @@ def test_with_the_bot_check_on_a_sign_in_needs_a_passed_check_and_a_half_set_che
 
 
 def test_his_corrections_of_the_night_stay_corrected(fms_url, sim):
-    """2026-11-15: a message opens inside Messages, the sign-in comes filled in, and the walkthrough sits below the product picture."""
+    """2026-11-15: a message opens inside Messages and the sign-in comes filled in. 2026-11-19: no video on the overview until the film of
+    the complete FMS is shot."""
     app = site(fms_url)
     with TestClient(app) as c:
         page = c.get("/sign-in").text
@@ -410,7 +411,7 @@ def test_his_corrections_of_the_night_stay_corrected(fms_url, sim):
         assert ">Username</label>" in page and "." in DEMO_NAME, "a sign-in asks for a username, and the demo one looks like a real one"
         overview = c.get("/").text
         hero = overview.split('class="ov-hero"', 1)[1].split("</section>", 1)[0]
-        assert "<video" not in hero and 'class="ov-shot"' in hero and overview.index('class="ov-shot"') < overview.index('id="walkthrough"')
+        assert 'class="ov-shot"' in hero and "<video" not in overview and "walkthrough" not in overview.lower()
     with sign_in(app) as c:
         cold = c.get("/messages").text
         conversations = cold.split('class="fms-convs"', 1)[1].split("</ol>", 1)[0]

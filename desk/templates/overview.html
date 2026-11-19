@@ -11,7 +11,6 @@
     <p class="ov-lede">{{ brand }} is a self-storage FMS on its own books. {{ agent }}, the agent at its front desk, handles what tenants write and does the work it is allowed to. Code checks every claim against the records and the rules before anything changes, and staff see every action.</p>
     <div class="actions ov-actions">
       <a class="button primary" href="{{ '/home' if signed_in else '/sign-in' }}">Open the demo FMS {% include "icons/arrow-right.svg" %}</a>
-      <a class="button" href="#walkthrough">{% include "icons/play.svg" %}Watch the walkthrough</a>
     </div>
     <figure class="ov-shot" data-reveal>
       <picture>
@@ -47,19 +46,6 @@
       <li><b>The gate acts</b><span>The second copy is reversed in one balanced entry: fee income down $20.00, owed by the tenant down $20.00. A second press changes nothing.</span></li>
       <li><b>Code writes the reply</b><span>“You are right: the $20.00 late fee was posted twice for the same thing. The second one has been reversed.”</span></li>
     </ol>
-  </div>
-</section>
-
-<section class="feature ov-film" id="walkthrough">
-  <div class="wrap">
-    <div class="ov-film-head" data-reveal>
-      <h2>See it in use</h2>
-    </div>
-    <figure class="film ov-video">
-      <video id="film" controls preload="metadata" playsinline poster="{{ url_for('static', path='film/staddle-walkthrough.jpg') }}?v=20261112" aria-label="A walkthrough of the product">
-        <source src="{{ url_for('static', path='film/staddle-walkthrough.mp4') }}?v=20261112" type="video/mp4">
-      </video>
-    </figure>
   </div>
 </section>
 
