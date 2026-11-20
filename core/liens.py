@@ -11,7 +11,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -19,7 +19,7 @@ from pydantic import ValidationError
 
 from . import delinquency as col
 from .billing import Ledger
-from .books import Books, RENT, local
+from .books import Books, LATE_FEE, RENT, local
 from .evidence import KIND_WORDS as CHARGE_WORDS, day, money
 from .lien_evidence import EVIDENCE_KINDS, NEEDS_DOCUMENT, parse_evidence, same_time
 
@@ -141,6 +141,12 @@ def current_evidence(case: Case) -> list[Evidence]:
 def _notice_gap(books: Books, case: Case, notice: Evidence) -> str | None:
     """How a notice differs from the notice copy it names (the total and the itemized charges), or None when it states that claim."""
     snap = next(c["snapshot"] for c in case.copies if c["version"] == notice.facts["copy_version"])
+    if not notice.facts["sale_statement"]:
+        return "the conspicuous statement that the property will be advertised and sold is missing"
+    if notice.facts["description_matches_rental_agreement"] != "yes":
+        return "the property description is not shown to match the rental agreement"
+    if notice.facts["sum_due_since"] != min(c["due"] for c in snap["claim"]):
+        return "the date the claim became due does not match the copy"
     if notice.facts["itemized_total_cents"] != snap["claim_cents"]:
         return f"it states {money(notice.facts['itemized_total_cents'])} and the copy's claim is {money(snap['claim_cents'])}"
     stated = sorted((i["due_on"], i["amount_cents"], i["category"]) for i in notice.facts["itemized_charges"])
@@ -170,29 +176,109 @@ def _sale_gap(ad: Evidence, notice: Evidence) -> str | None:
     return "; ".join(out) or None
 
 
-def _delivery_gap(e: Evidence) -> str | None:
-    """Why a delivery record does not count, from its own facts: first-class mail needs its certificate and prepaid postage, and an
-    e-mail counts only with a response, return receipt or delivery confirmation from the address it went to."""
+def _same_text(a: str, b: str) -> bool:
+    """Whether two written addresses or names are the same words, ignoring case, spacing and commas or periods."""
+    def plain(x: str) -> str:
+        return " ".join(x.lower().replace(",", " ").replace(".", " ").split())
+    return plain(a) == plain(b)
+
+
+def _delivery_gap(e: Evidence, written_address: str | None = None) -> str | None:
+    """Why a delivery record does not count, from its own facts: first-class mail needs its certificate and prepaid postage and must
+    go to the last written address on the file, and an e-mail counts only with a response, return receipt or delivery confirmation
+    from the address it went to."""
     f = e.facts
     if e.kind == "mail_deposit":
         lacks = [w for k, w in (("first_class", "first-class mail"), ("certificate_of_mailing", "a certificate of mailing"),
                                 ("postage_prepaid", "prepaid postage")) if not f.get(k)]
-        return "the mailing has no " + ", no ".join(lacks) if lacks else None
+        if lacks:
+            return "the mailing has no " + ", no ".join(lacks)
+        if written_address and not _same_text(f["address"], written_address):
+            return f"the mailing went to {f['address']}, but the last written address on the file is {written_address}"
+        return None
+    if e.kind == "email_delivery" and f.get("agreement_allows_email") != "yes":
+        return "the rental agreement is not shown to allow e-mail notice"
     if e.kind == "email_delivery" and not (f.get("confirmation") and (f.get("confirmation_from") or "").strip().lower() == (f.get("sent_to") or "").strip().lower()):
         return "no response, return receipt or delivery confirmation came from the address it went to, so a first-class mailing with a certificate must follow"
     return None
 
 
-def _ad_gap(ad: Evidence, notice: Evidence) -> str | None:
-    """Why an advertisement does not count: a different sale than the notice names, a newspaper not shown to circulate in the
-    facility's area, or a part the advertisement must carry left out."""
+def _delivery_date(e: Evidence) -> str:
+    """The date a delivery counts from: a mailing's deposit date, a hand delivery's date, or an e-mail's confirmed delivery date."""
+    key = {"mail_deposit": "deposited_on", "in_person_delivery": "delivered_on", "email_delivery": "delivered_on"}[e.kind]
+    return e.facts.get(key) or e.facts.get("confirmed_on")
+
+
+PROOF_WORDS = {"clipping": "a newspaper clipping", "staff_entry": "a date typed in by staff"}
+
+
+def _city_in(address: str, city_text: str) -> bool:
+    """Whether a written address names the facility's city. The core keeps only the facility's city text ("Orlando, FL"), so the
+    city is that text without its state and must appear in the address as whole words."""
+    city = re.sub(r",\s*[A-Z]{2}\s*$", "", city_text or "")
+    def plain(x: str) -> str:
+        return " ".join(x.lower().replace(",", " ").replace(".", " ").split())
+    return bool(plain(city)) and f" {plain(city)} " in f" {plain(address)} "
+
+
+def _proof_gap(ad: Evidence, notice: Evidence, tenant_name: str | None, facility_city: str = "") -> str | None:
+    """The file's own evidence rule (not the statute): an advertisement counts on the publisher's own proof. A clipping or a date typed
+    in by staff stays on the file as evidence but is not that proof, and a proof that names a tenant or an address must name this
+    tenant and the facility (83.806(4)(b)2). The core keeps no facility street address, so the proof's address must name the facility's
+    city. The owner's address on the notice is a different address and is never compared with it."""
+    facts = ad.facts
+    if facts.get("proof") != "publisher_affidavit":
+        return "the file's evidence rule asks for the publisher's own proof, and this advertisement rests on " + PROOF_WORDS.get(facts.get("proof"), "another document")
+    off = []
+    if facts.get("proof_tenant_name") is not None and tenant_name and not _same_text(facts["proof_tenant_name"], tenant_name):
+        off.append(f"it names {facts['proof_tenant_name']} where the tenant is {tenant_name}")
+    if facts.get("proof_facility_address") is not None and not _city_in(facts["proof_facility_address"], facility_city):
+        off.append(f"it names {facts['proof_facility_address']}, which is not in the facility's city ({facility_city})")
+    return "the publisher's proof does not match this file: " + "; ".join(off) if off else None
+
+
+def _ad_gap(ad: Evidence, notice: Evidence, tenant_name: str | None = None, facility_city: str = "") -> str | None:
+    """Why an advertisement does not count: a different sale than the notice names, proof that is not the publisher's own or does not
+    match this file, a newspaper not shown to circulate in the facility's area, or a part the advertisement must carry left out."""
     if gap := _sale_gap(ad, notice):
         return "it names a different sale than the notice: " + gap
+    if gap := _proof_gap(ad, notice, tenant_name, facility_city):
+        return gap
     if ad.facts.get("general_circulation_in_facility_area") != "yes":
         return "the newspaper is not shown to be of general circulation in the facility's area"
     left = [k.removeprefix("includes_").replace("_", " ") for k, v in ad.facts.items() if k.startswith("includes_") and not v]
     return "it leaves out the " + ", the ".join(left) if left else None
 
+
+
+FL_RULE_VERSION = "FL-r1"
+NOTICE_VERSION = "FL-r1-notice-1"
+
+
+def facility_state(city: str) -> str | None:
+    # A separate state field comes when several facilities are built.
+    match = re.search(r",\s*([A-Z]{2})\s*$", city or "")
+    return match.group(1) if match else None
+
+
+def draft_notice(case: Case, details: dict) -> dict:
+    """Draft from the latest frozen copy and return its text, facts and fingerprint."""
+    copy = case.copies[-1]
+    snap = copy["snapshot"]
+    items = [{"description": c["kind"].replace("_", " "), "category": "rent" if c["kind"] == RENT else "fee",
+              "amount_cents": c["cents"], "due_on": c["due"]} for c in snap["claim"]]
+    facts = {**details, "copy_version": copy["version"], "itemized_charges": items,
+             "itemized_total_cents": snap["claim_cents"], "sum_due_since": min(i["due_on"] for i in items), "sale_statement": True}
+    facts = parse_evidence("notice", facts).model_dump(mode="json")
+    lines = [f"Notice {NOTICE_VERSION}", f"Tenant: {snap['tenant']['name']}", f"Unit: {snap['unit']}",
+             "Claim at the time of this notice:"]
+    lines += [f"{i['description']}: {money(i['amount_cents'])}, due {i['due_on']}" for i in items]
+    lines += [f"Total due: {money(snap['claim_cents'])}; due since {facts['sum_due_since']}",
+              f"Property: {facts['property_description']}", f"Pay the amount due by {facts['demand_deadline']}.",
+              f"IF PAYMENT IS NOT MADE, THE PROPERTY WILL BE ADVERTISED AND SOLD ON {facts['sale_date']} AT {facts['sale_time']}, {facts['sale_place']}.",
+              f"Owner: {facts['owner_name']}, {facts['owner_street_address']}, {facts['owner_phone']}"]
+    text = "\n".join(lines)
+    return {"version": NOTICE_VERSION, "text": text, "sha256": hashlib.sha256(text.encode()).hexdigest(), "facts": facts}
 
 def findings(books: Books, case: Case) -> list[Finding]:
     """What the packet lists and where the file stands against it: the notice, its delivery, posting, and newspaper advertisement.
@@ -201,6 +287,8 @@ def findings(books: Books, case: Case) -> list[Finding]:
     advertisement only for that notice, so a resumed file, whose copy was taken again, needs its service made again. An
     advertisement counts only if it describes the sale the notice names. A record that does not count is still on the file as
     evidence and reads "review" until a correction supersedes it."""
+    if facility_state(books.facility.get("city", "")) != "FL":
+        return [Finding("counsel review", "policy", "review", "No Florida rule applies to this facility; counsel review is needed.")]
     cur = current_evidence(case)
     latest = case.copies[-1]["version"] if case.copies else None
     notices = [e for e in cur if e.kind == "notice"]
@@ -221,33 +309,77 @@ def findings(books: Books, case: Case) -> list[Finding]:
                        f"is now on copy {latest}", "record a notice made from the latest copy")]
     else:
         out = [Finding("the notice", "policy", "missing", "no notice record is on the file", "record the notice with the fingerprint of its document")]
+    written = case.addresses[-1]["address"] if case.addresses else None     # a mailing must go to the last written address on the file
     sent = [e for e in cur if notice and e.kind in DELIVERY and e.facts.get("notice_id") == notice.id]
-    found = next((e for e in sent if not _delivery_gap(e)), None)
+    found = min((e for e in sent if not _delivery_gap(e, written)), key=_delivery_date, default=None)     # the earliest counted delivery
     words = "the notice being mailed, handed over or e-mailed"
     if found:
         out.append(Finding("delivery of the notice", "policy", "met", f"record {found.id}"))
     elif sent:            # a record that falls short stays on the file as evidence, and the packet says what it lacks
-        out.append(Finding("delivery of the notice", "policy", "review", f"record {sent[-1].id}: {_delivery_gap(sent[-1])}",
+        out.append(Finding("delivery of the notice", "policy", "review", f"record {sent[-1].id}: {_delivery_gap(sent[-1], written)}",
                            "record a delivery that meets the rule"))
     else:
         out.append(Finding("delivery of the notice", "policy", "missing", f"no record of {words} for the current notice",
                            f"record {words} with the fingerprint of its document"))
     posted = record_for(("posting",))
-    if posted:
+    if posted and posted.facts.get("conspicuous") != "yes":
+        out.append(Finding("posting of the notice", "statute 83.806(1)", "review", "The posting is not shown to be conspicuous."))
+    elif posted:
         out.append(Finding("posting of the notice", "policy", "met", f"record {posted.id}"))
     else:
         out.append(Finding("posting of the notice", "policy", "missing", "no posting record for the current notice",
                            "record where the notice was posted with the fingerprint of its document"))
+    emails = [e for e in sent if e.kind == "email_delivery"]
+    unconfirmed = [e for e in emails if not (e.facts.get("confirmation") and
+                   (e.facts.get("confirmation_from") or "").strip().lower() == e.facts["sent_to"].strip().lower())]
+    fallback = sorted((e for e in sent if e.kind == "mail_deposit" and not _delivery_gap(e, written) and
+                all(e.facts["deposited_on"] >= x.facts["sent_on"] for x in unconfirmed) and
+                notice and e.facts["deposited_on"] < notice.facts["sale_date"]), key=_delivery_date)
+    operative = fallback[0] if unconfirmed and fallback else found     # the delivery the notice time runs from, if any counts
+    snap = frozen(case)
+    tenant_name = snap["tenant"]["name"] if snap else None
+    city = books.facility.get("city", "")
     ads = [e for e in reversed(cur) if notice and e.kind == "publication" and e.facts.get("notice_id") == notice.id]
-    good = next((e for e in ads if not _ad_gap(e, notice)), None)
-    if good:
-        out.append(Finding("the newspaper advertisement", "policy", "met", f"record {good.id}"))
-    elif ads:
-        out.append(Finding("the newspaper advertisement", "policy", "review", f"record {ads[0].id}: {_ad_gap(ads[0], notice)}",
-                           "record a corrected advertisement that supersedes it"))
+    ads.sort(key=lambda e: e.facts["published_on"])
+    gap = next((_ad_gap(e, notice, tenant_name, city) for e in ads if _ad_gap(e, notice, tenant_name, city)), None)
+    deadline = date.fromisoformat(notice.facts["demand_deadline"]) if notice else None
+    if gap:
+        out.append(Finding("the newspaper advertisement", "statute 83.806(4)", "review", gap))
+    elif ads and operative is None:
+        # the payment time runs from a counted delivery, so an advertisement before one cannot be the advertisement after that time
+        out.append(Finding("the newspaper advertisement", "statute 83.806(4)", "waiting",
+                           "The notice has no counted delivery yet, so its payment time has not started; advertisements count once it was delivered and that time ran out."))
+    elif any(date.fromisoformat(a.facts["published_on"]) <= deadline for a in ads):     # an early one is named before the count of advertisements
+        out.append(Finding("the newspaper advertisement", "statute 83.806(4)", "review", "An advertisement is dated before the payment deadline passed."))
+    elif len(ads) < 2:
+        out.append(Finding("the newspaper advertisement", "statute 83.806(4)", "missing", "Two newspaper advertisements are needed, one in each of two consecutive weeks."))
+    elif date.fromisoformat(ads[1].facts["published_on"]) - date.fromisoformat(ads[0].facts["published_on"]) != timedelta(days=7) or ads[0].facts["newspaper"].strip().lower() != ads[1].facts["newspaper"].strip().lower():
+        out.append(Finding("the newspaper advertisement", "policy", "review", "Two advertisements in the same newspaper, seven days apart, are needed."))
+    elif date.fromisoformat(notice.facts["sale_date"]) < date.fromisoformat(ads[0].facts["published_on"]) + timedelta(days=15):
+        out.append(Finding("the newspaper advertisement", "statute 83.806(4)", "review", "The sale date is less than 15 days after the first advertisement."))
     else:
-        out.append(Finding("the newspaper advertisement", "policy", "missing", "no record of the advertisement for the current notice",
-                           "record the advertisement with the fingerprint of its document"))
+        out.append(Finding("the newspaper advertisement", "statute 83.806(4)", "met", f"records {ads[0].id} and {ads[1].id}"))
+    if emails and any(e.facts.get("agreement_allows_email") != "yes" for e in emails):
+        out.append(Finding("e-mail agreement permission", "statute 83.806(1)", "review", "The rental agreement is not shown to allow e-mail notice."))
+    if unconfirmed and not fallback:
+        out.append(Finding("e-mail fallback mailing", "statute 83.806(1)", "missing", "An unconfirmed e-mail needs a first-class mailing with a certificate before the sale."))
+    if notice and operative:
+        delivered = _delivery_date(operative)
+        minimum = date.fromisoformat(delivered) + timedelta(days=14)
+        ok = deadline >= minimum
+        out.append(Finding("demand period", "statute 83.806(2)(c)", "met" if ok else "review",
+                           f"The payment deadline is {deadline}; delivery on {delivered} needs a deadline of {minimum} or later."))
+    else:
+        out.append(Finding("demand period", "statute 83.806(2)(c)", "missing", "A notice and delivery date are needed to check the payment deadline."))
+    if snap:
+        rent_cents = snap["agreement"]["rent_cents"]
+        high_fees = [c for c in snap["claim"] if c["kind"] == LATE_FEE and 5 * c["cents"] > max(10000, rent_cents)]
+        checks = [e for e in cur if e.kind == "legal_check" and e.facts.get("check") == "fee_reasonable"]
+        if high_fees and not (checks and all(e.facts.get("answer") == "yes" for e in checks)):
+            out.append(Finding("late fee reasonableness", "statute 83.808(3)", "review", "A fee is above the late-fee safe harbor; its reasonableness needs review."))
+    vehicle = [e for e in cur if e.kind == "legal_check" and e.facts.get("check") == "vehicle_or_watercraft" and e.facts.get("answer") != "no"]
+    if vehicle:
+        out.append(Finding("vehicle or watercraft", "statute 83.806(10)", "review", "A vehicle or watercraft may be involved; counsel review is needed."))
     return out
 
 
