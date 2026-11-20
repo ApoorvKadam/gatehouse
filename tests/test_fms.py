@@ -22,7 +22,7 @@ from desk.front_desk import SHIFT
 
 from .conftest import FULL_KEY
 
-PAGES = ["/home", "/today", "/messages", "/messages/try", "/units", "/tenants", "/billing", "/rules"]
+PAGES = ["/home", "/today", "/messages", "/messages/try", "/sitemap", "/units", "/rentals", "/tenants", "/collections", "/liens", "/gate", "/billing", "/rules"]
 
 
 class Script:
@@ -121,7 +121,7 @@ def test_the_screens_show_the_generated_year_in_words(fms_url, sim):
         text = {p: seen(r.text) for p, r in pages.items()}
         # the live copy's year plus its two tenants in collections (Iris Nolan owes $130.00 and Rhea Mills $310.00 on Nov 14), who
         # change no one else
-        assert "$2,996.00" in text["/home"] and "23 tenants" in text["/home"] and "23 tenants owe $2,996.00" in text["/billing"]
+        assert "$2,996.00" in text["/home"] and "23 tenants" in text["/home"] and "23 tenants owe $2,996.00" in text["/collections"]
         assert "All 120 units" in text["/home"] and len(re.findall(r"[A-Z][a-z]{2} \d{1,2}, 20\d\d", text["/units"].split("units occupied.", 1)[1])) == 113
         assert "124 tenants" in text["/tenants"]
         assert "Building A" in text["/units"] and "Vacant 7" in text["/units"] and "Row A" not in text["/units"]
@@ -131,8 +131,11 @@ def test_the_screens_show_the_generated_year_in_words(fms_url, sim):
         record = seen(c.get(record_of(c, "Maria Lopez")).text)
         assert "Ledger" in record and "Card declined" in record and "November rent" in record
         for p, r in pages.items():
-            # the menu down the left with an icon for each item, no tagline under a title, no GitHub inside the FMS
-            assert 'class="fms-rail"' in r.text and r.text.count('<svg class="icon"') >= 7 and 'class="tagline"' not in r.text, p
+            # the bar across the top on every page; inside Facilities the menu down the left with an icon for each item; no tagline
+            # under a title, no GitHub inside the FMS
+            assert 'class="fms-head"' in r.text and 'class="fms-tabs"' in r.text and 'class="tagline"' not in r.text, p
+            if p not in ("/today", "/messages", "/messages/try", "/rules"):
+                assert 'class="fms-side"' in r.text and r.text.split('class="fms-side"', 1)[1].count('<svg class="icon"') >= 9, p
             assert "github" not in r.text.lower(), p
         for p, words in text.items():
             assert not re.search(r"\b[CTLPDH]\d{4}\b", words), p          # no record ids
@@ -204,7 +207,7 @@ def test_the_day_opens_with_last_weeks_dispute_and_staff_can_settle_it_on_their_
         assert "$25.00 admin fee, posted Nov 8 by hand" in words and "Late fee" in words and "Remove the fee" in words
         nora = record_of(c, "Nora Feld")
         unit = re.search(r"unit (C3\d\d)", words).group(1)
-        units = c.get("/units").text
+        units = c.get("/sitemap").text
         assert f'title="{unit}: Nora Feld, Fee in dispute"' in units and "Fee in dispute 1" in seen(units)
         dispute = re.search(r'name="dispute" value="([^"]+)"', card).group(1)
         for reason in ("her move-in special has no admin fee", "pressed again"):

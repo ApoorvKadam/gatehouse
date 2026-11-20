@@ -64,7 +64,7 @@ def test_rent_and_repeat_are_seen_by_staff(fms_url, sim, stripe):
         assert 'Active' in text and 'Paid' in text and 'Accepted by Rae Quinn' in text and 'Code set and read back' in text
         assert len(rent_of(fd, ident).rentals) == 1
         assert len(stripe.intents) == 1
-        assert f'title="{unit}: Rae Quinn' in c.get('/units').text
+        assert f'title="{unit}: Rae Quinn' in c.get('/sitemap').text
         assert 'Active' in seen(c.get(record_of(c, 'Rae Quinn')).text)
 
 

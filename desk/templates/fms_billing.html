@@ -2,8 +2,9 @@
 {% block page %}Billing and payments{% endblock %}
 {% block body %}
 <header class="head">
-  <h1>Billing and payments</h1>
+  <h1>{{ title or 'Billing and payments' }}</h1>
 </header>
+{% if not only_past %}
 <form class="fms-search" method="get" action="/billing">
   <label for="month">Month</label>
   <select id="month" name="month" onchange="this.form.submit()">{% for key, name in months %}<option value="{{ key }}" {% if key == month.key %}selected{% endif %}>{{ name }}</option>{% endfor %}</select>
@@ -17,7 +18,8 @@
   <div><dt>Still open</dt><dd>{{ money(month.open) }}</dd></div>
 </dl>
 
-<section class="fms-section" id="past-due" aria-labelledby="h-past">
+{% endif %}
+{% if not only_month %}<section class="fms-section" id="past-due" aria-labelledby="h-past">
   <h2 id="h-past">Past due</h2>
   <p class="muted">{{ past|length }} tenants owe {{ money(past|sum(attribute='past')) }} in charges past their due date. A fee whose collection is paused by a dispute is left out. The overlock column says whether it is due on the owner's schedule, and what holds it.</p>
   <div class="fms-scroll" tabindex="0" role="region" aria-labelledby="h-past"><table class="fms-table">
@@ -46,4 +48,5 @@
 </section>
 {% endif %}
 <p class="muted">{% if f.balanced %}Every books entry balances: {{ money(f.debits) }} in debits and the same in credits, across the year.{% else %}The books do not balance. This is a fault, and it is shown, not hidden.{% endif %}</p>
+{% endif %}
 {% endblock %}

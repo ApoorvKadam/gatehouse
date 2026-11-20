@@ -118,7 +118,7 @@ def test_staff_grant_and_revoke_an_exemption_that_holds_the_overlock(fms_url, si
 
 def test_the_past_due_list_shows_who_is_held_and_why(fms_url, sim):
     with sign_in(site(fms_url)) as c:
-        page = c.get("/billing").text
+        page = c.get("/collections").text
         table = page.split('id="h-past"', 1)[1].split("</table>", 1)[0]
         rows = re.findall(r"(?s)<tr>(.*?)</tr>", table.split("<tbody>", 1)[1])
         assert len(rows) == 23 and all(re.search(r'class="fms-state overlock"><span class="chip [a-z]+">[A-Z]', r) for r in rows)

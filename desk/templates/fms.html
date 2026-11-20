@@ -2,31 +2,47 @@
 {% block title %}{% block page %}{% endblock %} | {{ f.name }} | {{ brand }}{% endblock %}
 {% block bodyclass %}fms{% endblock %}
 {% block header %}
-<header class="fms-rail">
-  <a class="brand" href="/home">{% include "icons/staddle.svg" %}{{ brand }}</a>
-  <nav aria-label="FMS">
-    {% for group, items in menu %}
-    <p class="fms-group">{{ group }}</p>
-    {% for key, label, icon in items %}<a href="/{{ key }}" {% if nav == key %}aria-current="page"{% endif %}>{% include "icons/" ~ icon ~ ".svg" %}<span>{{ label }}</span></a>{% endfor %}
-    {% endfor %}
-  </nav>
-  <div class="fms-me">
-    <p><b>Dana Reyes</b><span>Office manager</span></p>
-    <form method="post" action="/start-over"><button type="submit" title="Throw away every change on this copy and start from this morning again">{% include "icons/rotate-ccw.svg" %}<span>Start over</span></button></form>
-    <form method="post" action="/sign-out"><button type="submit">{% include "icons/log-out.svg" %}<span>Sign out</span></button></form>
+{% set global_nav = nav in ('today', 'messages', 'rules') %}
+<header class="fms-head">
+  <div class="fms-head-row">
+    <a class="brand" href="/home">{% include "icons/staddle.svg" %}{{ brand }}</a>
+    <span class="fms-org">{{ f.name }}</span>
+    <form class="fms-find" method="get" action="/tenants" role="search">
+      <label for="find" class="visually-hidden">Find a tenant by name, phone or unit</label>
+      {% include "icons/search.svg" %}<input id="find" name="q" maxlength="60" placeholder="Find a tenant by name, phone or unit">
+    </form>
+    <details class="fms-who">
+      <summary><b>Dana Reyes</b><span>Office manager</span></summary>
+      <div class="fms-who-menu">
+        <form method="post" action="/start-over"><button type="submit" title="Throw away every change on this copy and start from this morning again">{% include "icons/rotate-ccw.svg" %}<span>Start over</span></button></form>
+        <form method="post" action="/sign-out"><button type="submit">{% include "icons/log-out.svg" %}<span>Sign out</span></button></form>
+      </div>
+    </details>
   </div>
+  <nav class="fms-tabs" aria-label="FMS">
+    <a href="/home"{% if not global_nav %} aria-current="page"{% endif %}>Facilities</a>
+    <a href="/today"{% if nav == 'today' %} aria-current="page"{% endif %}>Today</a>
+    <a href="/messages"{% if nav == 'messages' %} aria-current="page"{% endif %}>Messages</a>
+    <a class="push" href="/rules"{% if nav == 'rules' %} aria-current="page"{% endif %}>Settings</a>
+  </nav>
 </header>
 {% endblock %}
 {% block main %}
-<div class="fms-topbar"><div class="fms-topbar-in">
-  <p class="fms-where"><b>{{ f.name }}</b> <span>{{ f.b.facility.city }}</span> <span class="fms-date">{{ today }}</span></p>
-  <form class="fms-find" method="get" action="/tenants" role="search">
-    <label for="find" class="visually-hidden">Find a tenant by name, phone or unit</label>
-    {% include "icons/search.svg" %}<input id="find" name="q" maxlength="60" placeholder="Find a tenant by name, phone or unit">
-  </form>
-</div></div>
+<div class="fms-work{% if nav in ('today', 'messages', 'rules') %} fms-work-full{% endif %}">
+{% if nav not in ('today', 'messages', 'rules') %}
+<aside class="fms-side">
+  <p class="fms-fac"><b>{{ f.name }}</b><span>{{ f.b.facility.city }}</span><span>{{ today }}</span></p>
+  <a class="fms-site" href="/rent">{% include "icons/external-link.svg" %}View facility website</a>
+  <nav aria-label="Facility">
+    {% for key, label, icon in side[0] %}<a href="/{{ key }}" {% if nav == key %}aria-current="page"{% endif %}>{% include "icons/" ~ icon ~ ".svg" %}<span>{{ label }}</span></a>{% endfor %}
+    <hr class="fms-sep">
+    {% for key, label, icon in side[1] %}<a href="/{{ key }}" {% if nav == key %}aria-current="page"{% endif %}>{% include "icons/" ~ icon ~ ".svg" %}<span>{{ label }}</span></a>{% endfor %}
+  </nav>
+</aside>
+{% endif %}
 <div class="fms-page">
 {% block body %}{% endblock %}
+</div>
 </div>
 <script>
 // a table fills its frame with the spare width shared equally by its columns, so every gap between columns is the same.

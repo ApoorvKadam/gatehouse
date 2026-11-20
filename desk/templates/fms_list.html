@@ -1,0 +1,9 @@
+{% extends "fms.html" %}
+{% block page %}{{ title }}{% endblock %}
+{% block body %}
+<header class="head"><h1>{{ title }}</h1></header>
+<p class="fms-summary">{{ lede }}</p>
+{% if rows %}<div class="fms-scroll"><table class="fms-table"><thead><tr>{% for h in heads %}<th>{{ h }}</th>{% endfor %}</tr></thead>
+<tbody>{% for r in rows %}<tr>{% for c in r %}<td>{{ c }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+{% else %}<p class="muted">{{ empty }}</p>{% endif %}
+{% endblock %}

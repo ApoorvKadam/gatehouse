@@ -2,14 +2,14 @@
 {% block page %}Units{% endblock %}
 {% block body %}
 <header class="head">
-  <h1>Units</h1>
+  <h1>{{ title or 'Units' }}</h1>
 </header>
 {% set counts = f.unit_counts(rows) %}{% set rented = counts.occupied + counts.past + counts.dispute %}
 <p class="fms-summary">Unit occupancy {{ ((100 * rented) / (rented + counts.reserved + counts.blocked + counts.vacant))|round|int }}%: {{ rented }} of {{ rented + counts.reserved + counts.blocked + counts.vacant }} units occupied.</p>
 <p class="fms-legend"><span><i class="occ"></i>Current <b>{{ counts.occupied }}</b></span><span><i class="act"></i>Past due <b>{{ counts.past }}</b></span><span><i class="wait"></i>Fee in dispute <b>{{ counts.dispute }}</b></span><span><i class="held"></i>Reserved <b>{{ counts.reserved }}</b></span><span><i class="blk"></i>Blocked <b>{{ counts.blocked }}</b></span><span><i class="vac"></i>Vacant <b>{{ counts.vacant }}</b></span></p>
 {% if step_note %}<p class="fms-status" id="note" role="status">Nothing changed. {{ step_note }}</p>{% endif %}
 <datalist id="tenant-names">{% for label in f.tenant_labels %}<option value="{{ label }}">{% endfor %}</datalist>
-<div class="fms-map" aria-label="Site map">
+{% if not table_only %}<div class="fms-map" aria-label="Site map">
   {% for row, items in rows %}
   <section class="fms-map-row" aria-labelledby="m-row-{{ row }}">
     <h3 id="m-row-{{ row }}">Building {{ row }}</h3>
@@ -21,8 +21,8 @@
     </ul>
   </section>
   {% endfor %}
-</div>
-{% for row, items in rows %}
+</div>{% endif %}
+{% if not map_only %}{% for row, items in rows %}
 <section class="fms-section" aria-labelledby="h-row-{{ row }}">
   <h2 id="h-row-{{ row }}">Building {{ row }}</h2>
   <div class="fms-scroll" tabindex="0" role="region" aria-labelledby="h-row-{{ row }}"><table class="fms-table">
@@ -61,4 +61,5 @@
   </table></div>
 </section>
 {% endfor %}
+{% endif %}
 {% endblock %}
