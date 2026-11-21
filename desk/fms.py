@@ -20,7 +20,7 @@ from fastapi.responses import RedirectResponse
 from starlette.concurrency import run_in_threadpool
 
 from core import delinquency as col
-from core import renting
+from core import renting, liens as lien_core, auction
 from core.case import OFF
 from core.books import ADMIN_FEE_CENTS, LATE_FEE_CENTS, RENT, REVIEW_DAYS, at_local, lines, local, month_key
 from core.billing import Refused
@@ -660,6 +660,33 @@ class Facility:
                 "cards": cards, "card_payments": payments, "owing": col.owing(self.b, tenant),
                 "until_max": (self.today + timedelta(days=col.EXEMPTION_DAYS)).isoformat(), "until_min": self.today.isoformat()}
 
+    def lien_files(self, tenant: str) -> list[dict]:
+        """Show each file from the facts on this visitor's copy."""
+        files = []
+        state = lien_core.state(self.b)
+        for case in state.cases.values():
+            if case.tenant != tenant:
+                continue
+            where, why = lien_core.case_state(self.b, case, self.now)
+            findings = lien_core.findings(self.b, case)
+            missing = [x.requirement for x in findings if x.status != "met"]
+            next_step = ("Record the written address and prepare the notice copy" if not case.copies and not case.addresses else
+                         "Prepare the notice copy" if not case.copies else
+                         "Review the changed file" if where == "review required" else
+                         "Record the missing evidence" if missing else
+                         "A manager approves" if not lien_core.approval(self.b, case) else "Review the auction")
+            a = state.auctions.get(case.id)
+            sale = state.sales.get(case.id)
+            surplus = state.surpluses.get(sale.surplus) if sale and sale.surplus else None
+            files.append({"case": case, "where": where.capitalize(), "why": plain(why), "next": next_step,
+                          "findings": [{"requirement": plain(x.requirement), "status": x.status,
+                                        "detail": plain(re.sub(r"\brecords? \d+(?: and \d+)?(?:, made from copy \d+)?", "the evidence", x.detail)),
+                                        "action": plain(x.action)} for x in findings], "missing": missing, "frozen": lien_core.frozen(case),
+                          "approval": lien_core.approval(self.b, case), "fingerprint": lien_core.fingerprint(self.b, case),
+                          "stops": [{**stop, "detail": plain(stop["detail"]), "resolved": ({**stop["resolved"], "reason": plain(stop["resolved"]["reason"])} if stop["resolved"] else None)} for stop in lien_core.unit_stops(self.b, case.lease)], "auction": a,
+                          "auction_words": auction.words(a) if a else None, "sale": sale, "surplus": surplus})
+        return files
+
     def standing(self, tenant: str) -> dict:
         """For the past-due list: the plan's state and the first unit whose overlock is not clear, with why."""
         plans = [p for p in col.state(self.b).plans.values() if p.tenant == tenant and p.terms]
@@ -1045,7 +1072,7 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
         return show(request, "fms_tenant.html", "tenants", f, p=p, rentals=f.rentals(p["id"]), ledger=f.ledger(p["id"]), vacant=vacant,
                     cases=[c for c in f.cases() if c["who"] and c["who"]["id"] == p["id"]],
                     disputes=[d for d in f.disputes() if d["who"]["id"] == p["id"]], col=f.collections(p["id"]),
-                    renting=f.renting_of(p["id"]), token=secrets.token_hex(6), step_note=plain(fd.take_step_note(ident)),
+                    renting=f.renting_of(p["id"]), lien_files=f.lien_files(p["id"]), manager=STAFF == lien_core.APPROVER, lien_kind_words=lien_core.KIND_WORDS, stop_words=lien_core.STOP_WORDS, surplus_words={"created": "The tenant has not yet been notified.", "held": "The tenant has been notified; the surplus is held.", "payout_requested": "Simulated payout requested.", "paid": "Simulated payout completed."}, token=secrets.token_hex(6), step_note=plain(fd.take_step_note(ident)),
                     note_at=request.query_params.get("at", ""))
 
     @app.post("/tenants/{key}/renting", include_in_schema=False)
@@ -1132,8 +1159,8 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
         from core import liens as lien_core
         f = Facility(fd, need(request))
         cases = lien_core.state(f.b).cases.values()
-        rows = [(f.people[c.tenant]["name"], f.b.leases[c.lease].unit, lien_core.case_state(f.b, c, f.now)[0].capitalize()) for c in cases if not c.closed]
-        return show(request, "fms_list.html", "liens", f, title="Lien cases", heads=("Tenant", "Unit", "Where the file stands"), rows=rows,
+        rows = [{"slug": f.people[c.tenant]["slug"], "cells": (f.people[c.tenant]["name"], c.unit, item["where"], (f"{len(item['missing'])} records missing" if len(item["missing"]) > 1 else upfirst(item["missing"][0]) if item["missing"] else "Nothing missing"), item["next"])} for c in cases if not c.closed for item in f.lien_files(c.tenant) if item["case"].id == c.id]
+        return show(request, "fms_list.html", "liens", f, title="Lien cases", heads=("Tenant", "Unit", "Where the file stands", "What it still needs", "Next step"), rows=rows, lien_list=True,
                     lede="Open lien files: evidence, the frozen ledger copy, approvals and legal stops.", empty="No lien case is open.")
 
     @app.get("/gate", include_in_schema=False)
@@ -1257,6 +1284,28 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
         if data.get("next") == "today" and action == "overlock":
             return RedirectResponse("/today#overlocks", status_code=303)       # pressed on Today's list: back to the list
         return RedirectResponse(f"/tenants/{key}#collections", status_code=303)
+
+    @app.post("/tenants/{key}/lien", include_in_schema=False)
+    async def lien_step(request: Request, key: str):
+        same_site(request)
+        ident = need(request)
+        data = await form(request)
+        action, token = data.get("action", ""), data.get("token", "")
+        allowed = ("flag_lien_eligible", "open_lien_case", "record_lien_address", "prepare_lien_notice",
+                   "approve_lien_case", "record_lien_stop", "resolve_lien_stop", "list_lien_auction", "cancel_lien_auction")
+        if action not in allowed:
+            raise HTTPException(422, "That is not a step staff can take here.")
+        if not re.fullmatch(r"[0-9a-f]{12}", token):
+            raise HTTPException(422, "Reload the page and try again.")
+        p = Facility(fd, ident).by_slug.get(key)
+        if p is None:
+            raise HTTPException(404, "no such tenant")
+        lease = data.get("lease", "")[:20]
+        typed = {k: data.get(k, "")[:300].strip() for k in ("case", "address", "basis", "kind", "detail", "source", "stop", "fingerprint")}
+        reason = " ".join(data.get("reason", "").split())[:300]
+        cmd = Command(f"form:{token}:{action}:{lease}", action, p["id"], STAFF, lease=lease, form=typed, reason=reason or None)
+        await run_in_threadpool(fd.staff_step, ident, cmd)
+        return RedirectResponse(f"/tenants/{key}?at=lien#lien", status_code=303)
 
     @app.post("/units/{unit}/renting", include_in_schema=False)
     async def unit_step(request: Request, unit: str):
