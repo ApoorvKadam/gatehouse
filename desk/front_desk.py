@@ -181,6 +181,8 @@ class FrontDesk:
         self._rents.clear()
         self._facts = None
         self.cast, self.store, self._year, self.day = year.cast, store, year, today
+        # the gate codes the seeded tenants already hold: worked out once from the day's own base records, never saved per code
+        self.access.know(store.events(BASE))
         if self.path != ":memory:":     # visitor copies last a day: files older than yesterday's go (a run begun before midnight keeps yesterday's)
             keep = {f"{root}-{d.isoformat()}{ext}" for d in (today, today - timedelta(days=1))}
             def gone() -> list[str]:
