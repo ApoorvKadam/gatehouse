@@ -15,11 +15,13 @@ Staddle is the FMS itself. It keeps the facility's books, Tilden reads what tena
 The preview opens on an Overview. The FMS is behind a sign-in that comes filled in with a demo login, and each visitor works on a copy of the facility of their own.
 
 - **Home.** The facility this morning: work waiting, units rented by row, the month's billing and collections, who is past due.
-- **Today.** What waits for a person: disputes to decide, messages handed to staff, what staff decided, and how many messages Tilden closed.
+- **Today.** What waits for a person: disputes to decide, the work queue (below), messages handed to staff, what staff decided, and how many messages Tilden closed.
 - **Messages.** This morning's tenant texts, read one at a time or all at once. Each conversation with the tenant's words, what Tilden read, what the books show, what was done, the books entries written and the reply. Try a tenant message sends one of your own through the same path.
 - **Units** and **Tenants.** Who rents what at which rent, the account with its rentals and a ledger with a running balance.
 - **Billing and payments.** Each month's billing, payments with the day the card was charged and the day the facility learned of it, declined cards, and who is past due.
 - **Rules.** The fee schedule, the owner's rules in words and in the exact form code checks, what Tilden may do, and what only staff decide. Write a rule in plain words: Tilden turns it into an exact rule, code checks it against your words and replays last year under it, and nothing changes until you approve it as the owner on your copy.
+
+Today's work queue lists every open piece of staff work in one place: collections tasks, overlocks that are due or can come off, rentals not finished, gate codes not confirmed, and units waiting for an old code to be revoked. Each item says where it came from, why it is there and what closes it, and shows under My work, Facility-wide, Waiting or Done today. Staff can acknowledge an item, start it, assign it to a role or a person, and add a note, each through the same gate. Acknowledging says an item was seen; it does not close it. An item closes when the record it is about shows the work done (the overlock is recorded or lifted, the plan is decided, the code reads back). Where no record can show it, such as a call made, staff say what they checked and the item says it was staff attested. The same condition is one item however often the daily check runs, and if the problem comes back the item reopens. This is plain code: no model reads or writes any of it.
 
 Staff decide an open dispute on Today: remove a fee the tenant never signed for, which is a correction and does not use up a waiver, or keep it under review. Each decision goes through the same gate, with a note of what was checked.
 

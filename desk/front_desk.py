@@ -17,7 +17,7 @@ from datetime import date, datetime, timedelta, timezone
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
-from core import auction, delinquency, renting
+from core import auction, delinquency, renting, work
 from core.books import ZONE, at_local, local
 from core.billing import Ledger, Refused
 from core.case import READ_ONLY, handle
@@ -346,7 +346,7 @@ class FrontDesk:
                 # renting reads what the pass above settled: a rental waiting on its payment moves with the answer, holds that ran out
                 # are written down and each gate code is carried forward, then each code is checked against its rental. Each step is
                 # tried alone, so a fault stops neither the steps after it, the collections pass, nor another copy.
-                for step in (renting.settle_payments, lambda st, c, n: renting.advance(st, c, self.access, n), renting.check_codes):
+                for step in (renting.settle_payments, lambda st, c, n: renting.advance(st, c, self.access, n), renting.check_codes, work.sweep):
                     try:
                         step(store, s, now)
                     except Exception:
@@ -658,6 +658,25 @@ class FrontDesk:
                 self._step_notes.pop(visitor, None)
             else:
                 self._keep(self._step_notes, visitor, d.check)
+
+    def sync_work(self, visitor: str) -> None:
+        """Keep this copy's work items as the records say, before a page reads them. Writes only what is new; a fault is logged and the
+        page still reads the items from the records."""
+        with self.lock:
+            try:
+                work.sweep(self.ready(), self.stream(visitor), self.clock())
+            except Exception:
+                log.exception("work check failed for %s", visitor)
+
+    def staff_work(self, visitor: str, act: work.Act) -> bool:
+        """A staff step on an item of work, through the gate on this copy: whether it was done. A refusal is kept to be shown once on Today."""
+        with self.lock:
+            d = work.run(self.ready(), self.stream(visitor), act, self.clock())
+            if d.allowed:
+                self._step_notes.pop(visitor, None)
+            else:
+                self._keep(self._step_notes, visitor, d.check)
+            return d.allowed
 
     def take_card_payment(self, visitor: str, cmd: Command) -> None:
         """Staff take a card payment on a tenant's page. The gate decides and records; a refusal is kept to be shown once. When it allows

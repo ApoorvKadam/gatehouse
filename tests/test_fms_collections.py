@@ -15,21 +15,23 @@ def step(c, url: str, page: str, **data):
     return c.post(url.rstrip("/") + "/collections", data={"token": token(page), **data}, follow_redirects=False)
 
 
-def test_today_lists_the_breached_plan_until_staff_acknowledge_it(fms_url, sim):
+def test_today_lists_the_breached_plan_and_an_acknowledgement_does_not_close_it(fms_url, sim):
     app = site(fms_url)
     with sign_in(app) as c, sign_in(app) as other:
         page = c.get("/today").text
         text = seen(page)
-        assert "Collections waiting for staff" in text and "Rhea Mills Payment plan breached since Oct 26" in text
+        assert "Work for staff" in text and "Rhea Mills Payment plan breached since Oct 26" in text
         assert "1 collections item waiting for staff" in seen(c.get("/home").text)
         assert "The part due Oct 22 was not paid within 3 grace days." in text
-        task = re.search(r'name="task" value="([A-Z0-9]+)"', page).group(1)
-        r = c.post("/collections/acknowledge", data={"task": task}, follow_redirects=False)
-        assert (r.status_code, r.headers["location"]) == (303, "/today#collections")
-        assert c.post("/collections/acknowledge", data={"task": task}, follow_redirects=False).status_code == 303     # a second press: nothing
+        key = re.search(r'name="key" value="(collections:breached:[A-Z0-9:]+)"', page).group(1)
+        r = c.post("/work/step", data={"token": token(page), "view": "all", "action": "acknowledge", "key": key}, follow_redirects=False)
+        assert (r.status_code, r.headers["location"]) == (303, "/today?view=all#work")
+        c.post("/work/step", data={"token": token(page), "view": "all", "action": "acknowledge", "key": key}, follow_redirects=False)   # a second press: nothing
         after = seen(c.get("/today").text)
-        assert "Payment plan breached" not in after and "Nothing in collections is waiting for staff." in after
-        assert "Payment plan breached" in seen(other.get("/today").text)                                          # another copy keeps it
+        assert "Rhea Mills Payment plan breached" in after and "Seen by Office manager" in after      # seen is not decided
+        assert "1 collections item waiting for staff" in seen(c.get("/home").text)
+        assert 'name="task"' not in page                                                              # the old Acknowledge button is gone
+        assert "Seen by" not in seen(other.get("/today").text)                                        # another copy keeps its own
 
 
 def test_the_breached_plan_page_shows_every_part_and_staff_reinstate_it_through_the_gate(fms_url, sim):
@@ -169,17 +171,16 @@ def test_today_lists_every_due_overlock_and_records_one_from_the_list(fms_url, s
     with sign_in(site(fms_url)) as c:
         page = c.get("/today").text
         text = seen(page)
-        assert "Overlocks due on the owner's schedule" in text
-        assert "The owner's schedule makes an overlock due 10 days after the due date." in text
+        assert text.count("Overlock due") == 13
         due = re.findall(r'name="lease" value="([A-Z0-9]+)"><input type="hidden" name="next" value="today">', page)
         assert len(due) >= 2
-        section = lambda t: t.split("Overlocks due on the owner's schedule")[1].split("Handed to staff")[0]
+        section = lambda t: t.split("Work for staff")[1].split("Handed to staff")[0]
         assert "Tom Becker" in section(text) and "Record an overlock" in section(text)
         assert "Iris Nolan" not in section(text)     # held by her plan
         home = seen(c.get("/home").text)
         assert f"{len(due)} overlocks due on the owner's schedule" in home
         tom = record_of(c, "Tom Becker").rstrip("/")
-        lease = re.search(r'>Tom Becker</a></td>\s*<td>[A-Z0-9]+</td>.*?name="lease" value="([A-Z0-9]+)"', page, re.S).group(1)
+        lease = re.search(r'>Tom Becker</a>.*?name="lease" value="([A-Z0-9]+)"', page, re.S).group(1)
         r = c.post(tom + "/collections", data={"token": token(page), "action": "overlock", "lease": lease, "next": "today"}, follow_redirects=False)
         assert (r.status_code, r.headers["location"]) == (303, "/today#overlocks")
         after = seen(c.get("/today").text)

@@ -4,6 +4,7 @@ works on its own copy of the books (its own stream), so one visitor's changes ne
 are printed on the sign-in page: the sign-in is real (a signed session cookie, refused when missing or forged), the person is not."""
 from __future__ import annotations
 
+import hashlib
 import hmac
 from dataclasses import replace
 import json
@@ -20,12 +21,12 @@ from fastapi.responses import RedirectResponse
 from starlette.concurrency import run_in_threadpool
 
 from core import delinquency as col
-from core import renting, liens as lien_core, auction
+from core import renting, liens as lien_core, auction, work
 from core.case import OFF
 from core.books import ADMIN_FEE_CENTS, LATE_FEE_CENTS, RENT, REVIEW_DAYS, at_local, lines, local, month_key
 from core.billing import Refused
 from core.evidence import KIND_WORDS, clock, day, money, month_words
-from core.gate import ACTIONS, RENT_SCOPE, STAFF_ACTIONS, STAFF_RULE, Command, execute
+from core.gate import ACTIONS, RENT_SCOPE, STAFF_ACTIONS, STAFF_RULE, WORK_SCOPE, Command, execute
 from core.rules import staff_words, waiver_words
 from core.seed import story_month
 
@@ -86,9 +87,15 @@ PART_WORDS = {"scheduled": ("Scheduled", "plain"), "due": ("Due", "wait"), "paid
               "missed": ("Missed", "act"), "uncertain": ("Waiting for the card processor", "wait")}
 STEP_WORDS = {"clear": ("Clear", "plain"), "eligible": ("Due", "act"), "blocked": ("Held", "wait"), "waiting for staff": ("Waiting for staff", "act"),
               "recorded": ("Recorded", "plain")}
-TASK_WORDS = {"plan breached": "Payment plan breached", "plan needs staff": "Payment plan needs a decision",
-              "returned payment needs staff": "Returned payment not applied", "payment uncertain": "Payment waiting for the card processor",
-              "call back": "Promise to pay missed: call back", "exemption ended": "Exemption ended"}
+# the work queue on Today: the signed-in role and person, the four views, and each state in words with its chip colour
+ROLE, PERSON = STAFF.split(":", 1)[1], f"person:{DEMO_NAME}"
+WORK_VIEWS = (("all", "Facility-wide"), ("mine", "My work"), ("waiting", "Waiting"), ("done", "Done today"))
+WORK_STATES = {"open": ("Open", "plain"), "assigned": ("Assigned", "plain"), "in progress": ("In progress", "wait"),
+               "waiting for evidence": ("Waiting for evidence", "wait"), "blocked": ("Blocked by a hold", "wait"),
+               "reopened": ("Reopened: the problem came back", "act"), "done": ("Done", "done"), "cancelled": ("Cancelled", "plain")}
+WORK_ANCHORS = {"collections": "collections", "overlock": "overlocks", "reservation": "rentals", "rental": "rentals", "refund": "rentals",
+                "access": "codes", "turnover": "turnover"}       # where Home's links land: the first item of each kind
+WORK_FORMS = {"acknowledge": "acknowledge_work", "start": "start_work", "assign": "assign_work", "note": "note_work", "finish": "finish_work"}
 SCOPE_WORDS = {"overlock": "overlock", "lien": "lien eligibility"}
 STEP_FORMS = ("overlock", "lift_overlock", "review_plan", "grant_exemption", "revoke_exemption", "take_payment")
 UNIT_FORMS = ("price_unit", "reserve", "block_unit", "unblock_unit")       # what staff do to a unit on the Units page
@@ -301,7 +308,7 @@ class Facility:
     def decisions(self) -> list[dict]:
         out = []
         for e in self.own:
-            if e.kind == "gate.decided" and e.source.startswith("staff:"):
+            if e.kind == "gate.decided" and e.source.startswith("staff:") and e.payload["action"] not in WORK_SCOPE:    # work steps live in the queue
                 p = e.payload
                 if p["action"] in RENT_SCOPE:       # a renting step: no fee, no note, and often no tenant (pricing a unit); what was done is said from what was recorded
                     out.append({"who": self.people.get(p.get("tenant") or ""), "words": RENT_WORDS[p["action"]][0 if p["allowed"] else 1], "allowed": p["allowed"],
@@ -361,34 +368,13 @@ class Facility:
         return self.fd.rent_view(self.ident)
 
     def pay_state(self, r) -> str:
-        """Where a rental's payment stands: paid, waiting for the card processor, returned by the bank (every payment it had came back),
-        declined (the last attempt), or not paid yet."""
-        rent = self.rent
-        if rent.paid(r):
-            return "paid"
-        if rent.uncertain(r):
-            return "waiting"
-        if r.payments:
-            return "returned"
-        return "declined" if r.pay_ops and "declined" in (rent.ops[r.pay_ops[-1]].result or {}) else "unpaid"
+        return work.pay_state(self.rent, r)
 
     def move_in(self, r) -> date | None:
-        """The day a paid and signed rental that has not started is waiting for, when that day has not come; else None."""
-        if not r.quote:
-            return None
-        start = date.fromisoformat(r.quote["start"])
-        return start if r.state in renting.WAITING and r.accepted and self.pay_state(r) == "paid" and start > local(self.now).date() else None
+        return work.move_in(self.rent, r, self.now)
 
     def stage(self, r) -> str:
-        """Where a rental that has not started stands, in one sentence: its payment and its agreement."""
-        pay = self.pay_state(r)
-        if self.move_in(r):
-            return "Waiting for the move-in day"
-        if pay == "paid" and r.accepted:
-            return "Paid and accepted, but the rental has not started"
-        words = {"paid": "paid", "waiting": "payment waiting for the card processor", "returned": "payment returned by the bank",
-                 "declined": "card declined", "unpaid": "not paid yet"}[pay]
-        return upfirst(f"{words}, agreement {'accepted' if r.accepted else 'not accepted'}")
+        return work.stage(self.rent, r, self.now)
 
     def held(self, unit: str) -> tuple[str, dict | None]:
         """What holds a unit now, in a sentence, and the person it is held for (None for a block or when nothing holds it)."""
@@ -478,72 +464,37 @@ class Facility:
                          "lease": (f"Ended {dated(lease.ended, year)}" if lease.ended else f"Started {dated(lease.start, year)}") if lease else None})
         return rows[::-1]
 
-    def unfinished(self) -> list[dict]:
-        """Rentals not finished yet, a declined or stuck one first: a reservation still holding its unit, a rental waiting on its
-        payment or its agreement while it still holds the unit (a hold that ran out is not listed, as Units shows that unit vacant),
-        and a rental paid for but cancelled with its refund still to make. An open task of the rental says why it is stuck."""
-        rent, now, rows = self.rent, self.now, []
-        today = local(now).date()
-        why: dict[str, list[str]] = {}
-        for t in rent.tasks.values():
-            if t.open and t.kind in ("payment", "hold", "activation", "refund"):
-                why.setdefault(t.about, []).append(plain(t.reason))
-        for r in rent.reservations.values():
-            if rent.holder(r.unit, now) == ("reservation", r.id):
-                rows.append({"who": self.people[r.tenant], "unit": r.unit, "what": "Reservation held", "tone": "plain", "by": r.expires_at,
-                             "needs": local(r.expires_at).date() <= today,
-                             "why": f"Held until {clock(r.expires_at)}; the unit is released if no rental starts by then."})
-        for r in rent.rentals.values():
-            if r.state in renting.WAITING and rent.holder(r.unit, now) == ("rental", r.id):
-                stage = self.stage(r)
-                ends = (f"The hold on the unit ends {clock(r.expires_at)}." if now < r.expires_at else
-                        f"The hold time ended {clock(r.expires_at)}; the unit stays held while a payment is waiting or paid for.")
-                day_in = self.move_in(r)
-                rows.append({"who": self.people[r.tenant], "unit": r.unit, "what": stage, "by": r.expires_at,
-                             "why": f"Paid and signed; the rental starts on its move-in day, {dated(day_in, self.today.year)}." if day_in else " ".join(why.get(r.id, [])) or ends,
-                             "tone": "act" if stage.startswith(("Card declined", "Payment returned", "Paid and accepted")) else "wait",
-                             # a person is needed when money is stuck (paid, returned or declined) or the hold ends today, but not while a checkout is
-                             # running (its hold has at most the checkout time left): that settles by itself. A hold ending on a later day waits.
-                             "needs": not day_in and not (now < r.expires_at <= now + renting.CHECKOUT) and (
-                                 self.pay_state(r) in ("paid", "returned", "declined") or local(r.expires_at).date() <= today)})
-        for t in rent.tasks.values():
-            r = rent.rentals.get(t.about)
-            if t.open and t.kind == "refund" and r is not None:
-                rows.append({"who": self.people[r.tenant], "unit": r.unit, "tone": "act", "by": now, "needs": True, "why": plain(t.reason),
-                             "what": "Cancelled after payment, refund to make" if r.state == "cancelled" else "Moved out, refund to make"})
-        return sorted(rows, key=lambda x: (x["tone"] != "act", x["by"]))
+    @cached_property
+    def queue(self) -> list[work.Item]:
+        """Every item of staff work on this copy as the records stand now: what the work record kept of it, and what the sources say."""
+        wk = work.State()
+        for e in self.own:
+            wk.apply(e.kind, e.at, e.payload)
+        return work.queue(self.b, self.rent, wk, self.now)
 
-    def codes(self) -> list[dict]:
-        """Gate codes not confirmed working on a rental that is still going: each open access task (a failed read-back, or the daily
-        check finding a code never read back). Once the rental ends, the unit is listed under turnover instead, never twice."""
-        rent, rows = self.rent, []
-        for t in rent.tasks.values():
-            a = rent.access.get(t.about)
-            r = rent.rentals.get(a.rental if a else t.about)
-            if t.open and t.kind == "access" and r is not None and r.state in ("active", "ending"):
-                rows.append({"who": self.people[r.tenant], "unit": r.unit, "what": "Gate code not confirmed", "tone": "act", "why": plain(t.reason),
-                             "since": dated(t.due, self.today.year)})
-        return sorted(rows, key=lambda x: x["unit"])
+    def worked(self, view: str) -> tuple[list[dict], dict[str, int]]:
+        """The queue's items for one view, each in words with its links, and how many items each view holds."""
+        items = work.open_items(self.queue)
+        views = {"all": items, "mine": work.mine(items, ROLE, PERSON), "waiting": [i for i in items if i.state in ("waiting for evidence", "blocked")],
+                 "done": [i for i in self.queue if i.state in work.CLOSED and local(i.closed_at).date() == self.today]}
 
-    def turnover(self) -> list[dict]:
-        """Units whose rental ended while the old gate code still stands: they cannot be rented again until it is revoked. An open
-        revoke task only supplies the reason."""
-        rent, rows = self.rent, []
-        for r in rent.rentals.values():
-            if r.state == "ended" and rent.holder(r.unit, self.now) == ("rental", r.id):
-                m = rent.moveouts.get(r.moveout or "")
-                if r.access is None:            # a rental from before Staddle: its old code is not on record, so staff check the gate system
-                    task = next((t for t in rent.tasks.values() if t.open and t.kind == "clearance" and t.about == r.id), None)
-                    rows.append({"who": self.people[r.tenant], "unit": r.unit, "tone": "act",
-                                 "what": f"Moved out {dated(m.on, self.today.year)}" if m else "Moved to another unit",
-                                 "why": plain(task.reason) if task else "The gate code from before Staddle is not on record; staff check the gate system before the unit is rented again."})
-                    continue
-                a = rent.access[r.access]
-                task = next((t for t in rent.tasks.values() if t.open and t.kind == "revoke" and t.about == a.id), None)
-                rows.append({"who": self.people[r.tenant], "unit": r.unit, "tone": "act" if task or a.state == "revocation_failed" else "wait",
-                             "what": f"Moved out {dated(m.on, self.today.year)}" if m else "Moved to another unit",
-                             "why": plain(task.reason) if task else "The old code is not revoked on the gate system yet, so the unit cannot be rented again."})
-        return sorted(rows, key=lambda x: x["unit"])
+        def who(s: str | None) -> str | None:
+            if not s:
+                return None
+            s = s.removeprefix("staff:")
+            return s.removeprefix("person:").replace(".", " ").title() if s.startswith("person:") else upfirst(s.replace("_", " "))
+        seen, rows = set(), []
+        for i in views[view]:
+            text, tone = WORK_STATES[i.state]
+            anchor = WORK_ANCHORS[i.source]
+            rows.append({"i": i, "anchor": anchor if anchor not in seen else None, "who": self.people.get(i.tenant or ""), "since": dated(i.due, self.today.year),
+                         "unit": i.unit if i.source != "collections" else None, "state": f"{text} to {who(i.assignee)}" if i.state == "assigned" else text,
+                         "tone": tone, "why": plain(i.why), "owner": who(i.assignee or i.role), "closes": plain(i.closes), "evidence": plain(i.evidence),
+                         "seen": who(i.acknowledged[0]) if i.acknowledged else None,
+                         "notes": [(clock(at), who(by), t) for at, by, t in i.notes], "section": "collections" if i.source in ("collections", "overlock") else "renting",
+                         "lift": i.kind == "lift overlock"})
+            seen.add(anchor)
+        return rows, {k: len(v) for k, v in views.items()}
 
     def units(self) -> list[tuple[str, list[dict]]]:
         b, rent = self.b, self.rent
@@ -592,23 +543,6 @@ class Facility:
         return counts
 
     # collections ----------------------------------------------------------------------------------------------------------
-    def collection_tasks(self) -> list[dict]:
-        """What waits for staff in collections, oldest first, until someone acknowledges it."""
-        return [{"id": k.id, "who": self.people[k.tenant], "what": TASK_WORDS.get(k.kind, upfirst(k.kind)), "why": plain(upfirst(k.why)),
-                 "since": dated(k.due, self.today.year)} for k in col.open_tasks(self.b)]
-
-    def overlocks_due(self) -> list[dict]:
-        """Every rented unit whose overlock is due on the owner's schedule with nothing holding it, longest past due first, so a due
-        step reaches staff on Today instead of waiting unseen on the tenant's page."""
-        rows = []
-        for x in self.b.leases.values():
-            if x.ended is None:
-                o = self.steps(x)["overlock"]
-                if o["state"] == "eligible":
-                    rows.append({"who": self.people[x.tenant], "unit": x.unit, "lease": x.id, "days": col.days_past_due(self.b, x.id, self.now),
-                                 "why": o["why"]})
-        return sorted(rows, key=lambda r: (-r["days"], r["unit"]))
-
     def steps(self, lease) -> dict:
         """The overlock and lien-eligibility steps on one unit: the state in words and why, from the same check the gate makes."""
         st, out = col.state(self.b), {}
@@ -1007,21 +941,46 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
         f = Facility(fd, ident)
         cases = f.cases()
         morning = [c for c in cases if c["shift"]]
+        live = work.open_items(f.queue)
+        count = lambda test: sum(1 for i in live if test(i))
         return show(request, "fms_home.html", "home", f, rows=f.occupancy(), month=f.month(month_key(f.today)), past=f.past_due(),
-                    waiting=len(f.waiting(cases)), handed=sum(1 for c in cases if c["handed"]), disputes=len(f.disputes()), tasks=len(f.collection_tasks()),
-                    overlocks=len(f.overlocks_due()), unfinished=sum(1 for x in f.unfinished() if x["needs"]), codes=len(f.codes()), turnover=len(f.turnover()),
+                    waiting=len(f.waiting(cases)), handed=sum(1 for c in cases if c["handed"]), disputes=len(f.disputes()),
+                    tasks=count(lambda i: i.source == "collections"), overlocks=count(lambda i: i.kind == "overlock"),
+                    unfinished=count(lambda i: i.source in ("reservation", "rental", "refund") and not i.waits),     # a person is needed, not a checkout under way
+                    codes=count(lambda i: i.source == "access"), turnover=count(lambda i: i.source == "turnover"),
                     morning=len(SHIFT), closed=sum(1 for c in morning if not c["handed"]),
                     note=plain(fd.take_reset_note(ident)))
 
     @app.get("/today", include_in_schema=False)
-    def today(request: Request):
+    def today(request: Request, view: str = "all"):
         ident = need(request)
+        fd.sync_work(ident)         # what the records say is staff's to do is kept as items before the page reads them
         f = Facility(fd, ident)
         cases = f.cases()
+        view = view if view in dict(WORK_VIEWS) else "all"
+        items, counts = f.worked(view)
         return show(request, "fms_today.html", "today", f, cases=cases, waiting=f.waiting(cases), disputes=f.disputes(), decisions=f.decisions(),
-                    tasks=f.collection_tasks(), overlocks=f.overlocks_due(), overlock_days=(col.state(f.b).schedule or {}).get("overlock_days"),
-                    unfinished=f.unfinished(), codes=f.codes(), turnover=f.turnover(),
-                    token=secrets.token_hex(6), step_note=plain(fd.take_step_note(ident)))
+                    items=items, counts=counts, view=view, views=WORK_VIEWS, roles=("front_desk", "office_manager", "manager"),
+                    me=PERSON, token=secrets.token_hex(6), step_note=plain(fd.take_step_note(ident)))
+
+    @app.post("/work/step", include_in_schema=False)
+    async def work_step(request: Request):
+        """Staff take one step on an item of work, through the gate on this session's copy: acknowledge it, start it, hand it to a role or
+        a person, write a note, or say they checked it. The page's token makes a second press return the first decision, and a refusal
+        is said once on Today. Acknowledging never closes an item."""
+        same_site(request)
+        ident = need(request)
+        data = await form(request)
+        action, token = data.get("action", ""), data.get("token", "")
+        if action not in WORK_FORMS:
+            raise HTTPException(422, "That is not a step staff can take here.")
+        if not re.fullmatch(r"[0-9a-f]{12}", token):
+            raise HTTPException(422, "Reload the page and try again.")
+        key, to, text = data.get("key", "")[:80], data.get("to", "")[:60], " ".join(data.get("text", "").split())[:400]
+        once = hashlib.sha1(f"{to}|{text}".encode()).hexdigest()[:8]
+        await run_in_threadpool(fd.staff_work, ident, work.Act(f"form:{token}:{action}:{key}:{once}", WORK_FORMS[action], STAFF, key, to or None, text or None))
+        view = data.get("view", "all")
+        return RedirectResponse(f"/today?view={view if view in dict(WORK_VIEWS) else 'all'}#work", status_code=303)
 
     @app.get("/messages", include_in_schema=False)
     def messages(request: Request, case: int | None = None, unread: str | None = None):
@@ -1281,7 +1240,7 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
         cmd = Command(f"form:{token}:{action}:{target}", action, p["id"], STAFF, lease=data.get("lease", "")[:12] or None,
                       plan=data.get("plan", "")[:12] or None, form=typed, reason=reason or None)
         await run_in_threadpool(fd.take_card_payment if action == "take_payment" else fd.staff_step, ident, cmd)
-        if data.get("next") == "today" and action == "overlock":
+        if data.get("next") == "today" and action in ("overlock", "lift_overlock"):
             return RedirectResponse("/today#overlocks", status_code=303)       # pressed on Today's list: back to the list
         return RedirectResponse(f"/tenants/{key}#collections", status_code=303)
 

@@ -32,73 +32,43 @@
   {% endfor %}
 </section>
 
-<section class="fms-section" id="collections" aria-labelledby="h-collections">
-  <h2 id="h-collections">Collections waiting for staff</h2>
-  {% for k in tasks %}
-  <article class="fms-line fms-task">
-    <p><a href="/tenants/{{ k.who.slug }}#collections">{{ k.who.name }}</a> <span class="chip act">{{ k.what }}</span> <span class="muted">since {{ k.since }}</span></p>
-    <p class="muted">{{ k.why }}{{ '' if k.why.endswith('.') else '.' }}</p>
-    <form method="post" action="/collections/acknowledge"><input type="hidden" name="task" value="{{ k.id }}"><button class="button" type="submit">Acknowledge</button></form>
-  </article>
-  {% else %}
-  <p class="muted">Nothing in collections is waiting for staff.</p>
-  {% endfor %}
-</section>
-
-<section class="fms-section" id="overlocks" aria-labelledby="h-overlocks">
-  <h2 id="h-overlocks">Overlocks due on the owner's schedule</h2>
+<section class="fms-section" id="work" aria-labelledby="h-work">
+  <h2 id="h-work">Work for staff</h2>
+  <nav class="fms-tabs" aria-label="Work views">{% for key, label in views %}<a href="/today?view={{ key }}#work"{% if key == view %} aria-current="page" class="current"{% endif %}>{{ label }} <span class="muted">{{ counts[key] }}</span></a>{% endfor %}</nav>
   {% if step_note %}<p class="fms-status" role="status">Nothing changed. {{ step_note }}</p>{% endif %}
-  {% if overlocks %}
-  <p class="muted">The owner's schedule makes an overlock due {{ overlock_days }} days after the due date. Nothing holds these: no payment plan, exemption or open dispute. Recording an overlock marks the unit in the FMS; staff put the lock on.</p>
-  <div class="fms-scroll" tabindex="0" role="region" aria-label="Overlocks due"><table class="fms-table">
-    <thead><tr><th>Tenant</th><th>Unit</th><th>Days past due</th><th></th></tr></thead>
-    <tbody>{% for o in overlocks %}<tr>
-      <td><a href="/tenants/{{ o.who.slug }}#collections">{{ o.who.name }}</a></td>
-      <td>{{ o.unit }}</td>
-      <td class="num">{{ o.days }}</td>
-      <td class="num"><form method="post" action="/tenants/{{ o.who.slug }}/collections"><input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="lease" value="{{ o.lease }}"><input type="hidden" name="next" value="today"><button class="button primary" name="action" value="overlock" type="submit">Record an overlock</button></form></td>
-    </tr>{% endfor %}</tbody>
-  </table></div>
+  <p class="muted">Each item stays here until the record it is about shows the work done. Acknowledging says it was seen; it does not close the item.</p>
+  {% for x in items %}{% set i = x.i %}
+  <article class="fms-line"{% if x.anchor %} id="{{ x.anchor }}"{% endif %}>
+    <p>{% if x.who %}<a href="/tenants/{{ x.who.slug }}#{{ x.section }}">{{ x.who.name }}</a>{% endif %}{% if x.unit %}{% if x.who %} <span class="muted" aria-hidden="true">&middot;</span> {% endif %}<a href="/units#u-{{ x.unit }}">unit {{ x.unit }}</a>{% endif %} <span class="chip {{ 'act' if i.state == 'reopened' else i.tone }}">{{ i.what }}</span> <span class="muted">since {{ x.since }}</span> <span class="chip {{ x.tone }}">{{ x.state }}</span>{% if i.overdue %} <span class="chip act">Overdue</span>{% endif %}</p>
+    <p class="muted">{{ x.why }}{{ '' if x.why.endswith('.') else '.' }}</p>
+    {% if x.evidence %}<p class="muted">{{ x.evidence }}</p>
+    {% else %}
+    <p class="muted">What closes it: {{ x.closes }}{% if x.owner %} With: {{ x.owner }}.{% endif %}{% if x.seen %} Seen by {{ x.seen }}.{% endif %}</p>
+    {% for at, by, note in x.notes %}<p class="muted">{{ at }}, {{ by }}: {{ note }}</p>{% endfor %}
+    <div class="fms-decide">
+      {% if i.kind == 'overlock' %}<form method="post" action="/tenants/{{ x.who.slug }}/collections"><input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="lease" value="{{ i.lease }}"><input type="hidden" name="next" value="today"><button class="button primary" name="action" value="overlock" type="submit">Record an overlock</button></form>{% endif %}
+      {% if x.lift %}<form method="post" action="/tenants/{{ x.who.slug }}/collections"><input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="lease" value="{{ i.lease }}"><input type="hidden" name="next" value="today"><button class="button primary" name="action" value="lift_overlock" type="submit">Record the overlock lifted</button></form>{% endif %}
+      {% if not i.acknowledged %}<form method="post" action="/work/step"><input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="key" value="{{ i.key }}"><input type="hidden" name="view" value="{{ view }}"><button class="button" name="action" value="acknowledge" type="submit">Acknowledge</button></form>{% endif %}
+      {% if not i.started %}<form method="post" action="/work/step"><input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="key" value="{{ i.key }}"><input type="hidden" name="view" value="{{ view }}"><button class="button" name="action" value="start" type="submit">Start</button></form>{% endif %}
+    </div>
+    <details>
+      <summary>Assign, add a note{% if i.attest %} or say it is done{% endif %}</summary>
+      <form method="post" action="/work/step" class="fms-decide"><input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="key" value="{{ i.key }}"><input type="hidden" name="view" value="{{ view }}">
+        <label for="to-{{ loop.index }}">Assign to</label>
+        <select id="to-{{ loop.index }}" name="to">{% for r in roles %}<option value="{{ r }}">{{ r.replace('_', ' ')|capitalize }}</option>{% endfor %}<option value="{{ me }}">Me</option></select>
+        <button class="button" name="action" value="assign" type="submit">Assign</button>
+        <label for="text-{{ loop.index }}">Note{% if i.attest %}, or what you checked{% endif %}</label>
+        <input id="text-{{ loop.index }}" name="text" maxlength="300" placeholder="A few words">
+        <button class="button" name="action" value="note" type="submit">Add the note</button>
+        {% if i.attest %}<button class="button" name="action" value="finish" type="submit">Done: I checked it</button>{% endif %}
+      </form>
+    </details>
+    {% endif %}
+  </article>
   {% else %}
-  <p class="muted">No overlock is due.</p>
-  {% endif %}
-</section>
-
-{% if unfinished %}
-<section class="fms-section" id="rentals" aria-labelledby="h-rentals">
-  <h2 id="h-rentals">Rentals not finished yet</h2>
-  {% for x in unfinished %}
-  <article class="fms-line">
-    <p><a href="/tenants/{{ x.who.slug }}#renting">{{ x.who.name }}</a> <span class="muted" aria-hidden="true">&middot;</span> <a href="/units#u-{{ x.unit }}">unit {{ x.unit }}</a> <span class="chip {{ x.tone }}">{{ x.what }}</span></p>
-    <p class="muted">{{ x.why }}</p>
-  </article>
+  <p class="muted">{% if view == 'done' %}Nothing was finished today yet.{% elif view == 'mine' %}Nothing is with you right now.{% elif view == 'waiting' %}Nothing is waiting on anyone else.{% else %}Nothing is waiting for staff.{% endif %}</p>
   {% endfor %}
 </section>
-{% endif %}
-
-{% if codes %}
-<section class="fms-section" id="codes" aria-labelledby="h-codes">
-  <h2 id="h-codes">Gate codes not confirmed</h2>
-  {% for x in codes %}
-  <article class="fms-line">
-    <p><a href="/tenants/{{ x.who.slug }}#renting">{{ x.who.name }}</a> <span class="muted" aria-hidden="true">&middot;</span> <a href="/units#u-{{ x.unit }}">unit {{ x.unit }}</a> <span class="chip {{ x.tone }}">{{ x.what }}</span> <span class="muted">since {{ x.since }}</span></p>
-    <p class="muted">{{ x.why }}</p>
-  </article>
-  {% endfor %}
-</section>
-{% endif %}
-
-{% if turnover %}
-<section class="fms-section" id="turnover" aria-labelledby="h-turnover">
-  <h2 id="h-turnover">Units waiting for an old gate code to be revoked</h2>
-  {% for x in turnover %}
-  <article class="fms-line">
-    <p><a href="/tenants/{{ x.who.slug }}#renting">{{ x.who.name }}</a> <span class="muted" aria-hidden="true">&middot;</span> <a href="/units#u-{{ x.unit }}">unit {{ x.unit }}</a> <span class="chip {{ x.tone }}">{{ x.what }}</span></p>
-    <p class="muted">{{ x.why }}</p>
-  </article>
-  {% endfor %}
-</section>
-{% endif %}
 
 {% set handed = cases|selectattr('handed')|list %}
 <section class="fms-section" aria-labelledby="h-handed">
