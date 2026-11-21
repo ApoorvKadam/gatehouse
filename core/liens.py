@@ -12,7 +12,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from urllib.parse import urlsplit
 
 from pydantic import ValidationError
@@ -23,11 +23,18 @@ from .books import Books, LATE_FEE, RENT, local
 from .evidence import KIND_WORDS as CHARGE_WORDS, day, money
 from .lien_evidence import EVIDENCE_KINDS, NEEDS_DOCUMENT, parse_evidence, same_time
 
+if TYPE_CHECKING:
+    from .auction import Auction
+
+# the steps on Staddle's own auction platform (core/auction.py), in the order they are taken, and the cancellation
+AUCTION_ACTIONS = ("list_lien_auction", "open_lien_bidding", "place_lien_bid", "close_lien_bidding", "declare_lien_winner",
+                   "take_buyer_payment", "complete_lien_sale", "cancel_lien_auction")
+BIDDER_ACTIONS = ("place_lien_bid", "take_buyer_payment")      # taken by the buyer on the platform, not by staff
 ACTIONS = ("open_lien_case", "record_lien_evidence", "record_lien_address", "prepare_lien_notice",
            "approve_lien_case", "record_lien_stop", "resolve_lien_stop",
-           "decide_lien_case")
+           "decide_lien_case") + AUCTION_ACTIONS
 # the steps on one case: each names the case it is for, so a command prepared for one episode can never land on the next
-CASE_ACTIONS = ("record_lien_evidence", "record_lien_address", "prepare_lien_notice", "approve_lien_case", "decide_lien_case")
+CASE_ACTIONS = ("record_lien_evidence", "record_lien_address", "prepare_lien_notice", "approve_lien_case", "decide_lien_case") + AUCTION_ACTIONS
 APPROVER = "staff:manager"
 # bankruptcy and military service protect the person and everything they store, so they hold every unit of the tenant; a court order and
 # a secured party or ownership conflict name specific property, so they hold only the unit they were recorded on
@@ -85,6 +92,7 @@ class Case:
 class State:
     cases: dict[str, Case] = field(default_factory=dict)
     stops: dict[str, dict] = field(default_factory=dict)    # legal stops by id: they belong to the unit, not to the case they were recorded on
+    auctions: dict[str, Auction] = field(default_factory=dict)    # the auction of each case that has one (core/auction.py), by case id
 
 
 def state(books: Books) -> State:
@@ -99,7 +107,10 @@ def fold_event(b: Books, kind: str, at: datetime, p: dict) -> None:
     event whose case or stop is not yet folded is a log out of order, and raises."""
     if b.liens is None:
         b.liens = State()
-    if kind == "lien_case.opened":
+    if kind.startswith("lien_case.auction_"):
+        from . import auction        # auction reads these cases, so it cannot be imported at the top
+        auction.fold_event(b, kind, at, p)
+    elif kind == "lien_case.opened":
         b.liens.cases[p["case"]] = Case(p["case"], p["lease"], p["tenant"], p["unit"], p["episode"], p["by"], at)
         b._seen("LC", p["case"])
     elif kind == "lien_case.address_recorded":
@@ -532,6 +543,11 @@ def case_state(books: Books, case: Case, now: datetime) -> tuple[str, str]:
     was), evidence incomplete, packet assembled, approved, or held (a legal stop or a hold on the tenancy)."""
     if case.closed:
         return "closed", case.closed["why"]
+    listed = state(books).auctions.get(case.id)
+    if listed and listed.cancel:
+        return "cancellation waiting", "the cancellation is recorded and sent; it counts once the auction platform shows the listing cancelled"
+    if listed and listed.status == "sold":
+        return "sold", "the sale is final on the auction platform; the sale money and what is owed to the tenant come next"
     if why := stop_reason(books, case):
         return "held", why
     # a dispute, an exemption, a plan, a payment still with the processor: asked of the holds themselves, because a hold can take away
@@ -546,6 +562,9 @@ def case_state(books: Books, case: Case, now: datetime) -> tuple[str, str]:
         return "review required", "; ".join(c["why"] for c in changed)
     if gaps := [f.requirement for f in findings(books, case) if f.status != "met"]:
         return "evidence incomplete", "the packet still needs: " + ", ".join(gaps)
+    if listed and listed.status != "new" and approval(books, case):
+        from . import auction
+        return "auction", f"the auction is {auction.words(listed)}"
     if approval(books, case):
         return "approved", "a manager approved the file as it stands"
     return "packet assembled", "every record the packet lists is on the file"
@@ -594,7 +613,14 @@ def recheck(led: Ledger, tenant: str, now: datetime) -> None:
     b = led.books
     for case in [c for c in state(b).cases.values() if c.tenant == tenant and not c.closed]:
         _void_stale(led, case, now)
-        if cleared(b, case):
+        listed = state(b).auctions.get(case.id)
+        if cleared(b, case) and not (listed and listed.status == "sold"):     # a finished sale is for staff and counsel, never cured by itself
+            from . import auction
+            if auction.holds_open(listed):      # a listing to take down, or a cancellation awaiting its read-back: the case closes then, not now
+                paid_in_full = case.copies and any(p.tenant == tenant and p.id not in frozen(case)["payments_seen"] for p in b.payments.values())
+                why = "cured: the claim was paid in full" if paid_in_full else "cured: nothing in the claim is owed any more"
+                auction.request_cancel(led, case, now, {"kind": "cured", "why": why, "by": col.SYSTEM}, col.SYSTEM)
+                continue
             paid = case.copies and any(p.tenant == tenant and p.id not in frozen(case)["payments_seen"] for p in b.payments.values())
             led.emit("lien_case.closed", now, {"case": case.id, "kind": "cured", "by": col.SYSTEM,
                                                "why": "cured: the claim was paid in full" if paid else "cured: nothing in the claim is owed any more"},
@@ -621,7 +647,10 @@ def check(books: Books, cmd, now: datetime) -> tuple[bool, str]:
     act() can record the command: the unit is the tenant's, a case step names the open case, and every safety check has passed."""
     a, form = cmd.action, cmd.form or {}
     # 1. the action and its scope
-    if not cmd.source.startswith("staff:"):
+    if a in BIDDER_ACTIONS:
+        if not cmd.source.startswith("bidder:") or not cmd.source[len("bidder:"):].strip():
+            return False, "only a bidder on the auction takes that step"
+    elif not cmd.source.startswith("staff:"):
         return False, "only staff take a lien step"
     if a == "approve_lien_case" and cmd.source != APPROVER:
         return False, "only a manager approves a lien case"
@@ -639,6 +668,9 @@ def check(books: Books, cmd, now: datetime) -> tuple[bool, str]:
         if not form.get("case"):
             return False, f"name the lien case this step is for; the open case on this unit is {case.id}"
         return False, f"lien case {form['case']} is not the open case on this unit; the open case is {case.id}"
+    if a in AUCTION_ACTIONS:
+        from . import auction
+        return auction.check(books, case, cmd, now)
     if a == "record_lien_evidence":
         return _evidence_check(case, form)
     if a == "record_lien_address":
@@ -755,12 +787,18 @@ def _decide_check(books: Books, lease, case: Case, form: dict, reason: str | Non
     if not (reason or "").strip():
         return False, "a decision is recorded with a reason"
     if outcome == "close":
+        if (listed := state(books).auctions.get(case.id)) and listed.cancel:
+            return True, "the cancellation is already recorded; the case closes once the platform shows the listing cancelled"
         return True, "the file is closed by staff; a new lien needs a new episode"
     seen = form.get("fingerprint")
     if not isinstance(seen, str) or not seen:
         return False, "a decision to resume names the file staff saw: send its fingerprint"
     if not changes(books, case):
         return False, "there is nothing to decide: nothing has changed since the notice copy was prepared"
+    from . import auction
+    if auction.listed_ever(state(books).auctions.get(case.id)):
+        return False, ("an auction was listed before this change; cancel it first, because a cancelled auction is never brought back "
+                       "and a new listing needs a new episode")
     if why := stop_reason(books, case):
         return False, why
     if lease.ended:
@@ -846,8 +884,12 @@ def act(led: Ledger, cmd, now: datetime) -> None:
         led.emit("lien_case.decided", now, {"case": case.id, "outcome": form["outcome"], "reason": cmd.reason.strip(), "version": version,
                                             "by": cmd.source}, f"lien_case:{case.id}:decided:{len(case.decisions) + 1}", source=cmd.source, command=cmd.id)
         if form["outcome"] == "close":
-            led.emit("lien_case.closed", now, {"case": case.id, "kind": "staff", "why": cmd.reason.strip(), "by": cmd.source},
-                     f"lien_case:{case.id}:closed", source=cmd.source, command=cmd.id)
+            from . import auction
+            closes = {"kind": "staff", "why": cmd.reason.strip(), "by": cmd.source}
+            if auction.holds_open(state(b).auctions.get(case.id)):     # a listing is taken down first: the case closes once the platform shows it cancelled
+                auction.request_cancel(led, case, now, closes, cmd.source, cmd.id)      # (a cancellation already recorded keeps its own way of closing)
+            else:
+                led.emit("lien_case.closed", now, {"case": case.id, **closes}, f"lien_case:{case.id}:closed", source=cmd.source, command=cmd.id)
         else:
             _void_stale(led, case, now)
             led.emit("lien_case.notice_prepared", now, {"case": case.id, "version": version, "snapshot": snapshot(b, case), "by": cmd.source},
@@ -858,6 +900,9 @@ def act(led: Ledger, cmd, now: datetime) -> None:
         n = len(case.approvals) + 1
         led.emit("lien_case.approved", now, {"case": case.id, "approval": n, "fingerprint": fingerprint(b, case), "parts": parts(b, case),
                                              "by": cmd.source}, f"lien_case:{case.id}:approval:{n}", source=cmd.source, command=cmd.id)
+    elif cmd.action in AUCTION_ACTIONS:
+        from . import auction
+        auction.act(led, cmd, case, now)
     elif cmd.action == "prepare_lien_notice":
         version = len(case.copies) + 1
         led.emit("lien_case.notice_prepared", now, {"case": case.id, "version": version, "snapshot": snapshot(b, case), "by": cmd.source},

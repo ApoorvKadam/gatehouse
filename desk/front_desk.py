@@ -17,7 +17,7 @@ from datetime import date, datetime, timedelta, timezone
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
-from core import delinquency, renting
+from core import auction, delinquency, renting
 from core.books import ZONE, at_local, local
 from core.billing import Ledger, Refused
 from core.case import READ_ONLY, handle
@@ -85,6 +85,8 @@ class FrontDesk:
         # the stand-in gate keeps its records there too: a restart finds the codes it made and issues nothing twice. Until a real
         # access system is connected every gate code in a copy is the stand-in's, and its records say so.
         self.access = renting.StandIn(path=None if path == ":memory:" else os.path.join(os.path.dirname(os.path.abspath(path)), "access.json"))
+        # the simulated auction platform keeps its listings in a file of its own, cleaned up per copy like the gate's codes
+        self.auction = auction.AuctionSite(path=None if path == ":memory:" else os.path.join(os.path.dirname(os.path.abspath(path)), "auction.json"))
         self.clock = clock or (lambda: datetime.now(ZONE))      # the real time in Orlando; tests pass a fixed one
         self.day: date | None = None                            # the day the books were made for
         self.lock = threading.RLock()
@@ -191,6 +193,10 @@ class FrontDesk:
                     self._forget(prefix)
         self._finish_cleanups()
 
+    def _outside(self) -> tuple:
+        """The simulated outside systems whose records are kept per copy: each notes, forgets and releases a copy the same way."""
+        return self.access, self.auction
+
     def _note_copies_of(self, files: list[str]) -> list[str] | None:
         """The gate-code prefix of every visitor copy in these database files, each written to the stand-in's file before the files are
         deleted. None when a file cannot be read or a note cannot be written: nothing is deleted then and the next seed tries again."""
@@ -202,8 +208,9 @@ class FrontDesk:
                 log.exception("the copies in %s could not be read, so their gate codes cannot be named and the old day files stay for now", f)
                 return None
         try:
-            for prefix in prefixes:
-                self.access.note(prefix)
+            for system in self._outside():
+                for prefix in prefixes:
+                    system.note(prefix)
         except Exception:
             log.exception("the gate cleanup could not be noted, so old day files stay for now")
             return None
@@ -211,23 +218,25 @@ class FrontDesk:
 
     def _forget(self, prefix: str) -> None:
         """Forget a gone copy's codes on the stand-in gate. A failure is logged and the note on file lets a later pass finish it."""
-        try:
-            self.access.forget(prefix)
-        except Exception:
-            log.exception("forgetting the gate codes of %s failed; a later pass finishes it", prefix)
+        for system in self._outside():
+            try:
+                system.forget(prefix)
+            except Exception:
+                log.exception("forgetting the records of %s failed; a later pass finishes it", prefix)
 
     def _finish_cleanups(self) -> None:
         """Finish what a stop or a fault left noted: the codes of a copy that is gone are forgotten, and a note for a copy that is still
         here (its drop failed) is cleared with its codes kept."""
-        for prefix in list(self.access.pending):
+        for prefix in sorted({x for system in self._outside() for x in system.pending}):
             alive = self._copy_is_alive(prefix.rstrip(":"))
             if alive is None:
                 continue                    # a day file could not be read: the note stays until every file can be checked
             if alive:
-                try:
-                    self.access.release(prefix)
-                except Exception:
-                    log.exception("clearing the gate cleanup note of %s failed", prefix)
+                for system in self._outside():
+                    try:
+                        system.release(prefix)
+                    except Exception:
+                        log.exception("clearing the gate cleanup note of %s failed", prefix)
             else:
                 self._forget(prefix)
 
@@ -393,7 +402,8 @@ class FrontDesk:
                 continue                    # a payment the processor has not settled keeps its copy
             mark = renting.copy_mark(self.store, s) + ":"      # named before the copy goes: it is read from the copy's first event
             try:
-                self.access.note(mark)          # on file before the drop, so a fault in forgetting is finished later
+                for system in self._outside():
+                    system.note(mark)           # on file before the drop, so a fault in forgetting is finished later
             except Exception:
                 log.exception("the gate cleanup of %s could not be noted, so the copy stays for now", s)
                 continue
@@ -460,7 +470,9 @@ class FrontDesk:
                 self._keep(self._reset_notes, visitor, "Start over waits: a card payment on this copy has not been settled by the card processor "
                            "yet, so nothing was thrown away. Try again once the card processor has answered.")
                 return False
-            self.access.note(mark := renting.copy_mark(store, stream) + ":")     # on file before anything changes: if it cannot be written, nothing is dropped
+            mark = renting.copy_mark(store, stream) + ":"
+            for system in self._outside():
+                system.note(mark)               # on file before anything changes: if it cannot be written, nothing is dropped
             self._proposals.pop(visitor, None)
             self._notes.pop(visitor, None)
             self._reset_notes.pop(visitor, None)
