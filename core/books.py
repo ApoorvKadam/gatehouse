@@ -23,7 +23,7 @@ REVIEW_DAYS = 10
 COLLECTION_RECORDS = ("plan_policy", "schedule", "plan", "promise", "exemption", "overlock", "lien", "intent", "webhook", "notice",
                       "task", "sweep", "reconcile", "card")
 # the lien case records (core/liens.py), folded into Books.liens; the "lien" record above is only the eligibility flag
-LIEN_RECORDS = ("lien_case",)
+LIEN_RECORDS = ("lien_case", "sale", "surplus")     # "sale" and "surplus" are the sale money (core/lien_money.py)
 
 
 def local(t: datetime) -> datetime:
@@ -86,6 +86,16 @@ def lines(kind: str, p: dict) -> list[Line]:
         return [(f"credit:{p['tenant']}", p["cents"], None), (f"refund:{p['tenant']}", -p["cents"], None)]
     if kind == "refund.paid":
         return [(f"refund:{p['tenant']}", p["cents"], None), ("clearing:card", -p["cents"], None)]
+    if kind == "sale.proceeds_applied":
+        # buyer money on the auction platform pays the lease's charges; what is left is owed to the tenant in its own account, which is
+        # neither income nor the credit the tenant can spend
+        out: list[Line] = [("clearing:auction", p["cents"], None)]
+        out += [(f"receivable:{a['lease']}", -a["cents"], a["charge"]) for a in p["applications"]]
+        if p["surplus_cents"]:
+            out.append((f"surplus:{p['tenant']}", -p["surplus_cents"], None))
+        return out
+    if kind == "surplus.paid":
+        return [(f"surplus:{p['tenant']}", p["cents"], None), ("clearing:auction", -p["cents"], None)]
     if kind == "charge.waived":
         return [("contra:waivers", p["cents"], p["charge"]), (f"receivable:{p['lease']}", -p["cents"], p["charge"])] + _moves(p)
     return []
@@ -346,9 +356,10 @@ class Books:
     def tenant_charges(self, tenant: str) -> list[Charge]:
         return [self.charges[i] for i in self.of_tenant.get(tenant, ())]
 
-    def open_charges(self, tenant: str, skip_held: bool = True) -> list[Charge]:
-        """Open charges in the order money pays them: oldest due date first, rent before fees on the same date."""
-        out = [c for c in self.tenant_charges(tenant) if c.open_cents > 0 and not (skip_held and self.held(c.id))]
+    def open_charges(self, tenant: str, skip_held: bool = True, lease: str | None = None) -> list[Charge]:
+        """Open charges in the order money pays them: oldest due date first, rent before fees on the same date. Given a lease, only that
+        unit's charges (what a sale of its contents pays)."""
+        out = [c for c in self.tenant_charges(tenant) if c.open_cents > 0 and not (skip_held and self.held(c.id)) and lease in (None, c.lease)]
         return sorted(out, key=lambda c: (c.due, c.kind != RENT, c.seq))
 
     def receivable(self, lease: str) -> int:

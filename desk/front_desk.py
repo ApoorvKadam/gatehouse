@@ -54,8 +54,10 @@ def account_words(account: str, books) -> str:
         return f"Owed by the tenant, unit {books.leases[ident].unit}"
     if kind == "credit":
         return "Held for the tenant as credit"
+    if kind == "surplus":
+        return "Owed to the tenant from a sale, not credit"
     return {"income:rent": "Rent income", "income:fees": "Fee income", "contra:waivers": "Waivers given",
-            "clearing:card": "Card payments on the way"}.get(account, account)
+            "clearing:card": "Card payments on the way", "clearing:auction": "Auction money on the way"}.get(account, account)
 
 
 class RuleIn(BaseModel):

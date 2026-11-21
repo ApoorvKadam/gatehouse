@@ -126,6 +126,9 @@ def forward_refusal(books: Books, case: liens.Case, now: datetime) -> str | None
                 else "this auction is being cancelled" + (" because the claim was paid in full" if a.cancel["closes"]["kind"] == "cured" else ""))
     if why := liens.stop_reason(books, case):
         return why
+    from . import lien_money
+    if why := lien_money.agreement_refusal(books, case):
+        return why
     if books.leases[case.lease].ended:
         return "the lease has ended, and an ended lease never means permission to sell; staff handle it"
     if changed := liens.changes(books, case):
@@ -404,6 +407,9 @@ def _record(led: Ledger, case: liens.Case, op: Op, result: dict, how: str, now: 
     late = a.cancel is not None and op.step not in ("cancel", "read")
     led.emit("lien_case.auction_answered", now, {"case": case.id, "op": op.id, "result": result, "how": how, "late": late, "simulated": simulated},
              f"lien_case:{case.id}:auction:{op.n}:answered", source=col.SYSTEM)
+    if not late and op.step == "sale":      # the sale is final: the buyer's money is applied to the debt, once, in this same write
+        from . import lien_money
+        lien_money.settle(led, case, now)
     if late:
         _staff_item(led, case, f"late:{op.id}", f"The auction platform answered after the cancellation was recorded: it {LATE_WORDS[op.step]}. "
                     "The answer is kept and nothing was changed; the cancelled auction is never brought back. Staff and counsel decide what follows.", now)

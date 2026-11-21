@@ -136,6 +136,7 @@ def test_the_steps_go_in_order_and_each_out_of_order_step_is_refused_with_its_re
             d = run(store, s, action=action, tenant=t, lease=lease, source=SOURCES.get(action, "staff:office_manager"), form={"cents": 20000})
             assert not d.allowed, (status, action)
             expected = "no auction is listed for this case yet" if status == "new" else (
+                "no lien case is open on this unit" if status == "sold" else         # a final sale applies its money and closes the episode
                 "this episode already has an auction" if action == "list_lien_auction" else auction.ORDER_WHY[auction.STEP_OF[action]])
             assert expected in d.check, (status, action, d.check)
         if status == "bidding":                 # a bid keeps bidding open, so a bid goes in before it is closed
@@ -144,7 +145,7 @@ def test_the_steps_go_in_order_and_each_out_of_order_step_is_refused_with_its_re
             action = "close_lien_bidding" if status == "bidding" else next(iter(NEXT[status]))
             ok(store, s, t, lease, site, action, source=SOURCES.get(action, "staff:office_manager"), form={"cents": 20000})
     case = the_case(store, s)
-    assert the_auction(store, s).status == "sold" and case.closed is None and state_of(store, s)[0] == "sold"
+    assert the_auction(store, s).status == "sold" and case.closed["kind"] == "sold" and state_of(store, s)[0] == "closed"
     assert listing(site, s, store)["status"] == "sold"
 
 
@@ -187,8 +188,8 @@ def test_a_winning_bid_alone_never_marks_the_unit_sold_and_buyer_money_never_tou
     assert after.payments == books.payments and after.receivable(lease) == books.receivable(lease)
     assert [x for x in store.journal(s) if x not in journal] == []                       # not one journal line for the buyer's money
     ok(store, s, t, lease, site, "complete_lien_sale", source="staff:manager")
-    assert the_auction(store, s).status == "sold" and owed(store, s, t) == 12000 and store.books(s).payments == books.payments
-    assert the_case(store, s).closed is None                                             # applying the sale money to the debt is a later step
+    assert the_auction(store, s).status == "sold" and store.books(s).payments == books.payments       # still not a tenant payment
+    assert owed(store, s, t) == 0 and the_case(store, s).closed["kind"] == "sold"        # the sale money pays the debt, as sale proceeds, and closes the episode
 
 
 # a payment after the notice -----------------------------------------------------------------------------------------------

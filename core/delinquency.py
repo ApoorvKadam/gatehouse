@@ -758,9 +758,10 @@ def run_sweep(led: Ledger, now: datetime) -> None:
     running it twice, or late, records each thing once; a late run dates each task by the day it fell due."""
     b, today = led.books, local(now).date()
     st = state(b)
-    from . import liens             # see recheck: liens imports this module
+    from . import lien_money, liens             # see recheck: liens imports this module
     for tenant in sorted({p.tenant for p in st.plans.values() if p.state in ("accepted", "active", "completed")}
-                         | {c.tenant for c in liens.state(b).cases.values() if not c.closed}):     # an open lien case is rechecked with or without a plan
+                         | {c.tenant for c in liens.state(b).cases.values() if not c.closed}      # an open lien case is rechecked with or without a plan
+                         | lien_money.tenants(b)):                                                # and so is a tenant whose surplus is not yet paid
         recheck(led, tenant, now)
     for plan in [p for p in st.plans.values() if p.state in OPEN_PLAN]:
         grace = timedelta(days=plan.terms["grace_days"])
