@@ -13,6 +13,8 @@ from datetime import date, datetime, timedelta
 
 from . import delinquency as col
 from . import renting
+from . import liens
+from .gate import Command, evaluate
 from .billing import Ledger
 from .books import ADMIN_FEE, LATE_FEE, LATE_FEE_CENTS, RENT, at_local, cutoff
 from .evidence import month_words
@@ -170,6 +172,7 @@ class Year:
             self.plan_breached()
             self.on_a_plan()
             self.cards_on_file()
+            self.lien_file()
             rent = renting.Rent(self.led.books)
             for event in self.led.pending:
                 rent.apply(event.kind, event.at, event.payload)
@@ -490,6 +493,16 @@ class Year:
             due = at_local(when.date() + timedelta(days=col.STEP_DAYS * k), 10, 30)
             steps.append((due, lambda k=k, due=due: pay_part(k, due)))
         self._play(steps)
+
+    def lien_file(self) -> None:
+        """Open a file for a unit due on the owner's schedule, without inventing notice evidence."""
+        lease = self.lease("tom")
+        tenant = self.t("tom")
+        for action in ("flag_lien_eligible", "open_lien_case"):
+            cmd = Command(f"seed:{action}:{lease}", action, tenant, "staff:office_manager", lease=lease)
+            if not evaluate(self.led.books, cmd, self.now).allowed:
+                return
+            (col.act if action == "flag_lien_eligible" else liens.act)(self.led, cmd, self.now)
 
     def cards_on_file(self) -> None:
         """The live copy's tenants on a plan, and the first few who are past due, each have two test cards on file: one that pays and

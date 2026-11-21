@@ -75,7 +75,7 @@
 {% if col.show %}{% set plan = col.plan %}
 <section class="fms-section" id="collections" aria-labelledby="h-collections">
   <h2 id="h-collections">Collections</h2>
-  {% if step_note and note_at != 'renting' %}<p class="fms-status" role="status">Nothing changed. {{ step_note }}</p>{% endif %}
+  {% if step_note and note_at not in ('renting', 'lien') %}<p class="fms-status" role="status">Nothing changed. {{ step_note }}</p>{% endif %}
   {% if plan %}
   <article class="fms-card">
     <p class="fms-card-head"><b>Payment plan</b> <span class="chip {{ plan.tone }}">{{ plan.words }}</span> <span class="muted">{{ plan.total }} in all, under plan policy version {{ plan.policy }}</span></p>
@@ -104,7 +104,10 @@
     <tbody>{% for u in col.units %}<tr>
       <td>{{ u.unit }}</td>
       <td><span class="chip {{ u.overlock.tone }}">{{ u.overlock.words }}</span>{% if u.overlock.why %} <span class="muted">{{ u.overlock.why }}</span>{% endif %}</td>
-      <td><span class="chip {{ u.lien.tone }}">{{ u.lien.words }}</span>{% if u.lien.why %} <span class="muted">{{ u.lien.why }}</span>{% endif %}</td>
+      <td><span class="chip {{ u.lien.tone }}">{{ u.lien.words }}</span>{% if u.lien.why %} <span class="muted">{{ u.lien.why }}</span>{% endif %}
+      {% if u.lien.state in ('eligible', 'recorded') and not lien_files|selectattr('case.lease', 'equalto', u.lease)|rejectattr('case.closed')|list %}
+      <form method="post" action="/tenants/{{ p.slug }}/lien"><input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="lease" value="{{ u.lease }}">
+      {% if u.lien.state == 'eligible' %}<button class="button" name="action" value="flag_lien_eligible">Flag lien eligibility</button>{% else %}<button class="button" name="action" value="open_lien_case">Open a lien file</button>{% endif %}</form>{% endif %}</td>
       <td class="num">{% if u.overlock.state in ('eligible', 'recorded') %}<form method="post" action="/tenants/{{ p.slug }}/collections">
         <input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="lease" value="{{ u.lease }}">
         {% if u.overlock.state == 'eligible' %}<button class="button primary" name="action" value="overlock" type="submit">Record an overlock</button>
@@ -161,6 +164,43 @@
   {% endif %}
 </section>
 {% endif %}
+
+{% if lien_files or note_at == 'lien' %}
+<section class="fms-section" id="lien" aria-labelledby="h-lien">
+  <h2 id="h-lien">Lien file</h2>
+  {% if step_note and note_at == 'lien' %}<p class="fms-status" role="status">Nothing changed. {{ step_note }}</p>{% endif %}
+  {% for file in lien_files %}{% set c = file.case %}
+  <article class="fms-card">
+    <h3>Unit {{ c.unit }}</h3><p class="fms-state"><span class="chip wait">{{ file.where }}</span> {{ file.why|upfirst }}{{ '' if file.why.endswith('.') else '.' }}</p>
+    {% if file.frozen %}<p>Frozen ledger copy: {{ money(file.frozen.claim_cents) }}</p>{% else %}<p>No frozen ledger copy yet.</p>{% endif %}
+    <h4>Findings</h4><ul>{% for finding in file.findings %}<li><b>{{ finding.requirement|upfirst }}</b> {% if finding.status == 'met' %}<span class="chip done">Met</span>{% elif finding.status == 'missing' %}<span class="chip act">Missing</span>{% else %}<span class="chip wait">Needs review</span>{% endif %}{% if finding.status != 'met' %} {{ finding.detail|upfirst }}{{ '' if finding.detail.endswith('.') else '.' }}{% if finding.action %} {{ finding.action|upfirst }}{{ '' if finding.action.endswith('.') else '.' }}{% endif %}{% endif %}</li>{% endfor %}</ul>
+    <h4>Evidence on file</h4>{% for e in c.evidence %}<p>{{ lien_kind_words.get(e.kind, 'Evidence')|upfirst }}</p>{% else %}<p>No evidence on file.</p>{% endfor %}
+    <h4>Notice copies</h4>{% for copy in c.copies %}<p>Notice copy: {{ money(copy.snapshot.claim_cents) }} in the ledger copy.</p>{% else %}<p>No notice copy prepared.</p>{% endfor %}
+    <h4>Approvals</h4>{% for approval in c.approvals %}<p>{% if file.approval and approval.id == file.approval.id %}Approval holds for the current file.{% else %}Approval no longer holds.{% endif %}</p>{% else %}<p>No approval on file. A manager approves.</p>{% endfor %}
+    <h4>Legal stops</h4>{% for stop in file.stops %}<p>{{ stop_words[stop.kind]|upfirst }}: {{ stop.detail }}. {% if stop.resolved %}Resolved: {{ stop.resolved.reason }}{% else %}Still open.{% endif %}</p>
+    {% if not stop.resolved and manager %}<form method="post" action="/tenants/{{ p.slug }}/lien"><input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="lease" value="{{ c.lease }}"><input type="hidden" name="stop" value="{{ stop.id }}"><input name="reason" required placeholder="Why the stop no longer applies"><button class="button" name="action" value="resolve_lien_stop">Resolve the stop</button></form>{% elif not stop.resolved %}<p>A manager resolves the stop.</p>{% endif %}
+    {% else %}<p>No legal stops on file.</p>{% endfor %}
+    {% if file.auction %}<h4>Auction</h4><p>{{ file.auction_words|upfirst }}.{% if file.auction.cancel and not file.auction.cancel.confirmed %} The cancellation is waiting for the auction platform to confirm it.{% endif %}</p>
+    {% for bid in file.auction.bids %}<p>Bid: {{ money(bid.cents) }}</p>{% endfor %}
+    {% if file.auction.winner %}<p>Winning bid: {{ money(file.auction.winner.cents) }}</p>{% endif %}
+    {% if file.auction.buyer_paid_cents is not none %}<p>Buyer paid {{ money(file.auction.buyer_paid_cents) }} on the auction platform.</p>{% endif %}{% endif %}
+    {% if file.sale %}<h4>Sale money</h4><p>{{ money(file.sale.applied_cents) }} applied to the debt. Surplus owed to the tenant: {{ money(file.sale.surplus_cents) }}.</p>{% if file.surplus %}<p>{{ surplus_words.get(file.surplus.state, 'Under review') }}</p>{% endif %}{% endif %}
+    {% if not c.closed %}
+    <form method="post" action="/tenants/{{ p.slug }}/lien" class="fms-exempt"><input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="lease" value="{{ c.lease }}"><input type="hidden" name="case" value="{{ c.id }}">
+      <label>Written address <input name="address" placeholder="Full street address"></label><label>From <select name="basis"><option value="rental agreement">the rental agreement</option><option value="written change of address">a written change of address</option></select></label><button class="button" name="action" value="record_lien_address">Record address</button>
+    </form>
+    <form method="post" action="/tenants/{{ p.slug }}/lien" class="fms-exempt"><input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="lease" value="{{ c.lease }}"><input type="hidden" name="case" value="{{ c.id }}">
+      <button class="button" name="action" value="prepare_lien_notice">Prepare notice copy</button>
+      {% if manager %}<input type="hidden" name="fingerprint" value="{{ file.fingerprint }}"><button class="button" name="action" value="approve_lien_case">Approve the file</button>{% endif %}
+      {% if file.approval and not file.auction %}<button class="button" name="action" value="list_lien_auction">List on the auction platform</button>{% endif %}
+    </form>
+    <form method="post" action="/tenants/{{ p.slug }}/lien" class="fms-exempt"><input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="lease" value="{{ c.lease }}"><input type="hidden" name="case" value="{{ c.id }}">
+      <label>Record a legal stop <select name="kind">{% for code, words in stop_words.items() %}<option value="{{ code }}">{{ words|upfirst }}</option>{% endfor %}</select></label><input name="detail" required placeholder="What was reported"><input name="source" required placeholder="Where it came from"><button class="button" name="action" value="record_lien_stop">Record stop</button>
+    </form>
+    {% if file.auction %}<form method="post" action="/tenants/{{ p.slug }}/lien"><input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="lease" value="{{ c.lease }}"><input type="hidden" name="case" value="{{ c.id }}"><input name="reason" required placeholder="Reason for cancellation"><button class="button" name="action" value="cancel_lien_auction">Cancel the auction</button></form>{% endif %}
+    {% endif %}
+  </article>{% endfor %}
+</section>{% endif %}
 
 {% if disputes %}
 <section class="fms-section" aria-labelledby="h-disputes">

@@ -5,6 +5,6 @@
 <p class="fms-summary">{{ lede }}</p>
 {% if filters %}<nav class="fms-sub" aria-label="Rental filters">{% for value, label in filters %}<a href="/rentals{% if value %}?status={{ value }}{% endif %}"{% if value == selected %} aria-current="page"{% endif %}>{{ label }}</a> {% endfor %}</nav>{% endif %}
 {% if rows %}<div class="fms-scroll"><table class="fms-table"><thead><tr>{% for h in heads %}<th>{{ h }}</th>{% endfor %}</tr></thead>
-<tbody>{% for r in rows %}<tr>{% if filters %}{% for c in r.cells %}<td>{% if loop.first %}<a href="/tenants/{{ r.slug }}#renting">{{ c }}</a>{% else %}{{ c }}{% endif %}</td>{% endfor %}{% else %}{% for c in r %}<td>{{ c }}</td>{% endfor %}{% endif %}</tr>{% endfor %}</tbody></table></div>
+<tbody>{% for r in rows %}<tr>{% if filters or lien_list %}{% for c in r.cells %}<td>{% if loop.first %}<a href="/tenants/{{ r.slug }}{{ '#lien' if lien_list else '#renting' }}">{{ c }}</a>{% else %}{{ c }}{% endif %}</td>{% endfor %}{% else %}{% for c in r %}<td>{{ c }}</td>{% endfor %}{% endif %}</tr>{% endfor %}</tbody></table></div>
 {% else %}<p class="muted">{{ empty }}</p>{% endif %}
 {% endblock %}
