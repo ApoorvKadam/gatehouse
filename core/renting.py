@@ -1325,36 +1325,41 @@ class Crash(Exception):
     """The process stopped between two steps, as on a restart."""
 
 
-class StandIn:
-    """A deterministic access system for tests and for when no real one is connected; every record made through it says it is a
-    stand-in. It does not remove repeats by itself: a second call with the same key issues again, so only Staddle's own operation
-    records prevent a repeat. `crash_before` and `crash_after` name steps that stop the process once around the call; `hide` names
-    groups a read-back fails to show. Given a path, its users, answers and calls are kept in that file, as the simulated payment
-    processor keeps its payments, so a restart finds them and nothing is issued twice."""
+class OutsideSystem:
+    """What every simulated outside system shares: answers kept by call key in a file, so a restart finds them, `crash_before` and
+    `crash_after` naming steps that stop the process once around a call, and the per-copy cleanup. A copy's records all begin with
+    its mark (copy_mark), so a copy that is reset or removed has them noted before it goes (note), forgotten after (forget), or kept
+    after all (release); the note stays on file until the forgetting is saved, so a fault halfway is finished by a later pass. A
+    subclass keeps its own records: _load reads them from the saved file, _dump gives them back, _drop removes a copy's."""
     simulated = True
 
-    def __init__(self, crash_before=(), crash_after=(), hide=(), path: str | None = None):
-        self.crash_before, self.crash_after, self.hide = set(crash_before), set(crash_after), set(hide)
+    def __init__(self, crash_before=(), crash_after=(), path: str | None = None):
+        self.crash_before, self.crash_after = set(crash_before), set(crash_after)
         self.path = path
         saved = {}
         if path and os.path.exists(path):
             with open(path) as f:
                 saved = json.load(f)
-        self.users: dict[str, dict] = {u: {**v, "groups": set(v["groups"])} for u, v in saved.get("users", {}).items()}
         self.done: dict[str, dict] = saved.get("done", {})
         self.calls: list[str] = saved.get("calls", [])      # the key of every changing call made, repeats included
-        self._n = saved.get("n", 0)                         # users made so far, so a forgotten user's id is never used again
-        self.pending: list[str] = saved.get("pending", [])  # copies whose codes are to be forgotten: noted here before the copy goes
+        self.pending: list[str] = saved.get("pending", [])  # copies whose records are to be forgotten: noted here before the copy goes
+        self._load(saved)
+
+    def _load(self, saved: dict) -> None: ...
+
+    def _dump(self) -> dict:
+        return {}
+
+    def _drop(self, prefix: str) -> None: ...
 
     def _save(self) -> None:
         if self.path:
             with open(self.path + ".tmp", "w") as f:
-                json.dump({"users": {u: {**v, "groups": sorted(v["groups"])} for u, v in self.users.items()}, "done": self.done,
-                           "calls": self.calls, "n": self._n, "pending": self.pending}, f)
+                json.dump({**self._dump(), "done": self.done, "calls": self.calls, "pending": self.pending}, f)
             os.replace(self.path + ".tmp", self.path)       # whole or not at all
 
     def note(self, prefix: str) -> None:
-        """Write down, before a copy goes, that its codes are to be forgotten. If the note cannot be written this raises and the copy
+        """Write down, before a copy goes, that its records are to be forgotten. If the note cannot be written this raises and the copy
         is not dropped; once it is on file, a restart or a later pass finishes the forgetting even if it failed halfway."""
         if prefix not in self.pending:
             self.pending.append(prefix)
@@ -1365,16 +1370,15 @@ class StandIn:
                 raise
 
     def release(self, prefix: str) -> None:
-        """The copy was not dropped after all: its codes stay and the note goes."""
+        """The copy was not dropped after all: its records stay and the note goes."""
         if prefix in self.pending:
             self.pending.remove(prefix)
             self._save()
 
     def forget(self, prefix: str) -> None:
-        """A copy was reset: the users it made and the answers kept for its keys go, so nothing of it is left here. Safe to repeat; the
+        """A copy was reset: what it made and the answers kept for its keys go, so nothing of it is left here. Safe to repeat; the
         note stays on file until the forgetting is saved."""
-        for user in [u for u, v in self.users.items() if v["key"].startswith(prefix)]:
-            del self.users[user]
+        self._drop(prefix)
         self.done = {k: v for k, v in self.done.items() if not k.startswith(prefix)}
         had = prefix in self.pending
         if had:
@@ -1400,6 +1404,31 @@ class StandIn:
             raise Crash(f"after {step}")
         return out
 
+    def find(self, key):
+        return self.done.get(key)
+
+
+class StandIn(OutsideSystem):
+    """A deterministic access system for tests and for when no real one is connected; every record made through it says it is a
+    stand-in. It does not remove repeats by itself: a second call with the same key issues again, so only Staddle's own operation
+    records prevent a repeat. `hide` names groups a read-back fails to show. Given a path, its users, answers and calls are kept in
+    that file, as the simulated payment processor keeps its payments, so a restart finds them and nothing is issued twice."""
+
+    def __init__(self, crash_before=(), crash_after=(), hide=(), path: str | None = None):
+        self.hide = set(hide)
+        super().__init__(crash_before, crash_after, path)
+
+    def _load(self, saved):
+        self.users: dict[str, dict] = {u: {**v, "groups": set(v["groups"])} for u, v in saved.get("users", {}).items()}
+        self._n = saved.get("n", 0)                         # users made so far, so a forgotten user's id is never used again
+
+    def _dump(self):
+        return {"users": {u: {**v, "groups": sorted(v["groups"])} for u, v in self.users.items()}, "n": self._n}
+
+    def _drop(self, prefix):
+        for user in [u for u, v in self.users.items() if v["key"].startswith(prefix)]:
+            del self.users[user]
+
     def create_user(self, key, name):
         def go():
             self._n += 1
@@ -1424,9 +1453,6 @@ class StandIn:
     def read_back(self, user):
         u = self.users.get(user, {"groups": set(), "code": None})
         return {"code": u["code"], "groups": sorted(u["groups"] - self.hide)}
-
-    def find(self, key):
-        return self.done.get(key)
 
 
 def _next(rent: Rent, a: Access) -> str | None:
