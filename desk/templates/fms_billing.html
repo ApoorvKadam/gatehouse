@@ -30,7 +30,8 @@
       <td class="muted">{{ r.paid }}</td><td class="muted">{{ r.phone }}</td></tr>{% endfor %}</tbody>
   </table></div>
 </section>
-
+{% endif %}
+{% if not only_past %}
 <section class="fms-section" aria-labelledby="h-pays">
   <h2 id="h-pays">Payments in {{ month.name }}</h2>
   <p class="muted">{{ month.payments|length }} payments, {{ money(month.collected) }} received{% if month.returned %}, {{ month.returned }} returned by the bank{% endif %}. A payment is dated when the card was charged; when the facility learned of it later, both dates are shown.</p>

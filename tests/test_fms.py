@@ -142,6 +142,9 @@ def test_the_screens_show_the_generated_year_in_words(fms_url, sim):
             assert not re.search(r"\b[a-z]+_[a-z_]+\b", words), (p, re.findall(r"\b[a-z]+_[a-z_]+\b", words)[:3])   # no codes
             assert not re.search(r"(?i)claude|haiku|sonnet|anthropic|openai|gpt|our agent", words), p
         assert c.get("/tenants?q=A108").text.count('href="/tenants/') == 1
+        # Billing keeps the month's payments and the books line; Collections shows only who is past due
+        assert "Payments in" in text["/billing"] and "Every books entry balances" in text["/billing"] and "Past due" not in text["/billing"]
+        assert "Past due" in text["/collections"] and "Payments in" not in text["/collections"]
         # every month's charges add up: billed is paid, removed or still open
         for key in re.findall(r'<option value="(\d{4}-\d{2})"', pages["/billing"].text):
             box = seen(c.get("/billing", params={"month": key}).text)
