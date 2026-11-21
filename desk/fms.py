@@ -38,10 +38,12 @@ DEMO_NAME, DEMO_PASSWORD = "dana.reyes", "northstar"
 SESSION = "staddle_session"
 STAFF = "staff:office_manager"
 # the menu in the groups an FMS is organised by; a module joins its group when it is built, never as a greyed-out item
-MENU = (("Run the facility", (("home", "Home", "house"), ("today", "Today", "list-checks"), ("messages", "Messages", "message-square"))),
-        ("Facility and tenants", (("units", "Units", "warehouse"), ("tenants", "Tenants", "users"), ("rent", "Online rentals", "globe"))),
-        ("Money", (("billing", "Billing and payments", "credit-card"),)),
-        ("Setup", (("rules", "Rules", "scale"),)))
+# the facility menu down the left inside Facilities: the day-to-day facility pages, then money and legal work. Today, Messages and
+# Settings (Rules) sit in the bar across the top.
+SIDE = ((("home", "Home", "house"), ("sitemap", "Site map", "rows-3"), ("units", "Units", "warehouse"), ("rentals", "Rentals", "door-open"),
+         ("tenants", "Tenants", "users")),
+        (("collections", "Collections", "hand"), ("liens", "Lien cases", "gavel"), ("gate", "Gate access", "shield-check"),
+         ("billing", "Billing and payments", "credit-card")))
 # the only addresses that answer without a session; tests/test_fms.py walks every route against this list. The card processor's
 # webhook is the one write among them: the processor calls it, no session exists, its signature is the check, and without a signing
 # secret it answers 503 (desk/stripe_hook.py)
@@ -764,7 +766,7 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
             raise HTTPException(403, "this request came from another site")
 
     def show(request: Request, name: str, nav: str, f: Facility, **ctx):
-        return templates.TemplateResponse(request, name, {"nav": nav, "menu": MENU, "agent": AGENT, "f": f, "today": date_words(f.today), "live": live,
+        return templates.TemplateResponse(request, name, {"nav": nav, "side": SIDE, "agent": AGENT, "f": f, "today": date_words(f.today), "live": live,
                                                           "money": money, "day": day, **ctx})
 
     def check() -> dict | None:
@@ -982,7 +984,7 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
     def units(request: Request):
         ident = need(request)
         f = Facility(fd, ident)
-        return show(request, "fms_units.html", "units", f, rows=f.units(), occupancy=f.occupancy(), token=secrets.token_hex(6),
+        return show(request, "fms_units.html", "units", f, rows=f.units(), occupancy=f.occupancy(), token=secrets.token_hex(6), table_only=True,
                     until_min=f.today.isoformat(), until_max=(f.today + timedelta(days=366)).isoformat(), step_note=plain(fd.take_step_note(ident)))
 
     @app.get("/tenants", include_in_schema=False)
@@ -1017,7 +1019,50 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
         f = Facility(fd, need(request))
         months = f.months()
         key = month if month in dict(months) else month_key(f.today)
-        return show(request, "fms_billing.html", "billing", f, months=months, month=f.month(key), past=f.past_due())
+        return show(request, "fms_billing.html", "billing", f, months=months, month=f.month(key), past=f.past_due(), only_month=True)
+
+    @app.get("/collections", include_in_schema=False)
+    def collections(request: Request):
+        f = Facility(fd, need(request))
+        return show(request, "fms_billing.html", "collections", f, months=f.months(), month=f.month(month_key(f.today)), past=f.past_due(), only_past=True, title="Collections")
+
+    @app.get("/sitemap", include_in_schema=False)
+    def sitemap(request: Request):
+        ident = need(request)
+        f = Facility(fd, ident)
+        return show(request, "fms_units.html", "sitemap", f, rows=f.units(), occupancy=f.occupancy(), token=secrets.token_hex(6), map_only=True,
+                    title="Site map", until_min=f.today.isoformat(), until_max=(f.today + timedelta(days=366)).isoformat(), step_note="")
+
+    @app.get("/rentals", include_in_schema=False)
+    def rentals(request: Request):
+        f = Facility(fd, need(request))
+        rent = f.rent
+        tenants = list(dict.fromkeys([r.tenant for r in rent.reservations.values()] + [r.tenant for r in rent.rentals.values()]))
+        words = lambda x: x[0] if x else "-"
+        rows = [(f.people[t]["name"], x["unit"], words(x["where"]), words(x["pay"]), words(x["agreement"]), words(x["gate"]))
+                for t in tenants for x in f.renting_of(t)]
+        return show(request, "fms_list.html", "rentals", f, title="Rentals", heads=("Tenant", "Unit", "Where it stands", "Payment", "Agreement", "Gate code"), rows=rows,
+                    lede="Every reservation and rental, step by step: where it stands, the payment, the agreement and the gate code.",
+                    empty="No reservation or rental is waiting right now.")
+
+    @app.get("/liens", include_in_schema=False)
+    def lien_cases(request: Request):
+        from core import liens as lien_core
+        f = Facility(fd, need(request))
+        cases = lien_core.state(f.b).cases.values()
+        rows = [(f.people[c.tenant]["name"], f.b.leases[c.lease].unit, lien_core.case_state(f.b, c, f.now)[0].capitalize()) for c in cases if not c.closed]
+        return show(request, "fms_list.html", "liens", f, title="Lien cases", heads=("Tenant", "Unit", "Where the file stands"), rows=rows,
+                    lede="Open lien files: evidence, the frozen ledger copy, approvals and legal stops.", empty="No lien case is open.")
+
+    @app.get("/gate", include_in_schema=False)
+    def gate_access(request: Request):
+        f = Facility(fd, need(request))
+        rent = f.rent
+        tenants = list(dict.fromkeys(r.tenant for r in rent.rentals.values()))
+        rows = [(f.people[t]["name"], x["unit"], x["gate"][0]) for t in tenants for x in f.renting_of(t) if x["gate"]]
+        return show(request, "fms_list.html", "gate", f, title="Gate access", heads=("Tenant", "Unit", "Gate code"), rows=rows,
+                    lede="Gate codes set for rentals, each counted only once it was read back from the gate system.",
+                    empty="No gate code has been set on this copy yet.")
 
     @app.get("/rules", include_in_schema=False)
     def rules(request: Request, stale: int = 0):

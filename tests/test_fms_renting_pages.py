@@ -84,7 +84,7 @@ def test_units_show_the_four_states_with_counts_and_a_price_and_staff_hold_block
         # a unit's change controls are a row under it, opened by its Change link, with the forms side by side in it
         assert page.count('<tr class="fms-act"') == 120 and f'href="#act-{held}"' in page and f'<tr class="fms-act" id="act-{held}">' in page
         row = page.split(f'<tr class="fms-act" id="act-{held}">', 1)[1].split("</tr>", 1)[0]
-        assert re.findall(r'name="action" value="(\w+)"', row) == ["price_unit", "reserve", "block_unit"] and "<details" not in page and "<select" not in page
+        assert re.findall(r'name="action" value="(\w+)"', row) == ["price_unit", "reserve", "block_unit"] and "<details" not in page.split('class="fms-page"', 1)[1] and "<select" not in page
         # the tenant is typed against one list of every name, shared by every row
         assert page.count("<datalist") == 1 and page.count('<option value="') == 124 and 'value="Priya Shah"' in page and page.count('list="tenant-names"') == 7
         last = (NOW + timedelta(days=3)).date()
@@ -95,7 +95,7 @@ def test_units_show_the_four_states_with_counts_and_a_price_and_staff_hold_block
         assert len(rent_of(fd, ident).reservations) == 1 and rent_of(fd, ident).status(held, NOW) == "reserved"
         assert "Reserved 1" in seen(after) and "Vacant 6" in seen(after) and "Nothing changed" not in seen(after)
         assert f"Held for Priya Shah until {clock(at_local(last, 23, 59))}" in seen(after)
-        assert f'title="{held}: reserved for Priya Shah"' in after and after.count('value="reserve"') == 6
+        assert f'title="{held}: reserved for Priya Shah"' in c.get("/sitemap").text and after.count('value="reserve"') == 6
         unit_step(c, blocked, page, action="block_unit", reason="door being repaired")
         after = c.get("/units").text
         assert "Blocked 1" in seen(after) and "Blocked: door being repaired" in seen(after) and after.count('value="unblock_unit"') == 1
@@ -198,7 +198,7 @@ def test_a_moved_out_unit_is_blocked_until_its_code_is_revoked_and_staff_cannot_
         text = seen(page)
         assert "Blocked 1" in text and "Moved out; the old gate code is not revoked yet" in text
         assert page.count('value="unblock_unit"') == 0 and page.count('value="reserve"') == 6          # only a staff block has an Unblock
-        assert f'title="{unit}: blocked"' in page
+        assert f'title="{unit}: blocked"' in c.get("/sitemap").text
 
 
 def work(c) -> str:

@@ -90,8 +90,8 @@ A generated year of one facility runs through the same code: 120 units, 121 tena
 
 | | |
 |---|---|
-| ![Home](docs/screens/home.png) **Home.** The day at a glance: occupancy, money collected, past due, and what needs a person. | ![Units](docs/screens/units.png) **Units.** Every unit on the site map and in a table: rented, reserved, blocked or vacant, with past due and disputes marked. Staff price, hold, block and unblock units here. |
-| ![A tenant's page](docs/screens/tenant.png) **A tenant.** Balance, ledger, rentals step by step and collections on one page. | ![Billing and payments](docs/screens/billing.png) **Billing and payments.** The month's totals and every tenant past due, with payment plans and the overlocks due on the owner's schedule. |
+| ![Home](docs/screens/home.png) **Home.** The day at a glance: occupancy, money collected, past due, and what needs a person. | ![Site map](docs/screens/units.png) **Site map.** Every unit by building: rented, reserved, blocked or vacant, with past due and disputes marked. Staff price, hold, block and unblock units on the Units page. |
+| ![A tenant's page](docs/screens/tenant.png) **A tenant.** Balance, ledger, rentals step by step and collections on one page. | ![Collections](docs/screens/billing.png) **Collections.** Every tenant past due, with payment plans and the overlocks due on the owner's schedule. |
 | ![Online rentals](docs/screens/online-rentals.png) **Online rentals.** Where tenants rent a unit online: pick a size, accept the agreement, pay with a test card, and get a gate code that is read back. | |
 
 
