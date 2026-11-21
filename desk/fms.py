@@ -5,6 +5,7 @@ are printed on the sign-in page: the sign-in is real (a signed session cookie, r
 from __future__ import annotations
 
 import hmac
+from dataclasses import replace
 import json
 import re
 import secrets
@@ -59,7 +60,8 @@ RENT_WORDS = {"price_unit": ("Priced a unit", "Asked to price a unit"), "block_u
               "request_transfer": ("Asked for a transfer", "Asked for a transfer"), "approve_transfer": ("Approved a transfer", "Asked to approve a transfer"),
               "complete_transfer": ("Completed a transfer", "Asked to complete a transfer"),
               "request_move_out": ("Recorded a move-out", "Asked to record a move-out"), "review_move_out": ("Reviewed a move-out", "Asked to review a move-out"),
-              "final_bill": ("Made the final bill", "Asked to make the final bill"), "offer_unit": ("Offered a unit", "Asked to offer a unit"),
+              "final_bill": ("Made the final bill", "Asked to make the final bill"),
+              "confirm_access_cleared": ("Confirmed the old gate code is gone", "Asked to confirm the old gate code is gone"), "offer_unit": ("Offered a unit", "Asked to offer a unit"),
               "decline_offer": ("Declined an offer", "Asked to decline an offer"), "retry_access": ("Retried a gate code", "Asked to retry a gate code"),
               # commands that are not staff's to give still leave a refused record when staff try them
               "join_waitlist": ("Joined a waitlist", "Asked to join a waitlist"), "accept_offer": ("Accepted an offer", "Asked to accept an offer"),
@@ -177,7 +179,7 @@ class Facility:
         for t in b.tenants.values():
             ls = self.leases_of.get(t.id, [])
             active = [x for x in ls if x.ended is None]
-            self.people[t.id] = {"id": t.id, "name": t.name, "phone": phone(t.phone), "slug": slug(t.name, ls[0].unit if ls else "none"),
+            self.people[t.id] = {"id": t.id, "name": t.name, "phone": phone(t.phone), "slug": slug(t.name, min(ls, key=lambda x: (x.start, x.id)).unit if ls else "none"),     # the first lease's unit: a transfer never moves the address
                                  "units": [x.unit for x in (active or ls)], "active": bool(active), "past": b.past_due(t.id, self.now),
                                  "owed": sum(b.receivable(x.id) for x in ls) - b.credit.get(t.id, 0), "credit": b.credit.get(t.id, 0),
                                  "dispute": any(d.tenant == t.id and d.outcome is None for d in b.disputes.values()),
@@ -372,6 +374,8 @@ class Facility:
 
     def move_in(self, r) -> date | None:
         """The day a paid and signed rental that has not started is waiting for, when that day has not come; else None."""
+        if not r.quote:
+            return None
         start = date.fromisoformat(r.quote["start"])
         return start if r.state in renting.WAITING and r.accepted and self.pay_state(r) == "paid" and start > local(self.now).date() else None
 
@@ -436,6 +440,8 @@ class Facility:
                 where = {"active": ("Active", "done", ""), "ended": ("Ended", "plain", ""), "cancelled": ("Cancelled", "plain", f"Cancelled because {r.cancelled_why}." if r.cancelled_why else ""),
                          "ending": ("Moving out" if m else "Moving to another unit", "wait", f"Last day {dated(m.on, year)}." if m else "")
                          }.get(r.state) or ("Hold ended", "plain", f"The hold ended {clock(r.expires_at)}.")
+            if r.state == "ended" and renting.needs_clearance(r):
+                where = ("Left, gate code check waiting", "wait", "Staff check the gate system before the unit is rented again.")
             note = [where[2]] if where[2] else []
             if r.kind == "transfer" and r.state in renting.WAITING:
                 note.append("This is the new unit of a transfer.")
@@ -449,6 +455,9 @@ class Facility:
                 note.append(f"Refund of {money(cents)} {'was made' if state_of == 'paid' else 'waiting for staff'}.")
             if any(t.key not in {k for *_, k in sums} for t in asked):
                 note.append("A refund is waiting for staff.")
+            lease = b.leases.get(r.lease or "")
+            if r.provenance and lease and r.state == "active":
+                where = (f"Active since {dated(lease.start, year)}", "done", "")
             state = self.pay_state(r)
             refund = r.state == "cancelled" and ((r.refund or {}).get("state") == "pending" or asked)
             made = r.state == "cancelled" and (r.refund or {}).get("state") == "paid" and not asked
@@ -458,11 +467,14 @@ class Facility:
             version = f"Agreement version {ag.version.rsplit('-', 1)[-1]}" if ag else ""
             agreement = ((f"Accepted by {self.people[r.tenant]['name']}, {clock(ag.at)}", "done", version) if r.accepted and ag and ag.at else
                          ("Not accepted yet", "wait", version) if live else ("Not accepted", "plain", version))
-            lease = b.leases.get(r.lease or "")
+            if r.provenance:
+                pay = ("See ledger", "plain")
+                agreement = ("From before Staddle: terms on file, no signed copy", "plain", "")
             a = rent.access.get(r.access or "")
-            gate = GATE_WORDS[a.state] if a else ("Access pending", "wait") if r.state in ("active", "ending") else None
-            rows.append({"id": r.id, "unit": r.unit, "where": (where[0], where[1], " ".join(note)), "pay": (*pay, f"Move-in total {money(r.quote['total_cents'])}"),
+            gate = GATE_WORDS[a.state] if a else ("No gate code on record yet", "plain") if r.state in ("active", "ending") else None
+            rows.append({"id": r.id, "unit": r.unit, "where": (where[0], where[1], " ".join(note)), "pay": (*pay, f"Move-in total {money(r.quote['total_cents'])}" if r.quote else f"Monthly rent {money(lease.rent_cents)}"),
                          "agreement": agreement, "gate": (*gate, "") if gate else None,
+                         "rental": r, "moveout": m, "transfer": next((t for t in rent.transfers.values() if t.rental == r.id and t.state not in ("completed", "cancelled")), None),
                          "lease": (f"Ended {dated(lease.ended, year)}" if lease.ended else f"Started {dated(lease.start, year)}") if lease else None})
         return rows[::-1]
 
@@ -519,9 +531,15 @@ class Facility:
         rent, rows = self.rent, []
         for r in rent.rentals.values():
             if r.state == "ended" and rent.holder(r.unit, self.now) == ("rental", r.id):
+                m = rent.moveouts.get(r.moveout or "")
+                if r.access is None:            # a rental from before Staddle: its old code is not on record, so staff check the gate system
+                    task = next((t for t in rent.tasks.values() if t.open and t.kind == "clearance" and t.about == r.id), None)
+                    rows.append({"who": self.people[r.tenant], "unit": r.unit, "tone": "act",
+                                 "what": f"Moved out {dated(m.on, self.today.year)}" if m else "Moved to another unit",
+                                 "why": plain(task.reason) if task else "The gate code from before Staddle is not on record; staff check the gate system before the unit is rented again."})
+                    continue
                 a = rent.access[r.access]
                 task = next((t for t in rent.tasks.values() if t.open and t.kind == "revoke" and t.about == a.id), None)
-                m = rent.moveouts.get(r.moveout or "")
                 rows.append({"who": self.people[r.tenant], "unit": r.unit, "tone": "act" if task or a.state == "revocation_failed" else "wait",
                              "what": f"Moved out {dated(m.on, self.today.year)}" if m else "Moved to another unit",
                              "why": plain(task.reason) if task else "The old code is not revoked on the gate system yet, so the unit cannot be rented again."})
@@ -877,14 +895,26 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
         rental = await run_in_threadpool(begin)
         return RedirectResponse(f"/rent/checkout/{rental}" if rental else "/rent?unavailable=1", status_code=303)
 
+    checkout_amounts = {}
+
     @app.get("/rent/checkout/{rental}", include_in_schema=False)
     def website_checkout(request: Request, rental: str):
         f = Facility(fd, need(request))
         r = f.rent.rentals.get(rental)
         if not r:
             raise HTTPException(404, "No such rental.")
-        agreement = f.rent.agreements[r.agreement]
-        return site_show(request, "site_checkout.html", f, rental=r, agreement=agreement, token=secrets.token_hex(6))
+        agreement = f.rent.agreements.get(r.agreement or "")
+        if not agreement:
+            raise HTTPException(404, "No checkout for this rental.")
+        token = secrets.token_hex(6)
+        account = 0
+        if r.transfer:
+            old = f.rent.rentals[f.rent.transfers[r.transfer].rental]
+            amount = f.rent.short(r, f.now, old)
+            checkout_amounts[(f.ident, token, r.id)] = amount
+            account = r.quote["total_cents"] - amount         # the account's credit (unused rent of the old unit among it) less older open charges
+            r = replace(r, quote={**r.quote, "total_cents": amount})
+        return site_show(request, "site_checkout.html", f, rental=r, agreement=agreement, token=token, account=account)
 
     @app.post("/rent/checkout/{rental}", include_in_schema=False)
     async def website_pay(request: Request, rental: str):
@@ -906,8 +936,10 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
                     return
                 fd.site_forms.add((ident, token))
                 if not r.accepted:      # once accepted, a declined card can be tried again without accepting twice
-                    decision = fd.rent_step(ident, renting.Act(f"site:{token}:accept", "accept_agreement", "renter", rental, r.tenant,
-                                                               {"sha256": data.get("sha256", "")}))
+                    args = {"sha256": data.get("sha256", "")}
+                    if r.transfer:
+                        args["amount_cents"] = checkout_amounts.get((ident, token, r.id))
+                    decision = fd.rent_step(ident, renting.Act(f"site:{token}:accept", "accept_agreement", "renter", rental, r.tenant, args))
                     if not decision.allowed or decision.repeated:
                         return
                 try:
@@ -1009,10 +1041,43 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
         p = f.by_slug.get(key)
         if p is None:
             raise HTTPException(404, "no such tenant")
-        return show(request, "fms_tenant.html", "tenants", f, p=p, rentals=f.rentals(p["id"]), ledger=f.ledger(p["id"]),
+        vacant = [u for u in sorted(f.b.units) if f.rent.status(u, f.now) == "vacant" and f.rent.units.get(u) and f.rent.units[u].rent_cents]
+        return show(request, "fms_tenant.html", "tenants", f, p=p, rentals=f.rentals(p["id"]), ledger=f.ledger(p["id"]), vacant=vacant,
                     cases=[c for c in f.cases() if c["who"] and c["who"]["id"] == p["id"]],
                     disputes=[d for d in f.disputes() if d["who"]["id"] == p["id"]], col=f.collections(p["id"]),
-                    renting=f.renting_of(p["id"]), token=secrets.token_hex(6), step_note=plain(fd.take_step_note(ident)))
+                    renting=f.renting_of(p["id"]), token=secrets.token_hex(6), step_note=plain(fd.take_step_note(ident)),
+                    note_at=request.query_params.get("at", ""))
+
+    @app.post("/tenants/{key}/renting", include_in_schema=False)
+    async def tenant_renting(request: Request, key: str):
+        same_site(request)
+        ident = need(request)
+        data = await form(request)
+        action, token = data.get("action", ""), data.get("token", "")
+        actions = ("request_move_out", "review_move_out", "final_bill", "request_transfer", "approve_transfer", "complete_transfer", "confirm_access_cleared")
+        if action not in actions or not re.fullmatch(r"[0-9a-f]{12}", token):
+            raise HTTPException(422, "Reload the page and try again.")
+        f = Facility(fd, ident)
+        person = f.by_slug.get(key)
+        rental = f.rent.rentals.get(data.get("rental", ""))
+        if not person or not rental or rental.tenant != person["id"]:
+            raise HTTPException(404, "No such rental for this tenant.")
+        about, args = rental.id, {}
+        if action in ("request_move_out", "request_transfer"):
+            field = "on" if action == "request_move_out" else "start"
+            try:
+                args[field] = date.fromisoformat(data.get(field, "")).isoformat()
+            except ValueError:
+                raise HTTPException(422, "Choose a date.") from None
+            if action == "request_transfer":
+                args["unit"] = data.get("target", "")
+        elif action in ("review_move_out", "final_bill"):
+            about = rental.moveout or ""
+        elif action in ("approve_transfer", "complete_transfer"):
+            transfer = next((t for t in f.rent.transfers.values() if t.rental == rental.id and t.state != "cancelled"), None)
+            about = transfer.id if transfer else ""
+        await run_in_threadpool(fd.staff_rent, ident, renting.Act(f"form:{token}:{action}:{rental.id}", action, STAFF, about, args=args))
+        return RedirectResponse(f"/tenants/{key}?at=renting#renting", status_code=303)
 
     @app.get("/billing", include_in_schema=False)
     def billing(request: Request, month: str = ""):
@@ -1034,16 +1099,33 @@ def mount(app, fd: FrontDesk, settings, guard, from_elsewhere, session_factory, 
                     title="Site map", until_min=f.today.isoformat(), until_max=(f.today + timedelta(days=366)).isoformat(), step_note="")
 
     @app.get("/rentals", include_in_schema=False)
-    def rentals(request: Request):
+    def rentals(request: Request, status: str = ""):
         f = Facility(fd, need(request))
         rent = f.rent
+        filters = (("", "All rentals"), ("active", "Active"), ("reservations", "Reservations"),
+                   ("transfers", "Transfers"), ("moveouts", "Move-outs"), ("ended", "Ended"), ("attention", "Needs attention"))
+        status = status if status in dict(filters) else ""
         tenants = list(dict.fromkeys([r.tenant for r in rent.reservations.values()] + [r.tenant for r in rent.rentals.values()]))
-        words = lambda x: x[0] if x else "-"
-        rows = [(f.people[t]["name"], x["unit"], words(x["where"]), words(x["pay"]), words(x["agreement"]), words(x["gate"]))
-                for t in tenants for x in f.renting_of(t)]
-        return show(request, "fms_list.html", "rentals", f, title="Rentals", heads=("Tenant", "Unit", "Where it stands", "Payment", "Agreement", "Gate code"), rows=rows,
-                    lede="Every reservation and rental, step by step: where it stands, the payment, the agreement and the gate code.",
-                    empty="No reservation or rental is waiting right now.")
+        rows = []
+        for tenant in tenants:
+            for x in f.renting_of(tenant):
+                r = x.get("rental")
+                transfer = x.get("transfer") or (rent.transfers.get(r.transfer) if r and r.transfer else None)
+                needs = bool(r and any(t.open and t.about in (r.id, r.access) for t in rent.tasks.values()))
+                matches = {"active": bool(r and r.state == "active"), "reservations": not r or bool(r and r.state in renting.WAITING and not r.transfer),
+                           "transfers": bool(transfer and transfer.state not in ("completed", "cancelled")),
+                           "moveouts": bool(x.get("moveout") and x["moveout"].state != "completed"),
+                           "ended": bool(r and r.state in ("ended", "cancelled")), "attention": needs}
+                if status and not matches[status]:
+                    continue
+                lease = f.b.leases.get(r.lease or "") if r else None
+                cells = (f.people[tenant]["name"], x["unit"], x["where"][0], money(lease.rent_cents) if lease else "-",
+                         money(f.b.receivable(lease.id)) if lease else "-", x["agreement"][0] if x["agreement"] else "-",
+                         x["gate"][0] if x["gate"] else "-")
+                rows.append({"cells": cells, "slug": f.people[tenant]["slug"]})
+        return show(request, "fms_list.html", "rentals", f, title="Rentals", heads=("Tenant", "Unit", "Where it stands", "Monthly rent", "Balance", "Agreement", "Gate code"), rows=rows,
+                    filters=filters, selected=status, lede="Rentals and reservations, with their agreement and gate code records.",
+                    empty="No rentals match this view.")
 
     @app.get("/liens", include_in_schema=False)
     def lien_cases(request: Request):

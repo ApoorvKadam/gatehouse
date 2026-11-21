@@ -306,7 +306,7 @@ RENT_SCOPE = {
     "request_transfer": ("renter", "staff"), "approve_transfer": ("staff",), "complete_transfer": ("staff", "code"),
     "request_move_out": ("renter", "staff"), "review_move_out": ("staff",), "final_bill": ("staff",),
     "join_waitlist": ("operator", "renter", "staff"), "offer_unit": ("staff", "code"), "accept_offer": ("renter",),
-    "decline_offer": ("renter", "staff"), "retry_access": ("staff",), "confirm_refund": ("staff",),
+    "decline_offer": ("renter", "staff"), "retry_access": ("staff",), "confirm_refund": ("staff",), "confirm_access_cleared": ("staff",),
 }
 WHO = {"operator": "the agent", "renter": "the renter", "staff": "staff", "code": "code", "fixed_workflow": "the fixed workflow"}
 

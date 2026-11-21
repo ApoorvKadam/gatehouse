@@ -68,6 +68,7 @@ MOVES = {
     "moveout.reviewed": ("moveouts", "moveout", "reviewed"),
     "moveout.billed": ("moveouts", "moveout", "final_billed"),
     "moveout.revoking": ("moveouts", "moveout", "access_revocation_pending"),
+    "moveout.clearing": ("moveouts", "moveout", "access_clearance_pending"),
     "moveout.completed": ("moveouts", "moveout", "completed"),
     "waitlist.accepted": ("entries", "entry", "accepted"),
     "waitlist.declined": ("entries", "entry", "declined"),
@@ -83,7 +84,7 @@ ON = {
     "request_transfer": "rentals", "approve_transfer": "transfers", "complete_transfer": "transfers",
     "request_move_out": "rentals", "review_move_out": "moveouts", "final_bill": "moveouts",
     "join_waitlist": "size", "offer_unit": "entries", "accept_offer": "entries", "decline_offer": "entries",
-    "retry_access": "access", "confirm_refund": "refunds",
+    "retry_access": "access", "confirm_refund": "refunds", "confirm_access_cleared": "rentals",
 }
 NOUN = {"unit": "unit at this facility", "size": "unit size at this facility", "reservations": "reservation", "rentals": "rental",
         "transfers": "transfer", "moveouts": "move-out", "entries": "waitlist entry", "access": "gate code record", "refunds": "refund"}
@@ -181,8 +182,8 @@ class Rental:
     id: str
     tenant: str
     unit: str
-    quote: dict
-    expires_at: datetime            # the hold's deadline until the rental is active
+    quote: dict | None
+    expires_at: datetime | None     # the hold's deadline until the rental is active
     kind: str = "new"               # new, or transfer (the new unit of a transfer)
     state: str = "pending"          # pending, awaiting_payment, awaiting_signature, active, ending, ended, cancelled
     reservation: str | None = None
@@ -196,6 +197,8 @@ class Rental:
     moveout: str | None = None
     refund: dict | None = None      # money to give back when a paid rental never started: cents, and pending until confirmed
     cancelled_why: str | None = None    # what cancelled a rental that never started, as the cancel event recorded it
+    provenance: dict | None = None    # a rental adopted from a lease made before Staddle: where it came from
+    cleared: bool = False           # staff confirmed no gate code from before Staddle is left for the unit
 
 
 @dataclass
@@ -351,6 +354,15 @@ class Rent:
                    transfer=p.get("transfer"))
         self.rentals[r.id] = r
         self._hold(r.unit, "rental", r.id, p["claims"])
+
+    def _on_rental_adopted(self, at, p):
+        r = Rental(p["rental"], p["tenant"], p["unit"], None, None, state="active", lease=p["lease"],
+                   provenance=p["provenance"])
+        self.rentals[r.id] = r
+        self._hold(r.unit, "rental", r.id, True)
+
+    def _on_rental_access_cleared(self, at, p):
+        self.rentals[p["rental"]].cleared = True
 
     def _on_rental_paid(self, at, p):
         r = self.rentals[p["rental"]]
@@ -518,7 +530,7 @@ class Rent:
             if r.state in WAITING:
                 live = now < r.expires_at or self.uncertain(r) or self.paid(r) or bool(r.lease)
             elif r.state == "ended":
-                live = r.access is not None and self.access[r.access].state != "revoked"
+                live = (r.access is not None and self.access[r.access].state != "revoked") or needs_clearance(r)
             else:
                 live = r.state in ("active", "ending")
         return u.holder if live else None
@@ -734,6 +746,10 @@ class Rent:
             if rec.state != "reviewed":
                 return "the move-out is not reviewed" if rec.state == "requested" else f"the move-out is {rec.state.replace('_', ' ')}"
             return None if today >= rec.on else "the move-out day has not come"
+        if a == "confirm_access_cleared":
+            if not staff:
+                return "only staff confirm that a gate code is gone"
+            return None if rec.state == "ended" and needs_clearance(rec) else "no gate code check is waiting for this rental"
         if a == "join_waitlist":
             waiting = any(e.tenant == act.tenant and e.size == act.about and e.state in ("waiting", "offered") for e in self.entries.values())
             return "the tenant is already on the waitlist for this size" if waiting else None
@@ -861,6 +877,38 @@ class RentLedger(Ledger):
         e = super().emit(kind, at, payload, key, source, effects, command)
         self.rent.apply(kind, at, payload)
         return e
+
+
+def adopt_existing_lease(led: Ledger, lease: str, source: str, now: datetime) -> str:
+    """Record an active lease as a rental without changing its account."""
+    books = led.books
+    record = books.leases.get(lease)
+    if not record or record.tenant not in books.tenants or record.unit not in books.units or record.ended is not None:
+        raise Refused("The active lease, tenant and unit must be on the books.")
+    if source not in ("seeded_existing", "imported_existing"):
+        raise Refused("The lease source is not known.")
+    if not isinstance(led, RentLedger):      # the renting history must be folded in, or a lease's existing rental would be missed
+        raise Refused("Adoption needs the copy's renting records.")
+    rent = led.rent
+    facility = books.facility.get("name", "")
+    if not facility:
+        raise Refused("The facility must be on the books.")
+    key = "adopt:" + hashlib.sha256(json.dumps([facility, source, lease]).encode()).hexdigest()
+    rid = "adopted-" + key.removeprefix("adopt:")
+    if rid in rent.rentals:
+        return rid
+    if any(r.lease == lease for r in rent.rentals.values()):
+        raise Refused("The lease already has a rental.")
+    if rent.holder(record.unit, now):
+        raise Refused("The unit already has a rental or hold.")
+    if any(x.id != lease and x.unit == record.unit and x.ended is None for x in books.leases.values()):
+        raise Refused("The unit has another active lease.")
+    provenance = {"kind": source, "source_reference": lease, "snapshot": "current books", "adopted_at": now.isoformat(),
+                  "agreement": "recorded_prior_to_staddle", "start": record.start.isoformat(),
+                  "rent_cents": record.rent_cents, "schedule": list(record.schedule), "facility": facility}
+    led.emit("rental.adopted", now, {"rental": rid, "tenant": record.tenant, "unit": record.unit,
+                                    "lease": lease, "provenance": provenance}, key, source=source)
+    return rid
 
 
 def load(store: Store, stream: str) -> tuple[Books, Rent]:
@@ -1098,7 +1146,29 @@ def _final_bill(rent, led, act, now):
     if r.access:
         led.emit("moveout.revoking", now, {"moveout": m.id}, f"revoking:{m.id}", source="code")
         led.emit("access.revoke_requested", now, {"access": r.access}, f"revoke:{r.access}", source="code")
+    elif needs_clearance(r):        # a code from before Staddle may still work: the unit waits for staff, never assumed clear
+        led.emit("moveout.clearing", now, {"moveout": m.id}, f"clearing:{m.id}", source="code")
+        clearance_task(rent, led, now, r)
     else:
+        led.emit("moveout.completed", now, {"moveout": m.id}, f"moved-out:{m.id}", source="code")
+
+
+def needs_clearance(r: Rental) -> bool:
+    """A rental from before Staddle with no gate code on record here: after it ends, staff check the gate system before the unit is free."""
+    return r.provenance is not None and r.access is None and not r.cleared
+
+
+def clearance_task(rent, led, now, r: Rental) -> None:
+    rent.task(led, now, r.id, "clearance", f"Unit {r.unit} was left, and its gate code from before Staddle is not on record here. Check the "
+                                           "gate system, remove any code for this unit, then confirm it is gone.")
+
+
+def _confirm_cleared(rent, led, act, now):
+    r = rent.rentals[act.about]
+    led.emit("rental.access_cleared", now, {"rental": r.id}, f"cleared:{r.id}", source=act.source)
+    rent.close(led, now, r.id, "clearance")
+    m = rent.moveouts.get(r.moveout or "")
+    if m and m.state == "access_clearance_pending":
         led.emit("moveout.completed", now, {"moveout": m.id}, f"moved-out:{m.id}", source="code")
 
 
@@ -1140,7 +1210,8 @@ DO = {"price_unit": _price, "block_unit": _block, "unblock_unit": _unblock, "res
       "start_checkout": _checkout, "accept_agreement": _accept, "confirm_payment": _confirm, "payment_failed": _failed, "activate": _activate,
       "request_transfer": _transfer, "approve_transfer": _approve, "complete_transfer": _complete, "request_move_out": _move_out,
       "review_move_out": _review, "final_bill": _final_bill, "join_waitlist": _join, "offer_unit": _offer, "accept_offer": _accept_offer,
-      "decline_offer": _decline, "retry_access": _retry, "confirm_refund": _confirm_refund}
+      "decline_offer": _decline, "retry_access": _retry, "confirm_refund": _confirm_refund,
+      "confirm_access_cleared": _confirm_cleared}
 
 
 def _record(led: Ledger, act: Act, dec: Decision, now: datetime) -> None:
@@ -1271,7 +1342,7 @@ def check_codes(store: Store, stream: str, now: datetime) -> int:
         led = RentLedger(books, rent)
         for r in rent.rentals.values():
             a = rent.access.get(r.access or "")
-            if r.state in ("active", "ending") and (a is None or a.state != "verified"):
+            if r.state in ("active", "ending") and (a is not None or not r.provenance) and (a is None or a.state != "verified"):
                 rent.task(led, now, a.id if a else r.id, "access", f"Unit {r.unit} is rented, but its gate code is not confirmed working: "
                                                                   "it has not been read back from the access system.")
             elif r.state == "ended" and a is not None and a.state != "revoked":
@@ -1529,6 +1600,8 @@ def _after_read(rent: Rent, led: Ledger, a: Access, op: str, result: dict, now: 
         led.emit("rental.ended", now, {"rental": old.id}, f"ended:{old.id}", source="code")
         if old.access:
             led.emit("access.revoke_requested", now, {"access": old.access}, f"revoke:{old.access}", source="code")
+        elif needs_clearance(old):
+            clearance_task(rent, led, now, old)
 
 
 def copy_mark(store: Store, stream: str) -> str:

@@ -268,7 +268,7 @@ def lost_rental(monkeypatch):
         desk_rental("card_ok", True, desk=desk)
     monkeypatch.setattr(delinquency, "send", real)
     r = renting.load(store, stream)[1]
-    rn = next(iter(r.rentals))
+    rn = next(k for k, x in r.rentals.items() if not x.provenance)          # the copy's own rental, not one the year starts with
     return desk, store, stream, now, rn, delinquency.state(store.books(stream)).intents[r.ops[r.rentals[rn].pay_ops[0]].intent]
 
 
