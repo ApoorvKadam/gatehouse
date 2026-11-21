@@ -364,6 +364,12 @@ class Rent:
     def _on_rental_access_cleared(self, at, p):
         self.rentals[p["rental"]].cleared = True
 
+    def _on_access_baselined(self, at, p):
+        # a code the simulated gate already held when the year began: verified from the start, with no outside steps to carry
+        self.access[p["access"]] = Access(p["access"], p["rental"], p["unit"], list(p["groups"]), "verified", p["user"], p["credential"],
+                                          p["code_sha256"], reads=1, simulated=True)
+        self.rentals[p["rental"]].access = p["access"]
+
     def _on_rental_paid(self, at, p):
         r = self.rentals[p["rental"]]
         r.payments.append(p["payment"])
@@ -909,6 +915,34 @@ def adopt_existing_lease(led: Ledger, lease: str, source: str, now: datetime) ->
     led.emit("rental.adopted", now, {"rental": rid, "tenant": record.tenant, "unit": record.unit,
                                     "lease": lease, "provenance": provenance}, key, source=source)
     return rid
+
+
+def baseline_user(unit: str) -> str:
+    """The simulated gate's user for the code a seeded tenant already holds on a unit: named by the unit, so the same on every day's
+    seed and in every copy, and known to the stand-in from the seed alone."""
+    return f"base-{unit}"
+
+
+def baseline_code(user: str) -> str:
+    return f"{int(sha('baseline:' + user), 16) % 10 ** 6:06d}"
+
+
+def record_baseline_access(led: Ledger, rental: str, now: datetime) -> str:
+    """Give a seeded adopted rental the gate code it holds on the simulated gate, as a verified access record. Only the seed's own
+    rentals have one: a later import has no code on record and keeps the gate check by staff. Safe to repeat."""
+    if not isinstance(led, RentLedger):
+        raise Refused("A gate code record needs the copy's renting records.")
+    rent = led.rent
+    r = rent.rentals.get(rental)
+    if r is None or r.provenance is None or r.provenance.get("kind") != "seeded_existing":
+        raise Refused("Only a rental adopted from the seeded year has a code on the simulated gate.")
+    if r.access:
+        return r.access
+    aid, user = rent.new_id("AC", rent.access), baseline_user(r.unit)
+    led.emit("access.baselined", now, {"access": aid, "rental": r.id, "unit": r.unit, "groups": [f"unit {r.unit}", ACCESS_LEVEL],
+                                       "user": user, "credential": f"cred-{user}", "code_sha256": sha(baseline_code(user)),
+                                       "simulated": True}, f"baseline:{r.id}", source="seeded_existing")
+    return aid
 
 
 def load(store: Store, stream: str) -> tuple[Books, Rent]:
@@ -1461,15 +1495,30 @@ class OutsideSystem:
                 self.pending.append(prefix)
             raise
 
-    def _do(self, key: str, go) -> dict:
+    def _do(self, key: str, go, undo=None) -> dict:
+        """Make one changing call and keep its answer in the file. If the file cannot be saved the call is not counted as made: its
+        answer and its entry in the calls go, and `undo` (when the call changed something else in memory) puts that back, so a retry
+        calls again and saves, and what a later find() reports is only what the file holds. A lost answer after a good save is
+        different: the answer is on file, find() returns it, and the retry does not call again."""
         step = key.rsplit(":", 1)[1]
         if step in self.crash_before:
             self.crash_before.discard(step)
             raise Crash(f"before {step}")
         out = go()
+        earlier = self.done.get(key)
         self.calls.append(key)
         self.done[key] = out
-        self._save()
+        try:
+            self._save()
+        except Exception:
+            self.calls.pop()
+            if earlier is None:
+                del self.done[key]
+            else:
+                self.done[key] = earlier
+            if undo:
+                undo()
+            raise
         if step in self.crash_after:
             self.crash_after.discard(step)
             raise Crash(f"after {step}")
@@ -1483,22 +1532,53 @@ class StandIn(OutsideSystem):
     """A deterministic access system for tests and for when no real one is connected; every record made through it says it is a
     stand-in. It does not remove repeats by itself: a second call with the same key issues again, so only Staddle's own operation
     records prevent a repeat. `hide` names groups a read-back fails to show. Given a path, its users, answers and calls are kept in
-    that file, as the simulated payment processor keeps its payments, so a restart finds them and nothing is issued twice."""
+    that file, as the simulated payment processor keeps its payments, so a restart finds them and nothing is issued twice.
+
+    It also holds the codes the seeded tenants had before Staddle (the baseline). Those are worked out from the seed (know), kept in
+    memory and never saved, so building the year makes no save per code. The file is shared by every copy, so a copy never changes
+    the baseline: its revocation of a baseline user is a mask kept under that copy's prefix (for_copy), which forget(prefix) drops."""
 
     def __init__(self, crash_before=(), crash_after=(), hide=(), path: str | None = None):
         self.hide = set(hide)
+        self.baseline: dict[str, dict] = {}
         super().__init__(crash_before, crash_after, path)
 
     def _load(self, saved):
         self.users: dict[str, dict] = {u: {**v, "groups": set(v["groups"])} for u, v in saved.get("users", {}).items()}
         self._n = saved.get("n", 0)                         # users made so far, so a forgotten user's id is never used again
+        # copy prefix -> the baseline users that copy revoked
+        self.masks: dict[str, set[str]] = {p: set(users) for p, users in saved.get("masks", {}).items()}
 
     def _dump(self):
-        return {"users": {u: {**v, "groups": sorted(v["groups"])} for u, v in self.users.items()}, "n": self._n}
+        return {"users": {u: {**v, "groups": sorted(v["groups"])} for u, v in self.users.items()}, "n": self._n,
+                "masks": {p: sorted(users) for p, users in self.masks.items()}}
 
     def _drop(self, prefix):
         for user in [u for u, v in self.users.items() if v["key"].startswith(prefix)]:
             del self.users[user]
+        for p in [p for p in self.masks if p.startswith(prefix)]:
+            del self.masks[p]
+
+    def know(self, events) -> int:
+        """Load the baseline from the seed's own records: each `access.baselined` event names a user, its groups and the fingerprint of
+        its code; the code is worked out from the user and must match that fingerprint. A record that does not match is refused, never
+        guessed at, and the baseline stays as it was. The old baseline is replaced (a new day's seed has its own). Returns how many
+        codes it knows."""
+        known = {}
+        for e in events:
+            if e.kind != "access.baselined":
+                continue
+            p = e.payload
+            code = baseline_code(p["user"])
+            if p["user"] != baseline_user(p["unit"]) or sha(code) != p["code_sha256"]:
+                raise ValueError(f"the seeded gate code record for unit {p['unit']} does not match the simulated gate")
+            known[p["user"]] = {"name": p["unit"], "groups": set(p["groups"]), "code": code, "credential": p["credential"], "key": "baseline"}
+        self.baseline = known
+        return len(known)
+
+    def for_copy(self, mark: str) -> "CopyGate":
+        """This stand-in as one copy sees it: the same users and baseline, except that what the copy revoked of the baseline stays gone."""
+        return CopyGate(self, f"{mark}:")
 
     def create_user(self, key, name):
         def go():
@@ -1519,11 +1599,64 @@ class StandIn(OutsideSystem):
         return self._do(key, go)
 
     def revoke(self, key, user):
-        return self._do(key, lambda: self.users[user].update(groups=set(), code=None, credential=None) or {"revoked": user})
+        if user in self.baseline:
+            raise KeyError(f"{user} is a seeded code: it is revoked through a copy's view, never for every copy")
+        was = {}
+
+        def go():
+            u = self.users[user]
+            was.update(groups=set(u["groups"]), code=u["code"], credential=u["credential"])
+            u.update(groups=set(), code=None, credential=None)
+            return {"revoked": user}
+        return self._do(key, go, lambda: self.users[user].update(was))
+
+    def _mask(self, key, prefix, user):
+        new = user not in self.masks.get(prefix, ())
+
+        def go():
+            self.masks.setdefault(prefix, set()).add(user)
+            return {"revoked": user}
+
+        def undo():
+            if new:
+                self.masks[prefix].discard(user)
+                if not self.masks[prefix]:
+                    del self.masks[prefix]
+        return self._do(key, go, undo)
 
     def read_back(self, user):
-        u = self.users.get(user, {"groups": set(), "code": None})
+        u = self.users.get(user) or self.baseline.get(user) or {"groups": set(), "code": None}
         return {"code": u["code"], "groups": sorted(u["groups"] - self.hide)}
+
+
+class CopyGate:
+    """One copy's view of a StandIn (an AccessSystem). Calls pass straight through, except that revoking a baseline user records a mask
+    under this copy's prefix and read_back hides it: the shared baseline is never changed, so another copy still reads the code, and a
+    reset copy (forget) gets its baseline back."""
+    simulated = True
+
+    def __init__(self, system: StandIn, prefix: str):
+        self.system, self.prefix = system, prefix
+
+    def create_user(self, key, name):
+        return self.system.create_user(key, name)
+
+    def add_to_group(self, key, user, group):
+        return self.system.add_to_group(key, user, group)
+
+    def issue_pin(self, key, user):
+        return self.system.issue_pin(key, user)
+
+    def revoke(self, key, user):
+        return self.system._mask(key, self.prefix, user) if user in self.system.baseline else self.system.revoke(key, user)
+
+    def read_back(self, user):
+        if user in self.system.masks.get(self.prefix, ()):
+            return {"code": None, "groups": []}
+        return self.system.read_back(user)
+
+    def find(self, key):
+        return self.system.find(key)
 
 
 def _next(rent: Rent, a: Access) -> str | None:
@@ -1657,22 +1790,24 @@ def drive(store: Store, stream: str, access: str, system: AccessSystem, now: dat
             name = f"{books.tenants[rent.rentals[a.rental].tenant].name}, unit {a.unit}"
         # the outside call, with no write lock held; its key carries the copy's mark, as a payment's carries the copy's nonce, since
         # every copy numbers its own access records from AC0001
-        ext = f"{copy_mark(store, stream)}:{key}"
+        mark = copy_mark(store, stream)
+        ext = f"{mark}:{key}"
+        gate = system.for_copy(mark) if hasattr(system, "for_copy") else system     # a shared stand-in is seen as this copy sees it
         # ponytail: two advance() runs at once can both take up an op whose answer is still out, and find() sees nothing until the
         # first call lands, so both call; give each op a short lease (taken by, until) if workers ever overlap
         step_done = "user" if step == "settle" else step
-        found = system.find(ext) if retry and step != "read" else None
+        found = gate.find(ext) if retry and step != "read" else None
         if step == "settle" or found is not None:
             result, how = found, "found" if found is not None else "not_found"
         else:
-            result, how = _call(system, step, ext, a, name), "response"
+            result, how = _call(gate, step, ext, a, name), "response"
         with store.write():
             books, rent = load(store, stream)
             if rent.ops[key].how is not None:
                 continue                    # another worker recorded the answer first
             led = RentLedger(books, rent)
             led.emit("op.acknowledged", now, {"op": key, "step": step_done, "result": _clean(step_done, result), "how": how,
-                                              "simulated": bool(getattr(system, "simulated", False))}, f"op:{key}:ack", source="code")
+                                              "simulated": bool(getattr(gate, "simulated", False))}, f"op:{key}:ack", source="code")
             # a read-back answers the question asked when it was sent; if the record moved on meanwhile (a move-out asked for
             # revocation), the answer is kept but decides nothing, and the next step is worked out again from the new state
             if step == "read" and rent.access[access].state == before:

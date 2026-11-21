@@ -473,15 +473,43 @@ def test_existing_tenant_can_start_a_transfer_from_the_page(fms_url, sim):
         assert "Waiting for the tenant to accept and pay." in after and "Complete transfer" not in after
 
 
-def test_existing_tenant_moves_out_from_the_page_and_the_unit_waits_for_the_gate_check(fms_url, sim):
+def move_out_on_page(c, fd, ident, rental, path):
+    day = fd.clock().date().isoformat()
+    for action, extra in (("request_move_out", {"on": day}), ("review_move_out", {}), ("final_bill", {})):
+        c.post(path + "/renting", data={"token": token(c.get(path).text), "rental": rental.id, "action": action, **extra}, follow_redirects=False)
+
+
+def test_existing_tenant_moves_out_from_the_page_and_the_code_is_revoked_the_normal_way(fms_url, sim):
     app = site(fms_url)
     with sign_in(app) as c:
         fd, ident = desk_of(app, c)
         rental = next(r for r in rent_of(fd, ident).rentals.values() if r.provenance)
+        assert rental.access and rent_of(fd, ident).access[rental.access].state == "verified"      # the seeded code is on record
         path = f"/tenants/{Facility(fd, ident).people[rental.tenant]['slug']}"
-        day = fd.clock().date().isoformat()
-        for action, extra in (("request_move_out", {"on": day}), ("review_move_out", {}), ("final_bill", {})):
-            c.post(path + "/renting", data={"token": token(c.get(path).text), "rental": rental.id, "action": action, **extra}, follow_redirects=False)
+        assert "Code set and read back" in seen(c.get(path).text)
+        move_out_on_page(c, fd, ident, rental, path)
+        after = rent_of(fd, ident)
+        assert after.access[rental.access].state == "revoked" and after.status(rental.unit, fd.clock()) == "vacant"
+        page = seen(c.get(path).text)
+        assert "Left, gate code check waiting" not in page and "Confirm the gate code is gone" not in page
+        today, home = c.get("/today"), c.get("/home")
+        assert today.status_code == home.status_code == 200 and "gate code from before Staddle" not in seen(today.text)
+
+
+def test_a_tenant_adopted_later_with_no_code_on_record_waits_for_the_gate_check_after_moving_out(fms_url, sim):
+    app = site(fms_url)
+    with sign_in(app) as c:
+        fd, ident = desk_of(app, c)
+        store, stream, tenant = fd.ready(), fd.stream(ident), new_tenant(fd, ident)
+        with store.write():
+            books, rent = renting.load(store, stream)
+            led = renting.RentLedger(books, rent)
+            lease = led.sign_lease(fd.clock(), tenant, vacant(fd, ident)[0], 10000, [])
+            rid = renting.adopt_existing_lease(led, lease, "imported_existing", fd.clock())
+            store.append(stream, led.pending)
+        rental = rent_of(fd, ident).rentals[rid]
+        path = f"/tenants/{Facility(fd, ident).people[tenant]['slug']}"
+        move_out_on_page(c, fd, ident, rental, path)
         page = seen(c.get(path).text)
         assert "Left, gate code check waiting" in page and "Confirm the gate code is gone" in page
         assert rent_of(fd, ident).status(rental.unit, fd.clock()) == "blocked"           # never offered to a new renter yet

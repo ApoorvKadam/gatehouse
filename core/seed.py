@@ -176,7 +176,8 @@ class Year:
             adopted = renting.RentLedger(self.led.books, rent)
             for lease in self.led.books.leases.values():
                 if lease.ended is None:
-                    renting.adopt_existing_lease(adopted, lease.id, "seeded_existing", self.now)
+                    rental = renting.adopt_existing_lease(adopted, lease.id, "seeded_existing", self.now)
+                    renting.record_baseline_access(adopted, rental, self.now)       # the code each tenant already holds on the simulated gate
             self.led.pending.extend(adopted.pending)
         return self
 
