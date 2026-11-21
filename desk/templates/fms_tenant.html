@@ -23,6 +23,7 @@
 {% if renting %}
 <section class="fms-section" id="renting" aria-labelledby="h-renting">
   <h2 id="h-renting">Renting</h2>
+  {% if step_note and note_at == 'renting' %}<p class="fms-status" role="status">Nothing changed. {{ step_note }}</p>{% endif %}
   <div class="fms-scroll" tabindex="0" role="region" aria-labelledby="h-renting"><table class="fms-table">
     <thead><tr><th>Unit</th><th>Where it stands</th><th>Payment</th><th>Agreement</th><th>Lease</th><th>Gate code</th></tr></thead>
     <tbody>{% for x in renting %}<tr>
@@ -34,13 +35,47 @@
       <td class="{{ 'fms-state' if x.gate else 'muted' }}">{% if x.gate %}<span class="chip {{ x.gate[1] }}">{{ x.gate[0] }}</span>{% else %}&ndash;{% endif %}</td>
     </tr>{% endfor %}</tbody>
   </table></div>
+  {% for x in renting %}{% if x.rental and x.rental.state in ('active', 'ending') %}
+  <article class="fms-card">
+    <h3>Unit {{ x.unit }}</h3>
+    {% if x.moveout %}
+      {% if x.moveout.state == 'requested' or x.moveout.state == 'reviewed' %}
+      <form method="post" action="/tenants/{{ p.slug }}/renting"><input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="rental" value="{{ x.id }}">
+        {% if x.moveout.state == 'requested' %}<button class="button" name="action" value="review_move_out">Review move-out</button>{% elif x.moveout.on <= f.today %}<button class="button" name="action" value="final_bill">Write the final bill</button>{% else %}<span class="muted">The final bill can be written on the last day, {{ x.moveout.on.strftime('%b') }} {{ x.moveout.on.day }}.</span>{% endif %}
+      </form>{% endif %}
+    {% elif x.transfer %}{% set new = f.rent.rentals[x.transfer.target] %}
+      {% if not new.accepted or f.pay_state(new) != 'paid' %}<p>The tenant accepts the new unit's agreement and pays any shortfall on <a href="/rent/checkout/{{ x.transfer.target }}">the unit {{ x.transfer.unit }} checkout</a>.</p>{% endif %}
+      <form method="post" action="/tenants/{{ p.slug }}/renting"><input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="rental" value="{{ x.id }}">
+        {% if x.transfer.state == 'target_reserved' %}<button class="button" name="action" value="approve_transfer">Approve transfer</button>
+        {% elif x.transfer.state == 'approved' and new.accepted and new.quote.start <= f.today.isoformat() %}<button class="button" name="action" value="complete_transfer">Complete transfer</button>
+        {% elif x.transfer.state == 'approved' and new.accepted %}<span class="muted">The move to unit {{ x.transfer.unit }} can be completed on its start day.</span>
+        {% elif x.transfer.state == 'approved' %}<span class="muted">Approved. Waiting for the tenant to accept and pay.</span>{% endif %}
+      </form>
+    {% elif x.rental.state == 'active' %}
+      <form method="post" action="/tenants/{{ p.slug }}/renting"><input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="rental" value="{{ x.id }}">
+        <label>Last day <input type="date" name="on" required></label><button class="button" name="action" value="request_move_out">Start a move-out</button>
+      </form>
+      {% if vacant %}<form method="post" action="/tenants/{{ p.slug }}/renting"><input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="rental" value="{{ x.id }}">
+        <label>New unit <select name="target">{% for unit in vacant %}<option value="{{ unit }}">{{ unit }}</option>{% endfor %}</select></label>
+        <label>Start date <input type="date" name="start" required></label><button class="button" name="action" value="request_transfer">Move to another unit</button>
+      </form>{% endif %}
+    {% endif %}
+  </article>{% endif %}{% endfor %}
+  {% for x in renting %}{% if x.rental and x.rental.state == 'ended' and x.rental.provenance and not x.rental.access and not x.rental.cleared %}
+  <article class="fms-card">
+    <h3>Unit {{ x.unit }}</h3>
+    <p>The gate code from before Staddle is not on record here. Check the gate system and remove any code for this unit. The unit stays off the market until you confirm.</p>
+    <form method="post" action="/tenants/{{ p.slug }}/renting"><input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="rental" value="{{ x.id }}">
+      <button class="button" name="action" value="confirm_access_cleared">Confirm the gate code is gone</button>
+    </form>
+  </article>{% endif %}{% endfor %}
 </section>
 {% endif %}
 
 {% if col.show %}{% set plan = col.plan %}
 <section class="fms-section" id="collections" aria-labelledby="h-collections">
   <h2 id="h-collections">Collections</h2>
-  {% if step_note %}<p class="fms-status" role="status">Nothing changed. {{ step_note }}</p>{% endif %}
+  {% if step_note and note_at != 'renting' %}<p class="fms-status" role="status">Nothing changed. {{ step_note }}</p>{% endif %}
   {% if plan %}
   <article class="fms-card">
     <p class="fms-card-head"><b>Payment plan</b> <span class="chip {{ plan.tone }}">{{ plan.words }}</span> <span class="muted">{{ plan.total }} in all, under plan policy version {{ plan.policy }}</span></p>

@@ -51,7 +51,7 @@ def test_the_live_copy_prices_every_unit_and_nothing_else_moves(year):
     for day, (count, digest) in LIVE_COPY.items():
         y = build(today=day, cutoff=at_local(day), standing=True)
         priced = [e for e in y.led.pending if e.kind == "unit.priced"]
-        rest = [e for e in y.led.pending if e.kind != "unit.priced"]
+        rest = [e for e in y.led.pending if e.kind not in ("unit.priced", "rental.adopted")]
         assert len(rest) == count and hashlib.sha256(repr(snapshot(rest)).encode()).hexdigest() == digest, day
         assert sorted(e.payload["unit"] for e in priced) == sorted(UNITS), day
         for e in priced:

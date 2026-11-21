@@ -292,11 +292,12 @@ def rows_of(section: str) -> dict[str, str]:
     return {re.search(r"#u-(\w+)", r).group(1): seen(r) for r in re.findall(r"<tr>.*?</tr>", section, re.S) if "#u-" in r}
 
 
-def test_a_tenants_page_shows_each_rental_step_in_words_and_offers_no_button(fms_url, sim):
+def test_a_tenants_page_shows_each_rental_step_in_words(fms_url, sim):
     app = site(fms_url)
     with sign_in(app) as c, sign_in(app) as other:
         fd, ident = desk_of(app, c)
-        assert 'id="renting"' not in c.get(record_of(c, "Priya Shah")).text                    # nothing in renting: no section
+        before = renting_section(c.get(record_of(c, "Priya Shah")).text)                    # an existing tenant's rental from before Staddle
+        assert "Active since" in before and "From before Staddle: terms on file, no signed copy" in before
         u1, u2, u3, u4, u5 = vacant(fd, ident, 5)
         tenant = new_tenant(fd, ident)
         start_rental(fd, ident, tenant, u1, card="card_ok")                                    # active, its code read back
@@ -319,15 +320,15 @@ def test_a_tenants_page_shows_each_rental_step_in_words_and_offers_no_button(fms
         assert "\N{EN DASH}" not in rows[u1] and "\N{EN DASH}" in rows[u3] and "\N{EN DASH}" in rows[u5]   # a step not started shows a dash
         assert "Not accepted" in rows[u4] and "yet" not in rows[u4]                             # over: no step is still to do
         assert "Waiting to start" in rows[u5] and "Not paid yet" in rows[u5] and "Not accepted yet" in rows[u5]
-        low = section.lower()
-        for bad in ("<form", "<button", "<input", "pending", "awaiting", "unverified", "gate opened", "legally", "e-signature", "rn0", "rs0", "ac0", "ag0"):
+        low = re.sub(r"<[^>]+>", " ", section).lower()          # the words on the page; a form's hidden values are not shown
+        for bad in ("pending", "awaiting", "unverified", "gate opened", "legally", "e-signature", "rn0", "rs0", "ac0", "ag0"):
             assert bad not in low, bad
         priya = fd.cast["priya"]["tenant"]                                                   # an existing tenant gets the section once she has a record
         held, = vacant(fd, ident)
         step(fd, ident, "reserve", held, priya, source="staff:office_manager", until=(NOW + timedelta(hours=6)).isoformat())
         hers = renting_section(c.get(record_of(c, "Priya Shah")).text)
-        assert "Reserved until Nov 14 at 3:00 pm" in rows_of(hers)[held] and "<form" not in hers
-        assert 'id="renting"' not in other.get(record_of(other, "Priya Shah")).text            # another copy never sees her reservation
+        assert "Reserved until Nov 14 at 3:00 pm" in rows_of(hers)[held]
+        assert held not in rows_of(renting_section(other.get(record_of(other, "Priya Shah")).text))     # another copy never sees her reservation
         fd.clock = lambda: NOW + timedelta(minutes=45)                                        # the hold runs out; no sweep has run
         later = rows_of(renting_section(c.get(record_of(c, "Rae Quinn")).text))
         assert "Hold ended The hold ended" in later[u5] and "Not paid" in later[u5] and "yet" not in later[u5]
@@ -408,3 +409,106 @@ def test_a_final_bills_refund_is_work_until_it_is_confirmed_and_then_reads_made(
         assert "refund to make" not in work(c)
         row = rows_of(renting_section(c.get(record_of(c, "Rae Quinn")).text))[unit]
         assert f"Refund of ${cents // 100}.{cents % 100:02d} was made." in row and "waiting for staff" not in row
+
+
+def test_existing_tenant_can_start_and_review_a_move_out(fms_url, sim):
+    app = site(fms_url)
+    with sign_in(app) as c:
+        fd, ident = desk_of(app, c)
+        rent = rent_of(fd, ident)
+        rental = next(r for r in rent.rentals.values() if r.provenance)
+        person = Facility(fd, ident).people[rental.tenant]
+        path = f"/tenants/{person['slug']}"
+        page = c.get(path).text
+        assert "Start a move-out" in page and "Move to another unit" in page
+        data = {"token": token(page), "rental": rental.id, "action": "request_move_out", "on": fd.clock().date().isoformat()}
+        assert c.post(path + "/renting", data=data, follow_redirects=False).status_code == 303
+        first = len(fd.ready().events(fd.stream(ident)))
+        c.post(path + "/renting", data=data, follow_redirects=False)
+        assert len(fd.ready().events(fd.stream(ident))) == first
+        page = c.get(path).text
+        assert "Review move-out" in page
+        c.post(path + "/renting", data={"token": token(page), "rental": rental.id, "action": "review_move_out"})
+        page = c.get(path).text
+        assert "Write the final bill" in page
+        c.post(path + "/renting", data={"token": token(page), "rental": rental.id, "action": "final_bill"})
+        assert rent_of(fd, ident).rentals[rental.id].state == "ended"
+
+
+def test_existing_tenant_refusal_is_shown_once(fms_url, sim):
+    app = site(fms_url)
+    with sign_in(app) as c:
+        fd, ident = desk_of(app, c)
+        rental = next(r for r in rent_of(fd, ident).rentals.values() if r.provenance)
+        person = Facility(fd, ident).people[rental.tenant]
+        path = f"/tenants/{person['slug']}"
+        page = c.get(path).text
+        data = {"token": token(page), "rental": rental.id, "action": "request_transfer", "target": rental.unit,
+                "start": fd.clock().date().isoformat()}
+        back = c.post(path + "/renting", data=data, follow_redirects=False).headers["location"]
+        assert back == path + "?at=renting#renting"                                   # the note shows in Renting, where the step was asked
+        assert "already in that unit" in seen(c.get(back.split("#")[0]).text)
+        assert "already in that unit" not in seen(c.get(back.split("#")[0]).text)
+
+
+def test_existing_tenant_can_start_a_transfer_from_the_page(fms_url, sim):
+    app = site(fms_url)
+    with sign_in(app) as c:
+        fd, ident = desk_of(app, c)
+        rental = next(r for r in rent_of(fd, ident).rentals.values() if r.provenance)
+        path = f"/tenants/{Facility(fd, ident).people[rental.tenant]['slug']}"
+        target = vacant(fd, ident)[0]
+        page = c.get(path).text
+        data = {"token": token(page), "rental": rental.id, "action": "request_transfer", "target": target,
+                "start": fd.clock().date().isoformat()}
+        c.post(path + "/renting", data=data, follow_redirects=False)
+        transfer = next(t for t in rent_of(fd, ident).transfers.values() if t.rental == rental.id)
+        page = c.get(path).text
+        assert f"/rent/checkout/{transfer.target}" in page and "Approve transfer" in page
+        count = len(fd.ready().events(fd.stream(ident)))
+        c.post(path + "/renting", data=data, follow_redirects=False)
+        assert len(fd.ready().events(fd.stream(ident))) == count
+        c.post(path + "/renting", data={"token": token(page), "rental": rental.id, "action": "approve_transfer"}, follow_redirects=False)
+        after = c.get(path).text                    # approved, but the tenant has not accepted or paid: nothing to complete yet
+        assert "Waiting for the tenant to accept and pay." in after and "Complete transfer" not in after
+
+
+def test_existing_tenant_moves_out_from_the_page_and_the_unit_waits_for_the_gate_check(fms_url, sim):
+    app = site(fms_url)
+    with sign_in(app) as c:
+        fd, ident = desk_of(app, c)
+        rental = next(r for r in rent_of(fd, ident).rentals.values() if r.provenance)
+        path = f"/tenants/{Facility(fd, ident).people[rental.tenant]['slug']}"
+        day = fd.clock().date().isoformat()
+        for action, extra in (("request_move_out", {"on": day}), ("review_move_out", {}), ("final_bill", {})):
+            c.post(path + "/renting", data={"token": token(c.get(path).text), "rental": rental.id, "action": action, **extra}, follow_redirects=False)
+        page = seen(c.get(path).text)
+        assert "Left, gate code check waiting" in page and "Confirm the gate code is gone" in page
+        assert rent_of(fd, ident).status(rental.unit, fd.clock()) == "blocked"           # never offered to a new renter yet
+        today, home = c.get("/today"), c.get("/home")
+        assert today.status_code == home.status_code == 200 and "gate code from before Staddle" in seen(today.text)
+        c.post(path + "/renting", data={"token": token(c.get(path).text), "rental": rental.id, "action": "confirm_access_cleared"}, follow_redirects=False)
+        assert rent_of(fd, ident).status(rental.unit, fd.clock()) == "vacant"
+        assert "Confirm the gate code is gone" not in seen(c.get(path).text)
+
+
+def test_a_made_up_unit_or_a_checkout_the_page_never_offered_changes_nothing(fms_url, sim):
+    app = site(fms_url)
+    with sign_in(app) as c:
+        fd, ident = desk_of(app, c)
+        rental = next(r for r in rent_of(fd, ident).rentals.values() if r.provenance)
+        path = f"/tenants/{Facility(fd, ident).people[rental.tenant]['slug']}"
+        day = fd.clock().date().isoformat()
+        before = (len(rent_of(fd, ident).transfers), len(rent_of(fd, ident).rentals))
+        back = c.post(path + "/renting", data={"token": token(c.get(path).text), "rental": rental.id, "action": "request_transfer",
+                                               "target": "Z999", "start": day}, follow_redirects=False).headers["location"]
+        assert (len(rent_of(fd, ident).transfers), len(rent_of(fd, ident).rentals)) == before       # the refusal is recorded, nothing else
+        assert "Nothing changed." in seen(c.get(back.split("#")[0]).text)
+        target = vacant(fd, ident)[0]
+        c.post(path + "/renting", data={"token": token(c.get(path).text), "rental": rental.id, "action": "request_transfer",
+                                        "target": target, "start": day}, follow_redirects=False)
+        new = next(t for t in rent_of(fd, ident).transfers.values() if t.rental == rental.id).target
+        page = c.get(f"/rent/checkout/{new}").text
+        sha = re.search(r'name="sha256" value="([0-9a-f]+)"', page).group(1)
+        c.post(f"/rent/checkout/{new}", data={"token": "0123456789ab", "sha256": sha, "accept": "yes", "card": "card_ok"}, follow_redirects=False)
+        assert not rent_of(fd, ident).rentals[new].accepted                                 # no amount was shown for that form, so nothing is accepted

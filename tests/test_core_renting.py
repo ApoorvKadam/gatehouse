@@ -1148,3 +1148,58 @@ def test_a_confirmed_refund_reads_paid_where_pages_look_for_its_state():
     assert rent(store).moveouts[mo].bill["refund"] == "paid" and rent(store).moveouts[mo].bill["refund_cents"] > 0
     (billed,) = [e for e in store.events() if e.kind == "moveout.billed"]
     assert billed.payload["bill"]["refund"] == "pending"                                     # the bill as it was written is never changed
+
+
+def adopted_rental(store, tenant):
+    from core.renting import adopt_existing_lease
+    with store.write():
+        books, state = load(store, BASE)
+        led = RentLedger(books, state)
+        lease = led.sign_lease(NOW, tenant, "A101", 10000, [])
+        led.receive_payment(tenant, 7000, NOW)
+        rental = adopt_existing_lease(led, lease, "imported_existing", NOW)
+        store.append(BASE, led.pending)
+    return rental
+
+
+def test_adopted_move_out_refunds_unused_prepaid_rent():
+    store, dana, _ = facility()
+    rental = adopted_rental(store, dana)
+    move = ok(store, act("request_move_out", "staff:manager", rental, on=NOW.date().isoformat()))
+    ok(store, act("review_move_out", "staff:manager", move))
+    ok(store, act("final_bill", "staff:manager", move))
+    state = rent(store)
+    assert state.moveouts[move].bill["refund_cents"] == 6667
+    assert books(store).refunds[dana] == 6667
+    assert books(store).leases[state.rentals[rental].lease].ended == NOW.date()
+    # its gate code from before Staddle is unknown: the unit stays off the market until staff confirm the code is gone
+    assert state.moveouts[move].state == "access_clearance_pending" and state.status("A101", NOW) == "blocked"
+    assert "clearance" in [t.kind for t in state.tasks.values() if t.open and t.about == rental]
+    assert not go(store, act("confirm_access_cleared", "operator", rental)).allowed          # only staff confirm it
+    ok(store, act("confirm_access_cleared", "staff:manager", rental))
+    state = rent(store)
+    assert state.moveouts[move].state == "completed" and state.status("A101", NOW) == "vacant"
+    assert not any(t.open and t.about == rental and t.kind == "clearance" for t in state.tasks.values())
+    assert not go(store, act("confirm_access_cleared", "staff:manager", rental)).allowed     # nothing left to confirm
+
+
+def test_adopted_transfer_adjusts_once_and_collects_the_shortfall():
+    store, dana, _ = facility()
+    old = adopted_rental(store, dana)
+    transfer = ok(store, act("request_transfer", "staff:manager", old, unit="B201"), NOV11)
+    new = rent(store).transfers[transfer].target
+    assert rent(store).short(rent(store).rentals[new], NOV11, rent(store).rentals[old]) == 3333
+    assert accept(store, dana, new, NOV11).allowed
+    assert pay(store, dana, new, 3333, NOV11).allowed
+    ok(store, act("approve_transfer", "staff:manager", transfer), NOV11)
+    command = act("complete_transfer", "staff:manager", transfer)
+    assert go(store, command, NOV11).allowed
+    count = len(store.events())
+    assert go(store, command, NOV11).repeated
+    assert len(store.events()) == count
+    assert books(store).leases[rent(store).rentals[old].lease].ended == NOW.date()
+    after = rent(store)
+    if after.rentals[old].state == "ended":                  # the old unit is left once the new code is read back
+        assert after.status("A101", NOV11) == "blocked" and any(t.open and t.kind == "clearance" and t.about == old for t in after.tasks.values())
+        ok(store, act("confirm_access_cleared", "staff:manager", old), NOV11)
+        assert rent(store).status("A101", NOV11) == "vacant"

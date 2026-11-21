@@ -12,6 +12,7 @@ import re
 from datetime import date, datetime, timedelta
 
 from . import delinquency as col
+from . import renting
 from .billing import Ledger
 from .books import ADMIN_FEE, LATE_FEE, LATE_FEE_CENTS, RENT, at_local, cutoff
 from .evidence import month_words
@@ -169,6 +170,14 @@ class Year:
             self.plan_breached()
             self.on_a_plan()
             self.cards_on_file()
+            rent = renting.Rent(self.led.books)
+            for event in self.led.pending:
+                rent.apply(event.kind, event.at, event.payload)
+            adopted = renting.RentLedger(self.led.books, rent)
+            for lease in self.led.books.leases.values():
+                if lease.ended is None:
+                    renting.adopt_existing_lease(adopted, lease.id, "seeded_existing", self.now)
+            self.led.pending.extend(adopted.pending)
         return self
 
     def price_units(self, at: datetime) -> None:

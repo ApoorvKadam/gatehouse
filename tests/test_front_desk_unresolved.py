@@ -273,7 +273,7 @@ def test_one_attempt_to_leave_the_day_makes_one_failed_call_however_many_rentals
     old = desk.store
     assert desk.ready() is old
     assert len(stripe.calls) == calls + 1
-    assert [x.state for v in ("v1", "v2", "v3") for x in renting.load(old, f"visitor:{v}")[1].rentals.values()] == ["awaiting_payment"] * 3
+    assert [x.state for v in ("v1", "v2", "v3") for x in renting.load(old, f"visitor:{v}")[1].rentals.values() if not x.provenance] == ["awaiting_payment"] * 3
 
 
 def test_a_checkout_payment_the_processor_refuses_outright_costs_one_call_and_leaves_the_rental_waiting_for_another_try(desk, stripe, now):

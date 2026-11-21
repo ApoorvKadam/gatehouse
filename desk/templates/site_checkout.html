@@ -9,10 +9,11 @@
     {% if rental.accepted %}<p class="website-accept">You accepted this agreement. Choose a card to pay.</p>{% else %}<label class="website-accept"><input type="checkbox" name="accept" value="yes" required> I accept this agreement.</label>{% endif %}
   </section>
   <aside class="website-summary website-form">
-    <h2>Move-in total</h2><p class="website-total">{{ money(rental.quote['total_cents']) }}</p>
-    <dl class="website-totals"><div><dt>Rent for the rest of the month</dt><dd>{{ money(rental.quote['first_cents']) }}</dd></div>{% for fee, cents in rental.quote['fees'].items() %}<div><dt>{{ 'Admin fee' if fee == 'admin_fee' else plain(fee) }}</dt><dd>{{ money(cents) }}</dd></div>{% endfor %}</dl>
-    <label for="card">Test card</label><select id="card" name="card"><option value="card_ok">Card ending 4242</option><option value="card_declined">Card ending 9995, declined</option></select>
-    <button class="button primary" type="submit">Pay and rent</button>
+    <h2>{{ 'To pay now' if rental.transfer else 'Move-in total' }}</h2><p class="website-total">{{ money(rental.quote['total_cents']) }}</p>
+    <dl class="website-totals"><div><dt>Rent for the rest of the month</dt><dd>{{ money(rental.quote['first_cents']) }}</dd></div>{% for fee, cents in rental.quote['fees'].items() %}<div><dt>{{ 'Admin fee' if fee == 'admin_fee' else plain(fee) }}</dt><dd>{{ money(cents) }}</dd></div>{% endfor %}{% if account > 0 %}<div><dt>Credit on your account, with unused rent from your current unit</dt><dd>-{{ money(account) }}</dd></div>{% elif account < 0 %}<div><dt>Older charges still open on your account</dt><dd>{{ money(-account) }}</dd></div>{% endif %}</dl>
+    {% if rental.quote['total_cents'] %}<label for="card">Test card</label><select id="card" name="card"><option value="card_ok">Card ending 4242</option><option value="card_declined">Card ending 9995, declined</option></select>
+    {% else %}<input type="hidden" name="card" value="card_ok"><p class="website-label">Nothing to pay: the credit on your account covers it, so no card is charged.</p>{% endif %}
+    <button class="button primary" type="submit">{{ 'Pay and rent' if rental.quote['total_cents'] else 'Accept and rent' }}</button>
   </aside>
 </form>
 {% endblock %}
