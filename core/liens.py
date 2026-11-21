@@ -25,16 +25,22 @@ from .lien_evidence import EVIDENCE_KINDS, NEEDS_DOCUMENT, parse_evidence, same_
 
 if TYPE_CHECKING:
     from .auction import Auction
+    from .lien_money import Agreement, Sale, Surplus
 
 # the steps on Staddle's own auction platform (core/auction.py), in the order they are taken, and the cancellation
 AUCTION_ACTIONS = ("list_lien_auction", "open_lien_bidding", "place_lien_bid", "close_lien_bidding", "declare_lien_winner",
                    "take_buyer_payment", "complete_lien_sale", "cancel_lien_auction")
+# the records of the money after a sale: the sale proceeds and the surplus, an agreement, a dispute of the sale, a return after a cancellation
+MONEY_KINDS = ("sale.", "surplus.", "lien_case.surplus_", "lien_case.agreement_", "lien_case.sale_", "lien_case.return_")
+AGREEMENT_ACTIONS = ("record_lien_agreement", "accept_lien_agreement", "end_lien_agreement")     # on the open case: a sale step waits while one is active
+SALE_ACTIONS = ("dispute_lien_sale", "resolve_lien_sale_dispute")                                 # on a sold case, open or closed
+MONEY_ACTIONS = ("record_surplus_notice", "record_surplus_review", "resolve_surplus_review", "request_surplus_payout", "confirm_surplus_payout") + SALE_ACTIONS
 BIDDER_ACTIONS = ("place_lien_bid", "take_buyer_payment")      # taken by the buyer on the platform, not by staff
 ACTIONS = ("open_lien_case", "record_lien_evidence", "record_lien_address", "prepare_lien_notice",
            "approve_lien_case", "record_lien_stop", "resolve_lien_stop",
-           "decide_lien_case") + AUCTION_ACTIONS
+           "decide_lien_case") + AUCTION_ACTIONS + AGREEMENT_ACTIONS + MONEY_ACTIONS
 # the steps on one case: each names the case it is for, so a command prepared for one episode can never land on the next
-CASE_ACTIONS = ("record_lien_evidence", "record_lien_address", "prepare_lien_notice", "approve_lien_case", "decide_lien_case") + AUCTION_ACTIONS
+CASE_ACTIONS = ("record_lien_evidence", "record_lien_address", "prepare_lien_notice", "approve_lien_case", "decide_lien_case") + AUCTION_ACTIONS + AGREEMENT_ACTIONS
 APPROVER = "staff:manager"
 # bankruptcy and military service protect the person and everything they store, so they hold every unit of the tenant; a court order and
 # a secured party or ownership conflict name specific property, so they hold only the unit they were recorded on
@@ -93,6 +99,10 @@ class State:
     cases: dict[str, Case] = field(default_factory=dict)
     stops: dict[str, dict] = field(default_factory=dict)    # legal stops by id: they belong to the unit, not to the case they were recorded on
     auctions: dict[str, Auction] = field(default_factory=dict)    # the auction of each case that has one (core/auction.py), by case id
+    sales: dict[str, Sale] = field(default_factory=dict)           # what each sold case brought and where it went (core/lien_money.py), by case id
+    surpluses: dict[str, Surplus] = field(default_factory=dict)    # money left after a sale, owed to the tenant, by id
+    agreements: dict[str, Agreement] = field(default_factory=dict) # pay-to-vacate and settlement agreements, by id
+    returns: dict[str, list[str]] = field(default_factory=dict)    # case -> the returned payments staff were told about
 
 
 def state(books: Books) -> State:
@@ -110,6 +120,9 @@ def fold_event(b: Books, kind: str, at: datetime, p: dict) -> None:
     if kind.startswith("lien_case.auction_"):
         from . import auction        # auction reads these cases, so it cannot be imported at the top
         auction.fold_event(b, kind, at, p)
+    elif kind.startswith(MONEY_KINDS):
+        from . import lien_money
+        lien_money.fold_event(b, kind, at, p)
     elif kind == "lien_case.opened":
         b.liens.cases[p["case"]] = Case(p["case"], p["lease"], p["tenant"], p["unit"], p["episode"], p["by"], at)
         b._seen("LC", p["case"])
@@ -614,6 +627,10 @@ def recheck(led: Ledger, tenant: str, now: datetime) -> None:
     for case in [c for c in state(b).cases.values() if c.tenant == tenant and not c.closed]:
         _void_stale(led, case, now)
         listed = state(b).auctions.get(case.id)
+        if listed and listed.status == "sold":      # the sale is final: its money is applied once, here or when the answer came in
+            from . import lien_money
+            lien_money.settle(led, case, now)
+            continue
         if cleared(b, case) and not (listed and listed.status == "sold"):     # a finished sale is for staff and counsel, never cured by itself
             from . import auction
             if auction.holds_open(listed):      # a listing to take down, or a cancellation awaiting its read-back: the case closes then, not now
@@ -638,6 +655,8 @@ def recheck(led: Ledger, tenant: str, now: datetime) -> None:
         led.emit("lien_case.review_required", now, {"case": case.id, "version": version, "keys": [c["key"] for c in new], "why": why},
                  f"lien_case:{case.id}:review:{len(case.reviews) + 1}", source=col.SYSTEM)
         col._task(led, TASK, tenant, f"lien:{case.id}:{version}", why, local(now).date(), now)
+    from . import lien_money
+    lien_money.recheck(led, tenant, now)        # what a closed case's surplus is due (the two-year mark)
 
 
 # the gate's checks, in its order: the action and its scope, fixed safety, the owner's schedule, then holds ------------------
@@ -661,6 +680,9 @@ def check(books: Books, cmd, now: datetime) -> tuple[bool, str]:
         return _open_check(books, lease, now)
     if a in ("record_lien_stop", "resolve_lien_stop"):          # a stop belongs to the unit: no case need be open to record or lift it
         return _stop_check(books, lease, cmd, form)
+    if a in MONEY_ACTIONS:          # a surplus belongs to the unit and outlives its case, so no open case is needed
+        from . import lien_money
+        return lien_money.check(books, lease, cmd, now)
     case = active_case(books, lease.id)
     if case is None:
         return False, "no lien case is open on this unit"
@@ -671,6 +693,9 @@ def check(books: Books, cmd, now: datetime) -> tuple[bool, str]:
     if a in AUCTION_ACTIONS:
         from . import auction
         return auction.check(books, case, cmd, now)
+    if a in AGREEMENT_ACTIONS:
+        from . import lien_money
+        return lien_money.check_agreement(books, lease, case, cmd, now)
     if a == "record_lien_evidence":
         return _evidence_check(case, form)
     if a == "record_lien_address":
@@ -860,6 +885,10 @@ def act(led: Ledger, cmd, now: datetime) -> None:
         led.emit("lien_case.opened", now, {"case": cid, "lease": lease.id, "tenant": lease.tenant, "unit": lease.unit, "episode": episode,
                                            "by": cmd.source}, f"lien_case:{cid}:opened", source=cmd.source, command=cmd.id)
         return
+    if cmd.action in MONEY_ACTIONS:
+        from . import lien_money
+        lien_money.act(led, cmd, now)
+        return
     case = state(b).cases[form["case"]] if cmd.action in CASE_ACTIONS else active_case(b, lease.id)     # the case the check approved, if any
     if cmd.action == "record_lien_evidence":
         n = len(case.evidence) + 1
@@ -903,6 +932,9 @@ def act(led: Ledger, cmd, now: datetime) -> None:
     elif cmd.action in AUCTION_ACTIONS:
         from . import auction
         auction.act(led, cmd, case, now)
+    elif cmd.action in AGREEMENT_ACTIONS:
+        from . import lien_money
+        lien_money.act_agreement(led, cmd, case, now)
     elif cmd.action == "prepare_lien_notice":
         version = len(case.copies) + 1
         led.emit("lien_case.notice_prepared", now, {"case": case.id, "version": version, "snapshot": snapshot(b, case), "by": cmd.source},
