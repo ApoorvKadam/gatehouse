@@ -309,6 +309,10 @@ RENT_SCOPE = {
     "decline_offer": ("renter", "staff"), "retry_access": ("staff",), "confirm_refund": ("staff",), "confirm_access_cleared": ("staff",),
 }
 WHO = {"operator": "the agent", "renter": "the renter", "staff": "staff", "code": "code", "fixed_workflow": "the fixed workflow"}
+# the work queue's commands (core/work.py): staff only. They change who has a piece of work and what is written on it, never money,
+# a unit or a gate code, so the holds and legal stops of the gate's last check have nothing to hold here
+WORK_SCOPE = {"assign_work": ("staff",), "acknowledge_work": ("staff",), "start_work": ("staff",), "note_work": ("staff",),
+              "finish_work": ("staff",)}
 
 
 def evaluate_rent(rent, books: Books, act, now: datetime) -> Decision:

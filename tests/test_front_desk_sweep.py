@@ -186,6 +186,7 @@ def test_a_staff_retry_of_a_code_stays_closed_unless_the_read_back_fails_again()
     assert desk.rent_step("v1", retry(2)).allowed                                  # now it reads back: the task closes and stays closed
     x, tasks = access_of(store, stream, rn)
     assert x.state == "verified" and tasks == []
+    desk.sweep()                                                                  # the daily check closes the work item that code had, once
     count = len(store.stream_events(stream))
     desk.sweep()
     desk.sweep()

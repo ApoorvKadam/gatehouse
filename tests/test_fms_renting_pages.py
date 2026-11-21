@@ -229,7 +229,7 @@ def test_today_lists_each_rental_not_finished_yet_and_home_counts_only_those_tha
         step(fd, ident, "cancel_reservation", rs, source="staff:office_manager")             # paid for, then cancelled: money to give back
         start_rental(fd, ident, people[5], units[5], accept=False, days=3)                   # nothing paid, hold ends in three days
         text = work(c)
-        section = text.split("Rentals not finished yet", 1)[1].split("Handed to staff")[0]
+        section = text.split("Work for staff", 1)[1].split("Handed to staff")[0]
         for row in ("Rae Quinn · unit " + units[0] + " Payment waiting for the card processor, agreement accepted",
                     "Ben Ortiz · unit " + units[1] + " Card declined, agreement accepted",
                     "Cara Dunn · unit " + units[2] + " Paid, agreement not accepted",
@@ -249,7 +249,7 @@ def test_today_lists_each_rental_not_finished_yet_and_home_counts_only_those_tha
         # the hold runs out with no sweep in between: the unpaid ones leave the list as Units shows their units vacant, the paid or
         # unconfirmed ones keep holding their units
         fd.clock = lambda: NOW + timedelta(minutes=45)
-        later = work(c).split("Rentals not finished yet", 1)[1].split("Handed to staff")[0]
+        later = work(c).split("Work for staff", 1)[1].split("Handed to staff")[0]
         assert "Ben Ortiz" not in later and "Dev Patel" in later and "Rae Quinn" in later and "Cara Dunn" in later and "Hal Moss" in later
         assert "The hold time ended" in later and "4 rentals waiting for staff" in seen(c.get("/home").text)
         assert rent_of(fd, ident).status(units[1], NOW + timedelta(minutes=45)) == "vacant"
@@ -265,20 +265,19 @@ def test_a_code_that_was_not_read_back_is_listed_until_the_rental_ends_and_then_
         _, rn = start_rental(fd, ident, tenant, unit, card="card_ok")
         assert rent_of(fd, ident).access[rent_of(fd, ident).rentals[rn].access].state == "failed"
         text = work(c)
-        section = text.split("Gate codes not confirmed", 1)[1].split("Handed to staff")[0]
+        section = text.split("Work for staff", 1)[1].split("Handed to staff")[0]
         assert f"Rae Quinn · unit {unit} Gate code not confirmed since Nov 14" in section and "does not show it with both groups" in section
         assert "Rentals not finished yet" not in text and "to be revoked" not in text
         assert "1 gate code not confirmed" in seen(c.get("/home").text)
-        assert "Gate codes not confirmed" not in seen(other.get("/today").text)
+        assert "Gate code not confirmed" not in seen(other.get("/today").text)
         fd.access = renting.StandIn(hide={renting.ACCESS_LEVEL}, crash_before={"revoke"})   # moving out: the gate does not take the revoke
         mo = step(fd, ident, "request_move_out", rn, source="staff:office_manager", on=fd.today().isoformat())
         step(fd, ident, "review_move_out", mo, source="staff:office_manager")
         step(fd, ident, "final_bill", mo, source="staff:office_manager")
         after = work(c)
-        assert "Gate codes not confirmed" not in after                                      # the task is still open, but the rental is over
-        section = after.split("Units waiting for an old gate code to be revoked", 1)[1].split("Handed to staff")[0]
-        assert section.count(f"unit {unit}") == 1                                           # once under turnover (its refund is another job, listed above)
-        assert f"Rae Quinn · unit {unit} Moved out Nov 14" in section and "cannot be rented again" in section
+        assert "Gate code not confirmed" not in after                                       # the task is still open, but the rental is over
+        assert after.count(f"unit {unit} Moved out Nov 14") == 1                            # once as turnover (its refund is another item, worded as a refund)
+        assert f"Rae Quinn · unit {unit} Moved out Nov 14" in after and "cannot be rented again" in after
         home = seen(c.get("/home").text)
         assert "1 unit waiting for an old gate code to be revoked" in home and "not confirmed" not in home
 
